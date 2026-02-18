@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 8c07eed235b9154d678dddcf3a5ce0f809fca6a1f3937d5de8db37d53d5cdf85 # shrinks to tx = Transaction { version: 0, inputs: [TransactionInput { source_txid: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], source_tx_out_index: 2634323889, sequence_number: 3806421835, unlocking_script: Some(Script(9f6e)), source_transaction: None, source_output: None }], outputs: [TransactionOutput { satoshis: 14558916418118303509, locking_script: Script(e8c38e40430a1f3d499c962fd8ed16b5d8dedf77959d183d4499be5b70e014b81077326be8fad9faf89b4ee335f64e00fd43), change: false }], lock_time: 3190888823 }
+cc ada077074140b9db3eaf1f000bf596c3c786968fa2c70ced9f8ee03b7dcfc95a # shrinks to tx = Transaction { version: 0, inputs: [TransactionInput { source_txid: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], source_tx_out_index: 102534068, sequence_number: 380671204, unlocking_script: Some(Script(6a68afd9c550edb61dd22667322afdb23c5a968f6802fdafc197dc)), source_transaction: None, source_output: None }], outputs: [TransactionOutput { satoshis: 8074125381564557613, locking_script: Script(3dbd5db9db3c0338fcdda7012a142597cca65e482f94e97fb59a0fb094c8cb9f05d8f6a8935a44afebc58c87e70ab6a2c3f7c982e5ccf1), change: false }, TransactionOutput { satoshis: 14200340088625949777, locking_script: Script(1e70b0b6afb438315d651a1a1c912d0d3d1f99c2562e1f12fb), change: false }], lock_time: 2535074179 }

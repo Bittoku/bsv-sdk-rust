@@ -231,7 +231,8 @@ fn decode_privileged_params(r: &mut BsvReader) -> Result<(Option<bool>, String),
         };
         let extra_bytes = r.read_bytes(extra).map_err(|e| WalletError::General(format!("read priv reason varint: {}", e)))?;
         buf.extend_from_slice(extra_bytes);
-        let (vi, _) = VarInt::from_bytes(&buf);
+        let (vi, _) = VarInt::from_bytes(&buf)
+            .map_err(|e| WalletError::General(format!("varint decode: {}", e)))?;
         let s_bytes = r.read_bytes(vi.0 as usize).map_err(|e| WalletError::General(format!("read priv reason str: {}", e)))?;
         let s = String::from_utf8(s_bytes.to_vec()).unwrap_or_default();
         Ok((privileged, s))

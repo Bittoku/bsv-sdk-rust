@@ -8,6 +8,9 @@ use bsv_script::Script;
 
 use crate::TransactionError;
 
+/// Maximum satoshi value: 21 million BSV = 2.1 × 10^15 satoshis.
+const MAX_SATOSHIS: u64 = 21_000_000 * 100_000_000;
+
 /// A single output in a BSV transaction.
 ///
 /// Each output specifies a satoshi `value` and a `locking_script`
@@ -71,6 +74,13 @@ impl TransactionOutput {
         let script_bytes = reader.read_bytes(script_len.value() as usize).map_err(|e| {
             TransactionError::SerializationError(format!("reading locking script: {}", e))
         })?;
+
+        if satoshis > MAX_SATOSHIS {
+            return Err(TransactionError::SerializationError(format!(
+                "satoshi value {} exceeds maximum supply ({})",
+                satoshis, MAX_SATOSHIS
+            )));
+        }
 
         Ok(TransactionOutput {
             satoshis,

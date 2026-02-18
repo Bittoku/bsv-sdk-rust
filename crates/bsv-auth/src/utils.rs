@@ -9,7 +9,7 @@ use crate::error::AuthError;
 /// Generate random bytes of specified length and return as base64.
 pub fn random_base64(length: usize) -> String {
     let mut bytes = vec![0u8; length];
-    rand::thread_rng().fill_bytes(&mut bytes);
+    rand::rngs::OsRng.fill_bytes(&mut bytes);
     BASE64.encode(&bytes)
 }
 
@@ -20,7 +20,7 @@ pub fn create_nonce(
     counterparty: Counterparty,
 ) -> Result<String, AuthError> {
     let mut random_bytes = [0u8; 16];
-    rand::thread_rng().fill_bytes(&mut random_bytes);
+    rand::rngs::OsRng.fill_bytes(&mut random_bytes);
 
     let args = CreateHmacArgs {
         encryption_args: EncryptionArgs {
@@ -28,7 +28,7 @@ pub fn create_nonce(
                 security_level: SECURITY_LEVEL_EVERY_APP,
                 protocol: "server hmac".to_string(),
             },
-            key_id: String::from_utf8_lossy(&random_bytes).to_string(),
+            key_id: hex::encode(&random_bytes),
             counterparty: counterparty.clone(),
             privileged: false,
             privileged_reason: String::new(),
@@ -74,7 +74,7 @@ pub fn verify_nonce(
                 security_level: SECURITY_LEVEL_EVERY_APP,
                 protocol: "server hmac".to_string(),
             },
-            key_id: String::from_utf8_lossy(data).to_string(),
+            key_id: hex::encode(data),
             counterparty,
             privileged: false,
             privileged_reason: String::new(),

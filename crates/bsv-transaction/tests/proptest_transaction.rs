@@ -20,7 +20,7 @@ fn arb_transaction() -> impl Strategy<Value = Transaction> {
     });
 
     let arb_output = (
-        any::<u64>(),
+        0..=2_100_000_000_000_000u64,  // max 21M BSV in satoshis
         prop::collection::vec(any::<u8>(), 0..64),
     ).prop_map(|(satoshis, script_bytes)| {
         let mut output = TransactionOutput::new();

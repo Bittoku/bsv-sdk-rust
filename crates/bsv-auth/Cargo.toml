@@ -12,6 +12,7 @@ categories = ["cryptography", "authentication"]
 bsv-primitives = { workspace = true }
 bsv-wallet = { workspace = true }
 hex = { workspace = true }
+subtle = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

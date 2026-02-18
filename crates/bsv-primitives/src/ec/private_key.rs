@@ -294,15 +294,10 @@ impl Default for PrivateKey {
     }
 }
 
-impl Drop for PrivateKey {
-    fn drop(&mut self) {
-        use zeroize::Zeroize;
-        // Overwrite the signing key's memory with zeros.
-        // SigningKey stores the scalar internally; we zeroize via its bytes representation.
-        let mut bytes = self.inner.to_bytes();
-        bytes.zeroize();
-    }
-}
+// Note: k256 0.13's `SigningKey` implements `ZeroizeOnDrop`, so the inner
+// scalar IS zeroized when this struct is dropped. No custom Drop needed.
+// The previous custom Drop only zeroized a *copy* of the bytes, not the
+// actual inner memory. Removing it lets k256's own ZeroizeOnDrop work correctly.
 
 impl PartialEq for PrivateKey {
     fn eq(&self, other: &Self) -> bool {

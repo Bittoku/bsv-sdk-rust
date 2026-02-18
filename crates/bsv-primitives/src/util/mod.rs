@@ -30,26 +30,41 @@ impl VarInt {
     /// * `data` - Byte slice starting with a VarInt encoding.
     ///
     /// # Returns
-    /// A tuple of `(VarInt, bytes_consumed)`.
-    pub fn from_bytes(data: &[u8]) -> (Self, usize) {
+    /// `Ok((VarInt, bytes_consumed))` or `Err` if the slice is too short.
+    ///
+    /// # Panics
+    /// None — all bounds are checked.
+    pub fn from_bytes(data: &[u8]) -> Result<(Self, usize), PrimitivesError> {
+        if data.is_empty() {
+            return Err(PrimitivesError::UnexpectedEof);
+        }
         match data[0] {
             0xff => {
+                if data.len() < 9 {
+                    return Err(PrimitivesError::UnexpectedEof);
+                }
                 let val = u64::from_le_bytes([
                     data[1], data[2], data[3], data[4],
                     data[5], data[6], data[7], data[8],
                 ]);
-                (VarInt(val), 9)
+                Ok((VarInt(val), 9))
             }
             0xfe => {
+                if data.len() < 5 {
+                    return Err(PrimitivesError::UnexpectedEof);
+                }
                 let val = u32::from_le_bytes([data[1], data[2], data[3], data[4]]) as u64;
-                (VarInt(val), 5)
+                Ok((VarInt(val), 5))
             }
             0xfd => {
+                if data.len() < 3 {
+                    return Err(PrimitivesError::UnexpectedEof);
+                }
                 let val = u16::from_le_bytes([data[1], data[2]]) as u64;
-                (VarInt(val), 3)
+                Ok((VarInt(val), 3))
             }
             b => {
-                (VarInt(b as u64), 1)
+                Ok((VarInt(b as u64), 1))
             }
         }
     }
@@ -393,27 +408,35 @@ mod tests {
     fn test_decode_varint() {
         // 0xff prefix -> reads 8 bytes after prefix -> value 0, size 9
         let mut input = vec![0xff, 0, 0, 0, 0, 0, 0, 0, 0]; // 1 prefix + 8 data bytes
-        let (vi, sz) = VarInt::from_bytes(&input);
+        let (vi, sz) = VarInt::from_bytes(&input).unwrap();
         assert_eq!(vi.0, 0);
         assert_eq!(sz, 9);
 
         // 0xfe prefix -> reads 4 bytes after prefix -> value 0, size 5
         input = vec![0xfe, 0, 0, 0, 0];
-        let (vi, sz) = VarInt::from_bytes(&input);
+        let (vi, sz) = VarInt::from_bytes(&input).unwrap();
         assert_eq!(vi.0, 0);
         assert_eq!(sz, 5);
 
         // 0xfd prefix -> reads 2 bytes after prefix -> value 0, size 3
         input = vec![0xfd, 0, 0];
-        let (vi, sz) = VarInt::from_bytes(&input);
+        let (vi, sz) = VarInt::from_bytes(&input).unwrap();
         assert_eq!(vi.0, 0);
         assert_eq!(sz, 3);
 
         // value 1 -> single byte, size 1
         let input = le_bytes(1);
-        let (vi, sz) = VarInt::from_bytes(&input);
+        let (vi, sz) = VarInt::from_bytes(&input).unwrap();
         assert_eq!(vi.0, 1);
         assert_eq!(sz, 1);
+    }
+
+    #[test]
+    fn test_decode_varint_too_short() {
+        assert!(VarInt::from_bytes(&[]).is_err());
+        assert!(VarInt::from_bytes(&[0xff, 0, 0]).is_err());
+        assert!(VarInt::from_bytes(&[0xfe, 0]).is_err());
+        assert!(VarInt::from_bytes(&[0xfd]).is_err());
     }
 
     // -- VarInt upper-limit-inc tests --

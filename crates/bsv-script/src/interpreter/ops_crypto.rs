@@ -84,7 +84,12 @@ impl<'a> Thread<'a> {
             )
         })?;
 
-        let shf = *full_sig_bytes.last().unwrap() as u32;
+        let shf = *full_sig_bytes.last().ok_or_else(|| {
+            InterpreterError::new(
+                InterpreterErrorCode::InvalidParams,
+                "empty signature in checksig".to_string(),
+            )
+        })? as u32;
         let sig_bytes = &full_sig_bytes[..full_sig_bytes.len() - 1];
 
         // Check encodings
@@ -239,7 +244,12 @@ impl<'a> Thread<'a> {
                 continue;
             }
 
-            let shf = *sig.last().unwrap() as u32;
+            let shf = *sig.last().ok_or_else(|| {
+                InterpreterError::new(
+                    InterpreterErrorCode::InvalidParams,
+                    "empty signature in checkmultisig".to_string(),
+                )
+            })? as u32;
             let sig_only = &sig[..sig.len() - 1];
 
             // Check encodings
@@ -482,17 +492,21 @@ impl<'a> Thread<'a> {
 
         // Low-S check
         if self.has_flag(ScriptFlags::VERIFY_LOW_S) {
-            // Half order of secp256k1
-            let half_order = BigInt::parse_bytes(
-                b"7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF5D576E7357A4501DDFE92F46681B20A0",
-                16,
-            )
-            .unwrap();
+            // Half order of secp256k1 (computed once)
+            use std::sync::LazyLock;
+            static HALF_ORDER: LazyLock<BigInt> = LazyLock::new(|| {
+                BigInt::parse_bytes(
+                    b"7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF5D576E7357A4501DDFE92F46681B20A0",
+                    16,
+                )
+                .expect("valid hex constant")
+            });
+            let half_order = &*HALF_ORDER;
             let s_value = BigInt::from_bytes_be(
                 num_bigint::Sign::Plus,
                 &sig[s_offset..s_offset + s_len],
             );
-            if s_value > half_order {
+            if s_value > *half_order {
                 return Err(InterpreterError::new(
                     InterpreterErrorCode::SigHighS,
                     "signature is not canonical due to unnecessarily high S value".to_string(),

@@ -218,7 +218,9 @@ impl WalletInterface for ProtoWallet {
         )?;
 
         let mac = bsv_primitives::hash::sha256_hmac(key.to_bytes(), &args.data);
-        let valid = mac[..] == args.hmac[..];
+        // Constant-time comparison to prevent timing side-channel attacks
+        use subtle::ConstantTimeEq;
+        let valid: bool = mac[..].ct_eq(&args.hmac[..]).into();
 
         Ok(VerifyHmacResult { valid })
     }
