@@ -17,5 +17,9 @@ bsv-message = { workspace = true }
 bsv-auth = { workspace = true }
 bsv-spv = { workspace = true }
 bsv-tokens = { workspace = true }
-bsv-arc = { workspace = true }
-bsv-junglebus = { workspace = true }
+bsv-arc = { workspace = true, optional = true }
+bsv-junglebus = { workspace = true, optional = true }
+
+[features]
+default = []
+transports = ["bsv-arc", "bsv-junglebus"]

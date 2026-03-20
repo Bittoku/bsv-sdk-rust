@@ -18,7 +18,7 @@ members = [
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-repository = "https://github.com/user/bsv-sdk-rust"
+repository = "https://github.com/Bittoku/bsv-sdk-rust"
 rust-version = "1.75"
 
 [workspace.dependencies]
@@ -58,13 +58,13 @@ base64 = "0.22"
 reqwest = { version = "0.12", features = ["json"] }
 
 # Internal crates
-bsv-primitives = { path = "crates/bsv-primitives" }
-bsv-script = { path = "crates/bsv-script" }
-bsv-transaction = { path = "crates/bsv-transaction" }
-bsv-wallet = { path = "crates/bsv-wallet" }
-bsv-message = { path = "crates/bsv-message" }
-bsv-auth = { path = "crates/bsv-auth" }
-bsv-spv = { path = "crates/bsv-spv" }
-bsv-tokens = { path = "crates/bsv-tokens" }
-bsv-arc = { path = "crates/bsv-arc" }
-bsv-junglebus = { path = "crates/bsv-junglebus" }
+bsv-primitives = { path = "crates/bsv-primitives", version = "0.1.0" }
+bsv-script = { path = "crates/bsv-script", version = "0.1.0" }
+bsv-transaction = { path = "crates/bsv-transaction", version = "0.1.0" }
+bsv-wallet = { path = "crates/bsv-wallet", version = "0.1.0" }
+bsv-message = { path = "crates/bsv-message", version = "0.1.0" }
+bsv-auth = { path = "crates/bsv-auth", version = "0.1.0" }
+bsv-spv = { path = "crates/bsv-spv", version = "0.1.0" }
+bsv-tokens = { path = "crates/bsv-tokens", version = "0.1.0" }
+bsv-arc = { path = "crates/bsv-arc", version = "0.1.0" }
+bsv-junglebus = { path = "crates/bsv-junglebus", version = "0.1.0" }
