@@ -1,7 +1,8 @@
 //! DSTAS transaction factories.
 //!
 //! Pure functions that build complete, signed transactions for dSTAS token
-//! operations: two-tx issuance, base spend, freeze, unfreeze, and swap.
+//! operations: two-tx issuance, base spend, freeze, unfreeze, swap, split,
+//! merge, confiscation, and redeem.
 
 use bsv_primitives::chainhash::Hash;
 use bsv_primitives::ec::PrivateKey;
@@ -112,6 +113,110 @@ pub struct DstasBaseConfig {
     pub destinations: Vec<DstasOutputParams>,
     /// Spend type for this transaction.
     pub spend_type: DstasSpendType,
+    /// Fee rate in satoshis per kilobyte.
+    pub fee_rate: u64,
+}
+
+/// Configuration for a DSTAS split transaction.
+///
+/// Splits a single STAS input into 1–4 DSTAS outputs while conserving
+/// the total token satoshi value. Uses spending type 1 (regular transfer).
+pub struct DstasSplitConfig {
+    /// The single STAS token input to split.
+    pub token_input: TokenInput,
+    /// Fee UTXO txid.
+    pub fee_txid: Hash,
+    /// Fee UTXO vout.
+    pub fee_vout: u32,
+    /// Fee UTXO satoshis.
+    pub fee_satoshis: u64,
+    /// Fee UTXO locking script.
+    pub fee_locking_script: Script,
+    /// Fee UTXO private key.
+    pub fee_private_key: PrivateKey,
+    /// Output destinations (1–4).
+    pub destinations: Vec<DstasOutputParams>,
+    /// Fee rate in satoshis per kilobyte.
+    pub fee_rate: u64,
+}
+
+/// Configuration for a DSTAS merge transaction.
+///
+/// Merges exactly 2 STAS inputs into 1–2 DSTAS outputs while conserving
+/// the total token satoshi value. Uses spending type 1 (regular transfer).
+pub struct DstasMergeConfig {
+    /// Exactly 2 STAS token inputs to merge.
+    pub token_inputs: [TokenInput; 2],
+    /// Fee UTXO txid.
+    pub fee_txid: Hash,
+    /// Fee UTXO vout.
+    pub fee_vout: u32,
+    /// Fee UTXO satoshis.
+    pub fee_satoshis: u64,
+    /// Fee UTXO locking script.
+    pub fee_locking_script: Script,
+    /// Fee UTXO private key.
+    pub fee_private_key: PrivateKey,
+    /// Output destinations (1–2).
+    pub destinations: Vec<DstasOutputParams>,
+    /// Fee rate in satoshis per kilobyte.
+    pub fee_rate: u64,
+}
+
+/// Configuration for a DSTAS confiscation transaction.
+///
+/// Confiscates 1–2 STAS inputs using spending type 3 (confiscation authority
+/// path). Frozen inputs may be confiscated. The confiscation flag (0x02) must
+/// be enabled in the token scheme.
+pub struct DstasConfiscateConfig {
+    /// Token inputs (1 or 2) to confiscate.
+    pub token_inputs: Vec<TokenInput>,
+    /// Fee UTXO txid.
+    pub fee_txid: Hash,
+    /// Fee UTXO vout.
+    pub fee_vout: u32,
+    /// Fee UTXO satoshis.
+    pub fee_satoshis: u64,
+    /// Fee UTXO locking script.
+    pub fee_locking_script: Script,
+    /// Fee UTXO private key.
+    pub fee_private_key: PrivateKey,
+    /// Output destinations (redirected to authority/issuer).
+    pub destinations: Vec<DstasOutputParams>,
+    /// Fee rate in satoshis per kilobyte.
+    pub fee_rate: u64,
+}
+
+/// Configuration for a DSTAS redeem transaction.
+///
+/// Redeems a single STAS token by returning its satoshis to a P2PKH output.
+/// Only the token issuer (owner_pkh == redemption_pkh) may redeem. Frozen
+/// tokens cannot be redeemed. Uses spending type 1 (regular transfer).
+///
+/// Conservation: `stas_input_sats == redeem_sats + sum(remaining STAS outputs)`.
+pub struct DstasRedeemConfig {
+    /// The single STAS token input to redeem.
+    pub token_input: TokenInput,
+    /// Fee UTXO txid.
+    pub fee_txid: Hash,
+    /// Fee UTXO vout.
+    pub fee_vout: u32,
+    /// Fee UTXO satoshis.
+    pub fee_satoshis: u64,
+    /// Fee UTXO locking script.
+    pub fee_locking_script: Script,
+    /// Fee UTXO private key.
+    pub fee_private_key: PrivateKey,
+    /// Satoshis to redeem to P2PKH output.
+    pub redeem_satoshis: u64,
+    /// Public key hash of the redemption address (must match the token's
+    /// `redemption_pkh`, which must also match the token input `owner_pkh`).
+    pub redemption_pkh: [u8; 20],
+    /// Whether the token input is frozen (must be false — frozen tokens
+    /// cannot be redeemed).
+    pub input_frozen: bool,
+    /// Optional remaining STAS outputs (partial redeem).
+    pub remaining_outputs: Vec<DstasOutputParams>,
     /// Fee rate in satoshis per kilobyte.
     pub fee_rate: u64,
 }
@@ -472,6 +577,239 @@ pub fn build_dstas_swap_flow_tx(config: &mut DstasBaseConfig) -> Result<Transact
     }
     config.spend_type = DstasSpendType::Transfer;
     build_dstas_base_tx(config)
+}
+
+/// Build a DSTAS split transaction.
+///
+/// Splits a single STAS token input into 1–4 DSTAS outputs. The total
+/// satoshi value across all outputs must equal the input value (conservation).
+///
+/// # Errors
+///
+/// Returns [`TokenError::InvalidDestination`] if destinations is empty or
+/// exceeds 4, and propagates any error from [`build_dstas_base_tx`].
+pub fn build_dstas_split_tx(config: DstasSplitConfig) -> Result<Transaction, TokenError> {
+    if config.destinations.is_empty() || config.destinations.len() > 4 {
+        return Err(TokenError::InvalidDestination(
+            "split requires 1–4 destinations".into(),
+        ));
+    }
+
+    let base = DstasBaseConfig {
+        token_inputs: vec![config.token_input],
+        fee_txid: config.fee_txid,
+        fee_vout: config.fee_vout,
+        fee_satoshis: config.fee_satoshis,
+        fee_locking_script: config.fee_locking_script,
+        fee_private_key: config.fee_private_key,
+        destinations: config.destinations,
+        spend_type: DstasSpendType::Transfer,
+        fee_rate: config.fee_rate,
+    };
+
+    build_dstas_base_tx(&base)
+}
+
+/// Build a DSTAS merge transaction.
+///
+/// Merges exactly 2 STAS token inputs into 1–2 DSTAS outputs. The combined
+/// input value must equal the total output value (conservation).
+///
+/// # Errors
+///
+/// Returns [`TokenError::InvalidDestination`] if destinations is empty or
+/// exceeds 2, and propagates any error from [`build_dstas_base_tx`].
+pub fn build_dstas_merge_tx(config: DstasMergeConfig) -> Result<Transaction, TokenError> {
+    if config.destinations.is_empty() || config.destinations.len() > 2 {
+        return Err(TokenError::InvalidDestination(
+            "merge requires 1–2 destinations".into(),
+        ));
+    }
+
+    let [input_a, input_b] = config.token_inputs;
+    let base = DstasBaseConfig {
+        token_inputs: vec![input_a, input_b],
+        fee_txid: config.fee_txid,
+        fee_vout: config.fee_vout,
+        fee_satoshis: config.fee_satoshis,
+        fee_locking_script: config.fee_locking_script,
+        fee_private_key: config.fee_private_key,
+        destinations: config.destinations,
+        spend_type: DstasSpendType::Transfer,
+        fee_rate: config.fee_rate,
+    };
+
+    build_dstas_base_tx(&base)
+}
+
+/// Build a DSTAS confiscation transaction.
+///
+/// Confiscates 1–2 STAS token inputs using the confiscation authority path
+/// (spending type 3). Frozen tokens *can* be confiscated. The token scheme
+/// must have the confiscation flag (0x02) enabled.
+///
+/// # Errors
+///
+/// Returns [`TokenError::InvalidDestination`] if `token_inputs` is empty,
+/// and propagates any error from [`build_dstas_base_tx`].
+pub fn build_dstas_confiscate_tx(config: DstasConfiscateConfig) -> Result<Transaction, TokenError> {
+    if config.token_inputs.is_empty() {
+        return Err(TokenError::InvalidDestination(
+            "confiscation requires at least 1 token input".into(),
+        ));
+    }
+
+    let base = DstasBaseConfig {
+        token_inputs: config.token_inputs,
+        fee_txid: config.fee_txid,
+        fee_vout: config.fee_vout,
+        fee_satoshis: config.fee_satoshis,
+        fee_locking_script: config.fee_locking_script,
+        fee_private_key: config.fee_private_key,
+        destinations: config.destinations,
+        spend_type: DstasSpendType::Confiscation,
+        fee_rate: config.fee_rate,
+    };
+
+    build_dstas_base_tx(&base)
+}
+
+/// Build a DSTAS redeem transaction.
+///
+/// Redeems a single STAS token input by sending part or all of its satoshis
+/// to a P2PKH output. Only the token issuer may redeem (the input `owner_pkh`
+/// must match the token's `redemption_pkh`). Frozen tokens cannot be redeemed.
+///
+/// # Transaction structure
+/// - Input 0: STAS token input
+/// - Input 1: Fee input (P2PKH)
+/// - Output 0: P2PKH redeem output (`redeem_satoshis`)
+/// - Outputs 1..N: Optional remaining DSTAS outputs (partial redeem)
+/// - Output N+1: Fee change (P2PKH)
+///
+/// # Conservation
+/// `token_input.satoshis == redeem_satoshis + sum(remaining DSTAS outputs)`
+///
+/// # Errors
+///
+/// - [`TokenError::FrozenToken`] if `input_frozen` is true.
+/// - [`TokenError::IssuerOnly`] if the token input owner is not the issuer.
+/// - [`TokenError::AmountMismatch`] if conservation is violated.
+/// - [`TokenError::InvalidDestination`] if `redeem_satoshis` is zero.
+pub fn build_dstas_redeem_tx(config: DstasRedeemConfig) -> Result<Transaction, TokenError> {
+    // Frozen tokens cannot be redeemed
+    if config.input_frozen {
+        return Err(TokenError::FrozenToken);
+    }
+
+    // Redeem amount must be positive
+    if config.redeem_satoshis == 0 {
+        return Err(TokenError::InvalidDestination(
+            "redeem satoshis must be > 0".into(),
+        ));
+    }
+
+    // Conservation check: stas_in == redeem + remaining STAS outputs
+    let remaining_sats: u64 = config.remaining_outputs.iter().map(|d| d.satoshis).sum();
+    let total_out = config
+        .redeem_satoshis
+        .checked_add(remaining_sats)
+        .ok_or_else(|| TokenError::InvalidDestination("satoshi overflow".into()))?;
+
+    if config.token_input.satoshis != total_out {
+        return Err(TokenError::AmountMismatch {
+            expected: config.token_input.satoshis,
+            actual: total_out,
+        });
+    }
+
+    // Issuer-only check: we need the token input owner_pkh to match redemption_pkh.
+    // The owner pubkey hash is derivable from the private key provided.
+    let owner_pkh =
+        bsv_primitives::hash::hash160(&config.token_input.private_key.pub_key().to_compressed());
+    if owner_pkh != config.redemption_pkh {
+        return Err(TokenError::IssuerOnly(
+            "token input owner must be the issuer (redemption_pkh)".into(),
+        ));
+    }
+
+    let mut tx = Transaction::new();
+
+    // Input 0: STAS token
+    let mut token_in = TransactionInput::new();
+    token_in.source_txid = *config.token_input.txid.as_bytes();
+    token_in.source_tx_out_index = config.token_input.vout;
+    token_in.set_source_output(Some(TransactionOutput {
+        satoshis: config.token_input.satoshis,
+        locking_script: config.token_input.locking_script.clone(),
+        change: false,
+    }));
+    tx.add_input(token_in);
+
+    // Input 1: Fee (P2PKH)
+    let mut fee_input = TransactionInput::new();
+    fee_input.source_txid = *config.fee_txid.as_bytes();
+    fee_input.source_tx_out_index = config.fee_vout;
+    fee_input.set_source_output(Some(TransactionOutput {
+        satoshis: config.fee_satoshis,
+        locking_script: config.fee_locking_script.clone(),
+        change: false,
+    }));
+    tx.add_input(fee_input);
+
+    // Output 0: P2PKH redeem
+    let redeem_address = bsv_script::Address::from_public_key_hash(
+        &config.redemption_pkh,
+        bsv_script::Network::Mainnet,
+    );
+    let redeem_script = p2pkh::lock(&redeem_address)?;
+    tx.add_output(TransactionOutput {
+        satoshis: config.redeem_satoshis,
+        locking_script: redeem_script,
+        change: false,
+    });
+
+    // Outputs 1..N: Remaining DSTAS outputs (partial redeem)
+    for dest in &config.remaining_outputs {
+        let locking = build_dstas_locking_script(
+            &dest.owner_pkh,
+            &dest.redemption_pkh,
+            None,
+            dest.frozen,
+            dest.freezable,
+            &dest.service_fields,
+            &dest.optional_data,
+        )?;
+        tx.add_output(TransactionOutput {
+            satoshis: dest.satoshis,
+            locking_script: locking,
+            change: false,
+        });
+    }
+
+    // Fee change
+    add_fee_change(
+        &mut tx,
+        config.fee_satoshis,
+        &config.fee_private_key,
+        config.fee_rate,
+    )?;
+
+    // Sign token input with DSTAS template (spending type 1 = Transfer)
+    let unlocker = dstas_template::unlock(
+        config.token_input.private_key.clone(),
+        DstasSpendType::Transfer,
+        None,
+    );
+    let sig = unlocker.sign(&tx, 0)?;
+    tx.inputs[0].unlocking_script = Some(sig);
+
+    // Sign fee input with P2PKH
+    let p2pkh_unlocker = p2pkh::unlock(config.fee_private_key.clone(), None);
+    let fee_sig = p2pkh_unlocker.sign(&tx, 1)?;
+    tx.inputs[1].unlocking_script = Some(fee_sig);
+
+    Ok(tx)
 }
 
 #[cfg(test)]
@@ -993,5 +1331,610 @@ mod tests {
         let tx = build_dstas_swap_flow_tx(&mut config).unwrap();
         assert_eq!(tx.input_count(), 3); // 2 token + 1 fee
         assert!(tx.output_count() >= 2);
+    }
+
+    // ---------------------------------------------------------------
+    // Split tests
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn split_single_to_two() {
+        let token_key = test_key();
+        let fee_key = test_key();
+        let redemption_pkh = [0x22; 20];
+
+        let config = DstasSplitConfig {
+            token_input: TokenInput {
+                txid: dummy_hash(),
+                vout: 0,
+                satoshis: 10000,
+                locking_script: make_dstas_locking(&[0x11; 20], &redemption_pkh),
+                private_key: token_key,
+            },
+            fee_txid: dummy_hash(),
+            fee_vout: 1,
+            fee_satoshis: 50_000,
+            fee_locking_script: test_p2pkh_script(&fee_key),
+            fee_private_key: fee_key,
+            destinations: vec![
+                DstasOutputParams {
+                    satoshis: 4000,
+                    owner_pkh: [0x33; 20],
+                    redemption_pkh,
+                    frozen: false,
+                    freezable: true,
+                    service_fields: vec![],
+                    optional_data: vec![],
+                },
+                DstasOutputParams {
+                    satoshis: 6000,
+                    owner_pkh: [0x44; 20],
+                    redemption_pkh,
+                    frozen: false,
+                    freezable: true,
+                    service_fields: vec![],
+                    optional_data: vec![],
+                },
+            ],
+            fee_rate: 500,
+        };
+
+        let tx = build_dstas_split_tx(config).unwrap();
+        assert_eq!(tx.input_count(), 2); // 1 token + 1 fee
+        assert!(tx.output_count() >= 2); // 2 DSTAS + optional change
+        assert_eq!(tx.outputs[0].satoshis, 4000);
+        assert_eq!(tx.outputs[1].satoshis, 6000);
+
+        // All signed
+        for input in &tx.inputs {
+            assert!(input.unlocking_script.is_some());
+        }
+    }
+
+    #[test]
+    fn split_to_four_outputs() {
+        let token_key = test_key();
+        let fee_key = test_key();
+        let redemption_pkh = [0x22; 20];
+
+        let config = DstasSplitConfig {
+            token_input: TokenInput {
+                txid: dummy_hash(),
+                vout: 0,
+                satoshis: 10000,
+                locking_script: make_dstas_locking(&[0x11; 20], &redemption_pkh),
+                private_key: token_key,
+            },
+            fee_txid: dummy_hash(),
+            fee_vout: 1,
+            fee_satoshis: 50_000,
+            fee_locking_script: test_p2pkh_script(&fee_key),
+            fee_private_key: fee_key,
+            destinations: vec![
+                DstasOutputParams { satoshis: 2500, owner_pkh: [0x33; 20], redemption_pkh, frozen: false, freezable: true, service_fields: vec![], optional_data: vec![] },
+                DstasOutputParams { satoshis: 2500, owner_pkh: [0x44; 20], redemption_pkh, frozen: false, freezable: true, service_fields: vec![], optional_data: vec![] },
+                DstasOutputParams { satoshis: 2500, owner_pkh: [0x55; 20], redemption_pkh, frozen: false, freezable: true, service_fields: vec![], optional_data: vec![] },
+                DstasOutputParams { satoshis: 2500, owner_pkh: [0x66; 20], redemption_pkh, frozen: false, freezable: true, service_fields: vec![], optional_data: vec![] },
+            ],
+            fee_rate: 500,
+        };
+
+        let tx = build_dstas_split_tx(config).unwrap();
+        assert!(tx.output_count() >= 4);
+    }
+
+    #[test]
+    fn split_empty_destinations_rejected() {
+        let token_key = test_key();
+        let fee_key = test_key();
+
+        let config = DstasSplitConfig {
+            token_input: TokenInput {
+                txid: dummy_hash(),
+                vout: 0,
+                satoshis: 10000,
+                locking_script: make_dstas_locking(&[0x11; 20], &[0x22; 20]),
+                private_key: token_key,
+            },
+            fee_txid: dummy_hash(),
+            fee_vout: 1,
+            fee_satoshis: 50_000,
+            fee_locking_script: test_p2pkh_script(&fee_key),
+            fee_private_key: fee_key,
+            destinations: vec![],
+            fee_rate: 500,
+        };
+
+        assert!(build_dstas_split_tx(config).is_err());
+    }
+
+    #[test]
+    fn split_five_destinations_rejected() {
+        let token_key = test_key();
+        let fee_key = test_key();
+        let redemption_pkh = [0x22; 20];
+
+        let dest = DstasOutputParams {
+            satoshis: 2000,
+            owner_pkh: [0x33; 20],
+            redemption_pkh,
+            frozen: false,
+            freezable: true,
+            service_fields: vec![],
+            optional_data: vec![],
+        };
+
+        let config = DstasSplitConfig {
+            token_input: TokenInput {
+                txid: dummy_hash(),
+                vout: 0,
+                satoshis: 10000,
+                locking_script: make_dstas_locking(&[0x11; 20], &redemption_pkh),
+                private_key: token_key,
+            },
+            fee_txid: dummy_hash(),
+            fee_vout: 1,
+            fee_satoshis: 50_000,
+            fee_locking_script: test_p2pkh_script(&fee_key),
+            fee_private_key: fee_key,
+            destinations: vec![dest.clone(), dest.clone(), dest.clone(), dest.clone(), dest],
+            fee_rate: 500,
+        };
+
+        assert!(build_dstas_split_tx(config).is_err());
+    }
+
+    #[test]
+    fn split_conservation_violation() {
+        let token_key = test_key();
+        let fee_key = test_key();
+        let redemption_pkh = [0x22; 20];
+
+        let config = DstasSplitConfig {
+            token_input: TokenInput {
+                txid: dummy_hash(),
+                vout: 0,
+                satoshis: 10000,
+                locking_script: make_dstas_locking(&[0x11; 20], &redemption_pkh),
+                private_key: token_key,
+            },
+            fee_txid: dummy_hash(),
+            fee_vout: 1,
+            fee_satoshis: 50_000,
+            fee_locking_script: test_p2pkh_script(&fee_key),
+            fee_private_key: fee_key,
+            destinations: vec![DstasOutputParams {
+                satoshis: 9000, // != 10000
+                owner_pkh: [0x33; 20],
+                redemption_pkh,
+                frozen: false,
+                freezable: true,
+                service_fields: vec![],
+                optional_data: vec![],
+            }],
+            fee_rate: 500,
+        };
+
+        assert!(build_dstas_split_tx(config).is_err());
+    }
+
+    // ---------------------------------------------------------------
+    // Merge tests
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn merge_two_inputs_to_one() {
+        let key_a = test_key();
+        let key_b = test_key();
+        let fee_key = test_key();
+        let redemption_pkh = [0x22; 20];
+
+        let config = DstasMergeConfig {
+            token_inputs: [
+                TokenInput {
+                    txid: dummy_hash(),
+                    vout: 0,
+                    satoshis: 3000,
+                    locking_script: make_dstas_locking(&[0x11; 20], &redemption_pkh),
+                    private_key: key_a,
+                },
+                TokenInput {
+                    txid: dummy_hash(),
+                    vout: 1,
+                    satoshis: 7000,
+                    locking_script: make_dstas_locking(&[0x33; 20], &redemption_pkh),
+                    private_key: key_b,
+                },
+            ],
+            fee_txid: dummy_hash(),
+            fee_vout: 2,
+            fee_satoshis: 50_000,
+            fee_locking_script: test_p2pkh_script(&fee_key),
+            fee_private_key: fee_key,
+            destinations: vec![DstasOutputParams {
+                satoshis: 10000,
+                owner_pkh: [0x55; 20],
+                redemption_pkh,
+                frozen: false,
+                freezable: true,
+                service_fields: vec![],
+                optional_data: vec![],
+            }],
+            fee_rate: 500,
+        };
+
+        let tx = build_dstas_merge_tx(config).unwrap();
+        assert_eq!(tx.input_count(), 3); // 2 token + 1 fee
+        assert!(tx.output_count() >= 1); // 1 DSTAS + optional change
+        assert_eq!(tx.outputs[0].satoshis, 10000);
+
+        for input in &tx.inputs {
+            assert!(input.unlocking_script.is_some());
+        }
+    }
+
+    #[test]
+    fn merge_empty_destinations_rejected() {
+        let fee_key = test_key();
+        let redemption_pkh = [0x22; 20];
+
+        let config = DstasMergeConfig {
+            token_inputs: [
+                TokenInput { txid: dummy_hash(), vout: 0, satoshis: 3000, locking_script: make_dstas_locking(&[0x11; 20], &redemption_pkh), private_key: test_key() },
+                TokenInput { txid: dummy_hash(), vout: 1, satoshis: 7000, locking_script: make_dstas_locking(&[0x33; 20], &redemption_pkh), private_key: test_key() },
+            ],
+            fee_txid: dummy_hash(),
+            fee_vout: 2,
+            fee_satoshis: 50_000,
+            fee_locking_script: test_p2pkh_script(&fee_key),
+            fee_private_key: fee_key,
+            destinations: vec![],
+            fee_rate: 500,
+        };
+
+        assert!(build_dstas_merge_tx(config).is_err());
+    }
+
+    #[test]
+    fn merge_three_destinations_rejected() {
+        let fee_key = test_key();
+        let redemption_pkh = [0x22; 20];
+
+        let dest = DstasOutputParams {
+            satoshis: 3000,
+            owner_pkh: [0x33; 20],
+            redemption_pkh,
+            frozen: false,
+            freezable: true,
+            service_fields: vec![],
+            optional_data: vec![],
+        };
+
+        let config = DstasMergeConfig {
+            token_inputs: [
+                TokenInput { txid: dummy_hash(), vout: 0, satoshis: 5000, locking_script: make_dstas_locking(&[0x11; 20], &redemption_pkh), private_key: test_key() },
+                TokenInput { txid: dummy_hash(), vout: 1, satoshis: 4000, locking_script: make_dstas_locking(&[0x33; 20], &redemption_pkh), private_key: test_key() },
+            ],
+            fee_txid: dummy_hash(),
+            fee_vout: 2,
+            fee_satoshis: 50_000,
+            fee_locking_script: test_p2pkh_script(&fee_key),
+            fee_private_key: fee_key,
+            destinations: vec![dest.clone(), dest.clone(), dest],
+            fee_rate: 500,
+        };
+
+        assert!(build_dstas_merge_tx(config).is_err());
+    }
+
+    #[test]
+    fn merge_conservation_violation() {
+        let fee_key = test_key();
+        let redemption_pkh = [0x22; 20];
+
+        let config = DstasMergeConfig {
+            token_inputs: [
+                TokenInput { txid: dummy_hash(), vout: 0, satoshis: 3000, locking_script: make_dstas_locking(&[0x11; 20], &redemption_pkh), private_key: test_key() },
+                TokenInput { txid: dummy_hash(), vout: 1, satoshis: 7000, locking_script: make_dstas_locking(&[0x33; 20], &redemption_pkh), private_key: test_key() },
+            ],
+            fee_txid: dummy_hash(),
+            fee_vout: 2,
+            fee_satoshis: 50_000,
+            fee_locking_script: test_p2pkh_script(&fee_key),
+            fee_private_key: fee_key,
+            destinations: vec![DstasOutputParams {
+                satoshis: 9000, // != 10000
+                owner_pkh: [0x55; 20],
+                redemption_pkh,
+                frozen: false,
+                freezable: true,
+                service_fields: vec![],
+                optional_data: vec![],
+            }],
+            fee_rate: 500,
+        };
+
+        assert!(build_dstas_merge_tx(config).is_err());
+    }
+
+    // ---------------------------------------------------------------
+    // Confiscation tests
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn confiscate_single_input() {
+        let token_key = test_key();
+        let fee_key = test_key();
+        let redemption_pkh = [0x22; 20];
+
+        let config = DstasConfiscateConfig {
+            token_inputs: vec![TokenInput {
+                txid: dummy_hash(),
+                vout: 0,
+                satoshis: 5000,
+                locking_script: make_dstas_locking(&[0x11; 20], &redemption_pkh),
+                private_key: token_key,
+            }],
+            fee_txid: dummy_hash(),
+            fee_vout: 1,
+            fee_satoshis: 50_000,
+            fee_locking_script: test_p2pkh_script(&fee_key),
+            fee_private_key: fee_key,
+            destinations: vec![DstasOutputParams {
+                satoshis: 5000,
+                owner_pkh: redemption_pkh, // redirected to issuer
+                redemption_pkh,
+                frozen: false,
+                freezable: true,
+                service_fields: vec![],
+                optional_data: vec![],
+            }],
+            fee_rate: 500,
+        };
+
+        let tx = build_dstas_confiscate_tx(config).unwrap();
+        assert_eq!(tx.input_count(), 2); // 1 token + 1 fee
+        assert!(tx.output_count() >= 1);
+        assert_eq!(tx.outputs[0].satoshis, 5000);
+
+        for input in &tx.inputs {
+            assert!(input.unlocking_script.is_some());
+        }
+    }
+
+    #[test]
+    fn confiscate_frozen_input_allowed() {
+        // Frozen inputs CAN be confiscated — this should succeed
+        let token_key = test_key();
+        let fee_key = test_key();
+        let redemption_pkh = [0x22; 20];
+
+        let frozen_locking =
+            build_dstas_locking_script(&[0x11; 20], &redemption_pkh, None, true, true, &[], &[])
+                .unwrap();
+
+        let config = DstasConfiscateConfig {
+            token_inputs: vec![TokenInput {
+                txid: dummy_hash(),
+                vout: 0,
+                satoshis: 5000,
+                locking_script: frozen_locking,
+                private_key: token_key,
+            }],
+            fee_txid: dummy_hash(),
+            fee_vout: 1,
+            fee_satoshis: 50_000,
+            fee_locking_script: test_p2pkh_script(&fee_key),
+            fee_private_key: fee_key,
+            destinations: vec![DstasOutputParams {
+                satoshis: 5000,
+                owner_pkh: redemption_pkh,
+                redemption_pkh,
+                frozen: false,
+                freezable: true,
+                service_fields: vec![],
+                optional_data: vec![],
+            }],
+            fee_rate: 500,
+        };
+
+        // Should succeed — confiscation path is valid for frozen UTXOs
+        let tx = build_dstas_confiscate_tx(config).unwrap();
+        assert_eq!(tx.outputs[0].satoshis, 5000);
+    }
+
+    #[test]
+    fn confiscate_empty_inputs_rejected() {
+        let fee_key = test_key();
+
+        let config = DstasConfiscateConfig {
+            token_inputs: vec![],
+            fee_txid: dummy_hash(),
+            fee_vout: 1,
+            fee_satoshis: 50_000,
+            fee_locking_script: test_p2pkh_script(&fee_key),
+            fee_private_key: fee_key,
+            destinations: vec![DstasOutputParams {
+                satoshis: 5000,
+                owner_pkh: [0x22; 20],
+                redemption_pkh: [0x22; 20],
+                frozen: false,
+                freezable: true,
+                service_fields: vec![],
+                optional_data: vec![],
+            }],
+            fee_rate: 500,
+        };
+
+        assert!(build_dstas_confiscate_tx(config).is_err());
+    }
+
+    // ---------------------------------------------------------------
+    // Redeem tests
+    // ---------------------------------------------------------------
+
+    /// Helper: create a redeem config where the issuer key owns the token.
+    fn make_redeem_config(
+        issuer_key: &PrivateKey,
+        fee_key: &PrivateKey,
+        token_sats: u64,
+        redeem_sats: u64,
+        remaining: Vec<DstasOutputParams>,
+        frozen: bool,
+    ) -> DstasRedeemConfig {
+        let issuer_pkh =
+            bsv_primitives::hash::hash160(&issuer_key.pub_key().to_compressed());
+        let locking = build_dstas_locking_script(
+            &issuer_pkh, &issuer_pkh, None, frozen, true, &[], &[],
+        ).unwrap();
+
+        DstasRedeemConfig {
+            token_input: TokenInput {
+                txid: dummy_hash(),
+                vout: 0,
+                satoshis: token_sats,
+                locking_script: locking,
+                private_key: issuer_key.clone(),
+            },
+            fee_txid: dummy_hash(),
+            fee_vout: 1,
+            fee_satoshis: 50_000,
+            fee_locking_script: test_p2pkh_script(fee_key),
+            fee_private_key: fee_key.clone(),
+            redeem_satoshis: redeem_sats,
+            redemption_pkh: issuer_pkh,
+            input_frozen: frozen,
+            remaining_outputs: remaining,
+            fee_rate: 500,
+        }
+    }
+
+    #[test]
+    fn redeem_full() {
+        let issuer_key = test_key();
+        let fee_key = test_key();
+
+        let config = make_redeem_config(&issuer_key, &fee_key, 10000, 10000, vec![], false);
+        let tx = build_dstas_redeem_tx(config).unwrap();
+
+        // Input: 1 token + 1 fee
+        assert_eq!(tx.input_count(), 2);
+        // Output 0: P2PKH redeem + optional change
+        assert_eq!(tx.outputs[0].satoshis, 10000);
+
+        // All signed
+        for input in &tx.inputs {
+            assert!(input.unlocking_script.is_some());
+        }
+    }
+
+    #[test]
+    fn redeem_partial_with_remaining() {
+        let issuer_key = test_key();
+        let fee_key = test_key();
+        let issuer_pkh =
+            bsv_primitives::hash::hash160(&issuer_key.pub_key().to_compressed());
+
+        let remaining = vec![DstasOutputParams {
+            satoshis: 4000,
+            owner_pkh: issuer_pkh,
+            redemption_pkh: issuer_pkh,
+            frozen: false,
+            freezable: true,
+            service_fields: vec![],
+            optional_data: vec![],
+        }];
+
+        let config = make_redeem_config(&issuer_key, &fee_key, 10000, 6000, remaining, false);
+        let tx = build_dstas_redeem_tx(config).unwrap();
+
+        assert_eq!(tx.outputs[0].satoshis, 6000); // P2PKH redeem
+        assert_eq!(tx.outputs[1].satoshis, 4000); // remaining DSTAS
+    }
+
+    #[test]
+    fn redeem_frozen_rejected() {
+        let issuer_key = test_key();
+        let fee_key = test_key();
+
+        let config = make_redeem_config(&issuer_key, &fee_key, 10000, 10000, vec![], true);
+        let result = build_dstas_redeem_tx(config);
+
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), TokenError::FrozenToken));
+    }
+
+    #[test]
+    fn redeem_non_issuer_rejected() {
+        let issuer_key = test_key();
+        let non_issuer_key = test_key();
+        let fee_key = test_key();
+
+        let issuer_pkh =
+            bsv_primitives::hash::hash160(&issuer_key.pub_key().to_compressed());
+
+        // Token is owned by non_issuer but redemption_pkh is the issuer
+        let locking = build_dstas_locking_script(
+            &[0x99; 20], &issuer_pkh, None, false, true, &[], &[],
+        ).unwrap();
+
+        let config = DstasRedeemConfig {
+            token_input: TokenInput {
+                txid: dummy_hash(),
+                vout: 0,
+                satoshis: 10000,
+                locking_script: locking,
+                private_key: non_issuer_key,
+            },
+            fee_txid: dummy_hash(),
+            fee_vout: 1,
+            fee_satoshis: 50_000,
+            fee_locking_script: test_p2pkh_script(&fee_key),
+            fee_private_key: fee_key,
+            redeem_satoshis: 10000,
+            redemption_pkh: issuer_pkh,
+            input_frozen: false,
+            remaining_outputs: vec![],
+            fee_rate: 500,
+        };
+
+        let result = build_dstas_redeem_tx(config);
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), TokenError::IssuerOnly(_)));
+    }
+
+    #[test]
+    fn redeem_conservation_violation() {
+        let issuer_key = test_key();
+        let fee_key = test_key();
+
+        // redeem_sats (8000) + remaining (0) != token_input (10000)
+        let config = make_redeem_config(&issuer_key, &fee_key, 10000, 8000, vec![], false);
+        let result = build_dstas_redeem_tx(config);
+
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), TokenError::AmountMismatch { .. }));
+    }
+
+    #[test]
+    fn redeem_zero_amount_rejected() {
+        let issuer_key = test_key();
+        let fee_key = test_key();
+        let issuer_pkh =
+            bsv_primitives::hash::hash160(&issuer_key.pub_key().to_compressed());
+
+        let remaining = vec![DstasOutputParams {
+            satoshis: 10000,
+            owner_pkh: issuer_pkh,
+            redemption_pkh: issuer_pkh,
+            frozen: false,
+            freezable: true,
+            service_fields: vec![],
+            optional_data: vec![],
+        }];
+
+        let config = make_redeem_config(&issuer_key, &fee_key, 10000, 0, remaining, false);
+        let result = build_dstas_redeem_tx(config);
+        assert!(result.is_err());
     }
 }
