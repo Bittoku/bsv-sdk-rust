@@ -17,8 +17,9 @@ use bsv_transaction::transaction::Transaction;
 use crate::error::TokenError;
 use crate::scheme::TokenScheme;
 use crate::script::dstas_builder::build_dstas_locking_script;
+use crate::script::dstas_swap::{is_dstas_frozen, resolve_dstas_swap_mode};
 use crate::template::dstas as dstas_template;
-use crate::types::DstasSpendType;
+use crate::types::{DstasSpendType, DstasSwapMode};
 
 // -----------------------------------------------------------------------
 // Config structs
@@ -93,6 +94,8 @@ pub struct DstasOutputParams {
     pub service_fields: Vec<Vec<u8>>,
     /// Additional optional data.
     pub optional_data: Vec<Vec<u8>>,
+    /// Optional action data (e.g. swap action data for remainder legs).
+    pub action_data: Option<crate::types::ActionData>,
 }
 
 /// Configuration for a generic DSTAS spend transaction.
@@ -505,7 +508,7 @@ pub fn build_dstas_base_tx(config: &DstasBaseConfig) -> Result<Transaction, Toke
         let locking = build_dstas_locking_script(
             &dest.owner_pkh,
             &dest.redemption_pkh,
-            None,
+            dest.action_data.as_ref(),
             dest.frozen,
             dest.freezable,
             &dest.service_fields,
@@ -566,17 +569,78 @@ pub fn build_dstas_unfreeze_tx(config: &mut DstasBaseConfig) -> Result<Transacti
     build_dstas_base_tx(config)
 }
 
-/// Build a DSTAS swap flow transaction.
+/// Build a DSTAS transfer-swap transaction.
 ///
-/// Requires exactly 2 token inputs. Uses `DstasSpendType::Transfer`.
+/// One input is spent via the regular transfer path (spending type 1),
+/// the other is consumed via swap matching. Requires exactly 2 token inputs.
+/// Frozen inputs are rejected.
+///
+/// Outputs can be 2–4: principal swap legs (ownership exchanged) plus
+/// optional remainder outputs for fractional-rate swaps.
+pub fn build_dstas_transfer_swap_tx(
+    config: &mut DstasBaseConfig,
+) -> Result<Transaction, TokenError> {
+    validate_swap_inputs(config)?;
+    config.spend_type = DstasSpendType::Transfer;
+    build_dstas_base_tx(config)
+}
+
+/// Build a DSTAS swap-swap transaction.
+///
+/// Both inputs have swap action data and are spent via the swap path
+/// (spending type 4). Requires exactly 2 token inputs.
+/// Frozen inputs are rejected.
+///
+/// Outputs can be 2–4: principal swap legs (ownership exchanged) plus
+/// optional remainder outputs for fractional-rate swaps.
+pub fn build_dstas_swap_swap_tx(
+    config: &mut DstasBaseConfig,
+) -> Result<Transaction, TokenError> {
+    validate_swap_inputs(config)?;
+    config.spend_type = DstasSpendType::SwapCancellation;
+    build_dstas_base_tx(config)
+}
+
+/// Build a DSTAS swap flow transaction with auto-detected mode.
+///
+/// Inspects both input locking scripts to determine whether this is a
+/// transfer-swap (one side transfers) or swap-swap (both sides have swap
+/// action data). Delegates to the appropriate builder.
+///
+/// Requires exactly 2 token inputs. Frozen inputs are rejected.
 pub fn build_dstas_swap_flow_tx(config: &mut DstasBaseConfig) -> Result<Transaction, TokenError> {
     if config.token_inputs.len() != 2 {
         return Err(TokenError::InvalidDestination(
             "swap flow requires exactly 2 token inputs".into(),
         ));
     }
-    config.spend_type = DstasSpendType::Transfer;
-    build_dstas_base_tx(config)
+
+    let mode = resolve_dstas_swap_mode(
+        config.token_inputs[0].locking_script.to_bytes(),
+        config.token_inputs[1].locking_script.to_bytes(),
+    );
+
+    match mode {
+        DstasSwapMode::SwapSwap => build_dstas_swap_swap_tx(config),
+        DstasSwapMode::TransferSwap => build_dstas_transfer_swap_tx(config),
+    }
+}
+
+/// Validate swap inputs: exactly 2, none frozen.
+fn validate_swap_inputs(config: &DstasBaseConfig) -> Result<(), TokenError> {
+    if config.token_inputs.len() != 2 {
+        return Err(TokenError::InvalidDestination(
+            "swap requires exactly 2 token inputs".into(),
+        ));
+    }
+
+    for ti in &config.token_inputs {
+        if is_dstas_frozen(ti.locking_script.to_bytes()) {
+            return Err(TokenError::FrozenToken);
+        }
+    }
+
+    Ok(())
 }
 
 /// Build a DSTAS split transaction.
@@ -1003,6 +1067,7 @@ mod tests {
                 freezable: true,
                 service_fields: vec![],
                 optional_data: vec![],
+                action_data: None,
             }],
             spend_type: DstasSpendType::Transfer,
             fee_rate: 500,
@@ -1046,6 +1111,7 @@ mod tests {
                     freezable: true,
                     service_fields: vec![],
                     optional_data: vec![],
+                action_data: None,
                 },
                 DstasOutputParams {
                     satoshis: 6000,
@@ -1055,6 +1121,7 @@ mod tests {
                     freezable: true,
                     service_fields: vec![],
                     optional_data: vec![],
+                action_data: None,
                 },
             ],
             spend_type: DstasSpendType::Transfer,
@@ -1093,6 +1160,7 @@ mod tests {
                 freezable: true,
                 service_fields: vec![],
                 optional_data: vec![],
+                action_data: None,
             }],
             spend_type: DstasSpendType::Transfer,
             fee_rate: 500,
@@ -1150,6 +1218,7 @@ mod tests {
                 freezable: true,
                 service_fields: vec![],
                 optional_data: vec![],
+                action_data: None,
             }],
             spend_type: DstasSpendType::Transfer,
             fee_rate: 500,
@@ -1188,6 +1257,7 @@ mod tests {
                 freezable: true,
                 service_fields: vec![],
                 optional_data: vec![],
+                action_data: None,
             }],
             spend_type: DstasSpendType::Transfer, // will be overridden
             fee_rate: 500,
@@ -1228,6 +1298,7 @@ mod tests {
                 freezable: true,
                 service_fields: vec![],
                 optional_data: vec![],
+                action_data: None,
             }],
             spend_type: DstasSpendType::Transfer,
             fee_rate: 500,
@@ -1270,6 +1341,7 @@ mod tests {
                 freezable: true,
                 service_fields: vec![],
                 optional_data: vec![],
+                action_data: None,
             }],
             spend_type: DstasSpendType::Transfer,
             fee_rate: 500,
@@ -1313,6 +1385,7 @@ mod tests {
                     freezable: true,
                     service_fields: vec![],
                     optional_data: vec![],
+                action_data: None,
                 },
                 DstasOutputParams {
                     satoshis: 7000,
@@ -1322,6 +1395,7 @@ mod tests {
                     freezable: true,
                     service_fields: vec![],
                     optional_data: vec![],
+                action_data: None,
                 },
             ],
             spend_type: DstasSpendType::SwapCancellation, // will be overridden
@@ -1365,6 +1439,7 @@ mod tests {
                     freezable: true,
                     service_fields: vec![],
                     optional_data: vec![],
+                action_data: None,
                 },
                 DstasOutputParams {
                     satoshis: 6000,
@@ -1374,6 +1449,7 @@ mod tests {
                     freezable: true,
                     service_fields: vec![],
                     optional_data: vec![],
+                action_data: None,
                 },
             ],
             fee_rate: 500,
@@ -1411,10 +1487,10 @@ mod tests {
             fee_locking_script: test_p2pkh_script(&fee_key),
             fee_private_key: fee_key,
             destinations: vec![
-                DstasOutputParams { satoshis: 2500, owner_pkh: [0x33; 20], redemption_pkh, frozen: false, freezable: true, service_fields: vec![], optional_data: vec![] },
-                DstasOutputParams { satoshis: 2500, owner_pkh: [0x44; 20], redemption_pkh, frozen: false, freezable: true, service_fields: vec![], optional_data: vec![] },
-                DstasOutputParams { satoshis: 2500, owner_pkh: [0x55; 20], redemption_pkh, frozen: false, freezable: true, service_fields: vec![], optional_data: vec![] },
-                DstasOutputParams { satoshis: 2500, owner_pkh: [0x66; 20], redemption_pkh, frozen: false, freezable: true, service_fields: vec![], optional_data: vec![] },
+                DstasOutputParams { satoshis: 2500, owner_pkh: [0x33; 20], redemption_pkh, frozen: false, freezable: true, service_fields: vec![], optional_data: vec![], action_data: None },
+                DstasOutputParams { satoshis: 2500, owner_pkh: [0x44; 20], redemption_pkh, frozen: false, freezable: true, service_fields: vec![], optional_data: vec![], action_data: None },
+                DstasOutputParams { satoshis: 2500, owner_pkh: [0x55; 20], redemption_pkh, frozen: false, freezable: true, service_fields: vec![], optional_data: vec![], action_data: None },
+                DstasOutputParams { satoshis: 2500, owner_pkh: [0x66; 20], redemption_pkh, frozen: false, freezable: true, service_fields: vec![], optional_data: vec![], action_data: None },
             ],
             fee_rate: 500,
         };
@@ -1462,6 +1538,7 @@ mod tests {
             freezable: true,
             service_fields: vec![],
             optional_data: vec![],
+                action_data: None,
         };
 
         let config = DstasSplitConfig {
@@ -1511,6 +1588,7 @@ mod tests {
                 freezable: true,
                 service_fields: vec![],
                 optional_data: vec![],
+                action_data: None,
             }],
             fee_rate: 500,
         };
@@ -1559,6 +1637,7 @@ mod tests {
                 freezable: true,
                 service_fields: vec![],
                 optional_data: vec![],
+                action_data: None,
             }],
             fee_rate: 500,
         };
@@ -1608,6 +1687,7 @@ mod tests {
             freezable: true,
             service_fields: vec![],
             optional_data: vec![],
+                action_data: None,
         };
 
         let config = DstasMergeConfig {
@@ -1650,6 +1730,7 @@ mod tests {
                 freezable: true,
                 service_fields: vec![],
                 optional_data: vec![],
+                action_data: None,
             }],
             fee_rate: 500,
         };
@@ -1688,6 +1769,7 @@ mod tests {
                 freezable: true,
                 service_fields: vec![],
                 optional_data: vec![],
+                action_data: None,
             }],
             fee_rate: 500,
         };
@@ -1734,6 +1816,7 @@ mod tests {
                 freezable: true,
                 service_fields: vec![],
                 optional_data: vec![],
+                action_data: None,
             }],
             fee_rate: 500,
         };
@@ -1762,6 +1845,7 @@ mod tests {
                 freezable: true,
                 service_fields: vec![],
                 optional_data: vec![],
+                action_data: None,
             }],
             fee_rate: 500,
         };
@@ -1843,6 +1927,7 @@ mod tests {
             freezable: true,
             service_fields: vec![],
             optional_data: vec![],
+                action_data: None,
         }];
 
         let config = make_redeem_config(&issuer_key, &fee_key, 10000, 6000, remaining, false);
@@ -1931,10 +2016,761 @@ mod tests {
             freezable: true,
             service_fields: vec![],
             optional_data: vec![],
+                action_data: None,
         }];
 
         let config = make_redeem_config(&issuer_key, &fee_key, 10000, 0, remaining, false);
         let result = build_dstas_redeem_tx(config);
         assert!(result.is_err());
+    }
+
+    // ---------------------------------------------------------------
+    // Extended swap tests
+    // ---------------------------------------------------------------
+
+    use crate::types::ActionData;
+
+    /// Build a DSTAS locking script with swap action data embedded.
+    fn make_dstas_swap_locking(
+        owner_pkh: &[u8; 20],
+        redemption_pkh: &[u8; 20],
+        swap_data: &ActionData,
+    ) -> Script {
+        build_dstas_locking_script(
+            owner_pkh, redemption_pkh, Some(swap_data), false, true, &[], &[],
+        )
+        .unwrap()
+    }
+
+    /// Build a frozen DSTAS locking script (no action data).
+    fn make_dstas_frozen_locking(
+        owner_pkh: &[u8; 20],
+        redemption_pkh: &[u8; 20],
+    ) -> Script {
+        build_dstas_locking_script(
+            owner_pkh, redemption_pkh, None, true, true, &[], &[],
+        )
+        .unwrap()
+    }
+
+    fn test_swap_data() -> ActionData {
+        ActionData::Swap {
+            requested_script_hash: [0xab; 32],
+            requested_pkh: [0xcd; 20],
+            rate_numerator: 1,
+            rate_denominator: 1,
+        }
+    }
+
+    #[test]
+    fn transfer_swap_1_to_1_two_outputs() {
+        let fee_key = test_key();
+        let swap_data = test_swap_data();
+        let redemption = [0x22; 20];
+
+        let mut config = DstasBaseConfig {
+            token_inputs: vec![
+                TokenInput {
+                    txid: dummy_hash(),
+                    vout: 0,
+                    satoshis: 5000,
+                    locking_script: make_dstas_locking(&[0x11; 20], &redemption),
+                    private_key: test_key(),
+                },
+                TokenInput {
+                    txid: dummy_hash(),
+                    vout: 1,
+                    satoshis: 5000,
+                    locking_script: make_dstas_swap_locking(&[0x33; 20], &redemption, &swap_data),
+                    private_key: test_key(),
+                },
+            ],
+            fee_txid: dummy_hash(),
+            fee_vout: 2,
+            fee_satoshis: 50_000,
+            fee_locking_script: test_p2pkh_script(&fee_key),
+            fee_private_key: fee_key,
+            destinations: vec![
+                DstasOutputParams {
+                    satoshis: 5000,
+                    owner_pkh: [0x44; 20],
+                    redemption_pkh: redemption,
+                    frozen: false,
+                    freezable: true,
+                    service_fields: vec![],
+                    optional_data: vec![],
+                    action_data: None,
+                },
+                DstasOutputParams {
+                    satoshis: 5000,
+                    owner_pkh: [0x55; 20],
+                    redemption_pkh: redemption,
+                    frozen: false,
+                    freezable: true,
+                    service_fields: vec![],
+                    optional_data: vec![],
+                    action_data: None,
+                },
+            ],
+            spend_type: DstasSpendType::Transfer,
+            fee_rate: 500,
+        };
+
+        let tx = build_dstas_transfer_swap_tx(&mut config).unwrap();
+        assert_eq!(tx.input_count(), 3); // 2 token + 1 fee
+        assert!(tx.output_count() >= 2);
+        assert_eq!(tx.outputs[0].satoshis, 5000);
+        assert_eq!(tx.outputs[1].satoshis, 5000);
+    }
+
+    #[test]
+    fn swap_swap_1_to_1_two_outputs() {
+        let fee_key = test_key();
+        let swap_data = test_swap_data();
+        let redemption = [0x22; 20];
+
+        let mut config = DstasBaseConfig {
+            token_inputs: vec![
+                TokenInput {
+                    txid: dummy_hash(),
+                    vout: 0,
+                    satoshis: 5000,
+                    locking_script: make_dstas_swap_locking(&[0x11; 20], &redemption, &swap_data),
+                    private_key: test_key(),
+                },
+                TokenInput {
+                    txid: dummy_hash(),
+                    vout: 1,
+                    satoshis: 5000,
+                    locking_script: make_dstas_swap_locking(&[0x33; 20], &redemption, &swap_data),
+                    private_key: test_key(),
+                },
+            ],
+            fee_txid: dummy_hash(),
+            fee_vout: 2,
+            fee_satoshis: 50_000,
+            fee_locking_script: test_p2pkh_script(&fee_key),
+            fee_private_key: fee_key,
+            destinations: vec![
+                DstasOutputParams {
+                    satoshis: 5000,
+                    owner_pkh: [0x44; 20],
+                    redemption_pkh: redemption,
+                    frozen: false,
+                    freezable: true,
+                    service_fields: vec![],
+                    optional_data: vec![],
+                    action_data: None,
+                },
+                DstasOutputParams {
+                    satoshis: 5000,
+                    owner_pkh: [0x55; 20],
+                    redemption_pkh: redemption,
+                    frozen: false,
+                    freezable: true,
+                    service_fields: vec![],
+                    optional_data: vec![],
+                    action_data: None,
+                },
+            ],
+            spend_type: DstasSpendType::Transfer,
+            fee_rate: 500,
+        };
+
+        let tx = build_dstas_swap_swap_tx(&mut config).unwrap();
+        assert_eq!(tx.input_count(), 3);
+        assert!(tx.output_count() >= 2);
+    }
+
+    #[test]
+    fn transfer_swap_fractional_rate_with_remainder() {
+        let fee_key = test_key();
+        let swap_data = ActionData::Swap {
+            requested_script_hash: [0xab; 32],
+            requested_pkh: [0xcd; 20],
+            rate_numerator: 2,
+            rate_denominator: 3,
+        };
+        let redemption = [0x22; 20];
+
+        // Input A: 6000 sats, Input B: 4000 sats with swap data
+        // Output 0: 4000 (principal A→B), Output 1: 4000 (principal B→A), Output 2: 2000 (remainder A)
+        let mut config = DstasBaseConfig {
+            token_inputs: vec![
+                TokenInput {
+                    txid: dummy_hash(),
+                    vout: 0,
+                    satoshis: 6000,
+                    locking_script: make_dstas_locking(&[0x11; 20], &redemption),
+                    private_key: test_key(),
+                },
+                TokenInput {
+                    txid: dummy_hash(),
+                    vout: 1,
+                    satoshis: 4000,
+                    locking_script: make_dstas_swap_locking(&[0x33; 20], &redemption, &swap_data),
+                    private_key: test_key(),
+                },
+            ],
+            fee_txid: dummy_hash(),
+            fee_vout: 2,
+            fee_satoshis: 50_000,
+            fee_locking_script: test_p2pkh_script(&fee_key),
+            fee_private_key: fee_key,
+            destinations: vec![
+                DstasOutputParams {
+                    satoshis: 4000,
+                    owner_pkh: [0x44; 20],
+                    redemption_pkh: redemption,
+                    frozen: false,
+                    freezable: true,
+                    service_fields: vec![],
+                    optional_data: vec![],
+                    action_data: None, // principal — neutral
+                },
+                DstasOutputParams {
+                    satoshis: 4000,
+                    owner_pkh: [0x55; 20],
+                    redemption_pkh: redemption,
+                    frozen: false,
+                    freezable: true,
+                    service_fields: vec![],
+                    optional_data: vec![],
+                    action_data: None, // principal — neutral
+                },
+                DstasOutputParams {
+                    satoshis: 2000,
+                    owner_pkh: [0x11; 20], // remainder back to original owner
+                    redemption_pkh: redemption,
+                    frozen: false,
+                    freezable: true,
+                    service_fields: vec![],
+                    optional_data: vec![],
+                    action_data: Some(swap_data.clone()), // remainder inherits action data
+                },
+            ],
+            spend_type: DstasSpendType::Transfer,
+            fee_rate: 500,
+        };
+
+        let tx = build_dstas_transfer_swap_tx(&mut config).unwrap();
+        assert_eq!(tx.input_count(), 3);
+        assert!(tx.output_count() >= 3);
+        assert_eq!(tx.outputs[0].satoshis, 4000);
+        assert_eq!(tx.outputs[1].satoshis, 4000);
+        assert_eq!(tx.outputs[2].satoshis, 2000);
+
+        // Verify remainder output has swap action data
+        let parsed = read_locking_script(tx.outputs[2].locking_script.to_bytes());
+        assert_eq!(parsed.script_type, ScriptType::Dstas);
+        let dstas = parsed.dstas.unwrap();
+        assert!(matches!(dstas.action_data_parsed, Some(ActionData::Swap { .. })));
+    }
+
+    #[test]
+    fn swap_swap_fractional_rate_with_remainder() {
+        let fee_key = test_key();
+        let swap_data = ActionData::Swap {
+            requested_script_hash: [0xab; 32],
+            requested_pkh: [0xcd; 20],
+            rate_numerator: 3,
+            rate_denominator: 2,
+        };
+        let redemption = [0x22; 20];
+
+        let mut config = DstasBaseConfig {
+            token_inputs: vec![
+                TokenInput {
+                    txid: dummy_hash(),
+                    vout: 0,
+                    satoshis: 7000,
+                    locking_script: make_dstas_swap_locking(&[0x11; 20], &redemption, &swap_data),
+                    private_key: test_key(),
+                },
+                TokenInput {
+                    txid: dummy_hash(),
+                    vout: 1,
+                    satoshis: 3000,
+                    locking_script: make_dstas_swap_locking(&[0x33; 20], &redemption, &swap_data),
+                    private_key: test_key(),
+                },
+            ],
+            fee_txid: dummy_hash(),
+            fee_vout: 2,
+            fee_satoshis: 50_000,
+            fee_locking_script: test_p2pkh_script(&fee_key),
+            fee_private_key: fee_key,
+            destinations: vec![
+                DstasOutputParams {
+                    satoshis: 3000,
+                    owner_pkh: [0x44; 20],
+                    redemption_pkh: redemption,
+                    frozen: false,
+                    freezable: true,
+                    service_fields: vec![],
+                    optional_data: vec![],
+                    action_data: None,
+                },
+                DstasOutputParams {
+                    satoshis: 3000,
+                    owner_pkh: [0x55; 20],
+                    redemption_pkh: redemption,
+                    frozen: false,
+                    freezable: true,
+                    service_fields: vec![],
+                    optional_data: vec![],
+                    action_data: None,
+                },
+                DstasOutputParams {
+                    satoshis: 4000,
+                    owner_pkh: [0x11; 20],
+                    redemption_pkh: redemption,
+                    frozen: false,
+                    freezable: true,
+                    service_fields: vec![],
+                    optional_data: vec![],
+                    action_data: Some(swap_data.clone()),
+                },
+            ],
+            spend_type: DstasSpendType::Transfer,
+            fee_rate: 500,
+        };
+
+        let tx = build_dstas_swap_swap_tx(&mut config).unwrap();
+        assert_eq!(tx.input_count(), 3);
+        assert!(tx.output_count() >= 3);
+    }
+
+    #[test]
+    fn transfer_swap_two_remainders_four_outputs() {
+        let fee_key = test_key();
+        let swap_data = test_swap_data();
+        let redemption = [0x22; 20];
+
+        let mut config = DstasBaseConfig {
+            token_inputs: vec![
+                TokenInput {
+                    txid: dummy_hash(),
+                    vout: 0,
+                    satoshis: 8000,
+                    locking_script: make_dstas_locking(&[0x11; 20], &redemption),
+                    private_key: test_key(),
+                },
+                TokenInput {
+                    txid: dummy_hash(),
+                    vout: 1,
+                    satoshis: 7000,
+                    locking_script: make_dstas_swap_locking(&[0x33; 20], &redemption, &swap_data),
+                    private_key: test_key(),
+                },
+            ],
+            fee_txid: dummy_hash(),
+            fee_vout: 2,
+            fee_satoshis: 50_000,
+            fee_locking_script: test_p2pkh_script(&fee_key),
+            fee_private_key: fee_key,
+            destinations: vec![
+                DstasOutputParams {
+                    satoshis: 5000,
+                    owner_pkh: [0x44; 20],
+                    redemption_pkh: redemption,
+                    frozen: false,
+                    freezable: true,
+                    service_fields: vec![],
+                    optional_data: vec![],
+                    action_data: None,
+                },
+                DstasOutputParams {
+                    satoshis: 5000,
+                    owner_pkh: [0x55; 20],
+                    redemption_pkh: redemption,
+                    frozen: false,
+                    freezable: true,
+                    service_fields: vec![],
+                    optional_data: vec![],
+                    action_data: None,
+                },
+                DstasOutputParams {
+                    satoshis: 3000,
+                    owner_pkh: [0x11; 20],
+                    redemption_pkh: redemption,
+                    frozen: false,
+                    freezable: true,
+                    service_fields: vec![],
+                    optional_data: vec![],
+                    action_data: None,
+                },
+                DstasOutputParams {
+                    satoshis: 2000,
+                    owner_pkh: [0x33; 20],
+                    redemption_pkh: redemption,
+                    frozen: false,
+                    freezable: true,
+                    service_fields: vec![],
+                    optional_data: vec![],
+                    action_data: Some(swap_data.clone()),
+                },
+            ],
+            spend_type: DstasSpendType::Transfer,
+            fee_rate: 500,
+        };
+
+        let tx = build_dstas_transfer_swap_tx(&mut config).unwrap();
+        assert_eq!(tx.input_count(), 3);
+        assert!(tx.output_count() >= 4);
+        assert_eq!(tx.outputs[0].satoshis, 5000);
+        assert_eq!(tx.outputs[1].satoshis, 5000);
+        assert_eq!(tx.outputs[2].satoshis, 3000);
+        assert_eq!(tx.outputs[3].satoshis, 2000);
+    }
+
+    #[test]
+    fn swap_swap_two_remainders_four_outputs() {
+        let fee_key = test_key();
+        let swap_data = test_swap_data();
+        let redemption = [0x22; 20];
+
+        let mut config = DstasBaseConfig {
+            token_inputs: vec![
+                TokenInput {
+                    txid: dummy_hash(),
+                    vout: 0,
+                    satoshis: 8000,
+                    locking_script: make_dstas_swap_locking(&[0x11; 20], &redemption, &swap_data),
+                    private_key: test_key(),
+                },
+                TokenInput {
+                    txid: dummy_hash(),
+                    vout: 1,
+                    satoshis: 7000,
+                    locking_script: make_dstas_swap_locking(&[0x33; 20], &redemption, &swap_data),
+                    private_key: test_key(),
+                },
+            ],
+            fee_txid: dummy_hash(),
+            fee_vout: 2,
+            fee_satoshis: 50_000,
+            fee_locking_script: test_p2pkh_script(&fee_key),
+            fee_private_key: fee_key,
+            destinations: vec![
+                DstasOutputParams {
+                    satoshis: 5000,
+                    owner_pkh: [0x44; 20],
+                    redemption_pkh: redemption,
+                    frozen: false,
+                    freezable: true,
+                    service_fields: vec![],
+                    optional_data: vec![],
+                    action_data: None,
+                },
+                DstasOutputParams {
+                    satoshis: 5000,
+                    owner_pkh: [0x55; 20],
+                    redemption_pkh: redemption,
+                    frozen: false,
+                    freezable: true,
+                    service_fields: vec![],
+                    optional_data: vec![],
+                    action_data: None,
+                },
+                DstasOutputParams {
+                    satoshis: 3000,
+                    owner_pkh: [0x11; 20],
+                    redemption_pkh: redemption,
+                    frozen: false,
+                    freezable: true,
+                    service_fields: vec![],
+                    optional_data: vec![],
+                    action_data: None,
+                },
+                DstasOutputParams {
+                    satoshis: 2000,
+                    owner_pkh: [0x33; 20],
+                    redemption_pkh: redemption,
+                    frozen: false,
+                    freezable: true,
+                    service_fields: vec![],
+                    optional_data: vec![],
+                    action_data: None,
+                },
+            ],
+            spend_type: DstasSpendType::Transfer,
+            fee_rate: 500,
+        };
+
+        let tx = build_dstas_swap_swap_tx(&mut config).unwrap();
+        assert_eq!(tx.input_count(), 3);
+        assert!(tx.output_count() >= 4);
+    }
+
+    #[test]
+    fn transfer_swap_frozen_input_rejected() {
+        let fee_key = test_key();
+        let redemption = [0x22; 20];
+
+        let mut config = DstasBaseConfig {
+            token_inputs: vec![
+                TokenInput {
+                    txid: dummy_hash(),
+                    vout: 0,
+                    satoshis: 5000,
+                    locking_script: make_dstas_frozen_locking(&[0x11; 20], &redemption),
+                    private_key: test_key(),
+                },
+                TokenInput {
+                    txid: dummy_hash(),
+                    vout: 1,
+                    satoshis: 5000,
+                    locking_script: make_dstas_locking(&[0x33; 20], &redemption),
+                    private_key: test_key(),
+                },
+            ],
+            fee_txid: dummy_hash(),
+            fee_vout: 2,
+            fee_satoshis: 50_000,
+            fee_locking_script: test_p2pkh_script(&fee_key),
+            fee_private_key: fee_key,
+            destinations: vec![
+                DstasOutputParams {
+                    satoshis: 5000,
+                    owner_pkh: [0x44; 20],
+                    redemption_pkh: redemption,
+                    frozen: false,
+                    freezable: true,
+                    service_fields: vec![],
+                    optional_data: vec![],
+                    action_data: None,
+                },
+                DstasOutputParams {
+                    satoshis: 5000,
+                    owner_pkh: [0x55; 20],
+                    redemption_pkh: redemption,
+                    frozen: false,
+                    freezable: true,
+                    service_fields: vec![],
+                    optional_data: vec![],
+                    action_data: None,
+                },
+            ],
+            spend_type: DstasSpendType::Transfer,
+            fee_rate: 500,
+        };
+
+        let result = build_dstas_transfer_swap_tx(&mut config);
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), TokenError::FrozenToken));
+    }
+
+    #[test]
+    fn swap_swap_frozen_input_rejected() {
+        let fee_key = test_key();
+        let swap_data = test_swap_data();
+        let redemption = [0x22; 20];
+
+        let mut config = DstasBaseConfig {
+            token_inputs: vec![
+                TokenInput {
+                    txid: dummy_hash(),
+                    vout: 0,
+                    satoshis: 5000,
+                    locking_script: make_dstas_swap_locking(&[0x11; 20], &redemption, &swap_data),
+                    private_key: test_key(),
+                },
+                TokenInput {
+                    txid: dummy_hash(),
+                    vout: 1,
+                    satoshis: 5000,
+                    locking_script: make_dstas_frozen_locking(&[0x33; 20], &redemption),
+                    private_key: test_key(),
+                },
+            ],
+            fee_txid: dummy_hash(),
+            fee_vout: 2,
+            fee_satoshis: 50_000,
+            fee_locking_script: test_p2pkh_script(&fee_key),
+            fee_private_key: fee_key,
+            destinations: vec![
+                DstasOutputParams {
+                    satoshis: 5000,
+                    owner_pkh: [0x44; 20],
+                    redemption_pkh: redemption,
+                    frozen: false,
+                    freezable: true,
+                    service_fields: vec![],
+                    optional_data: vec![],
+                    action_data: None,
+                },
+                DstasOutputParams {
+                    satoshis: 5000,
+                    owner_pkh: [0x55; 20],
+                    redemption_pkh: redemption,
+                    frozen: false,
+                    freezable: true,
+                    service_fields: vec![],
+                    optional_data: vec![],
+                    action_data: None,
+                },
+            ],
+            spend_type: DstasSpendType::Transfer,
+            fee_rate: 500,
+        };
+
+        let result = build_dstas_swap_swap_tx(&mut config);
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), TokenError::FrozenToken));
+    }
+
+    #[test]
+    fn swap_flow_auto_detects_transfer_swap() {
+        let fee_key = test_key();
+        let swap_data = test_swap_data();
+        let redemption = [0x22; 20];
+
+        let mut config = DstasBaseConfig {
+            token_inputs: vec![
+                TokenInput {
+                    txid: dummy_hash(),
+                    vout: 0,
+                    satoshis: 5000,
+                    locking_script: make_dstas_locking(&[0x11; 20], &redemption),
+                    private_key: test_key(),
+                },
+                TokenInput {
+                    txid: dummy_hash(),
+                    vout: 1,
+                    satoshis: 5000,
+                    locking_script: make_dstas_swap_locking(&[0x33; 20], &redemption, &swap_data),
+                    private_key: test_key(),
+                },
+            ],
+            fee_txid: dummy_hash(),
+            fee_vout: 2,
+            fee_satoshis: 50_000,
+            fee_locking_script: test_p2pkh_script(&fee_key),
+            fee_private_key: fee_key,
+            destinations: vec![
+                DstasOutputParams {
+                    satoshis: 5000,
+                    owner_pkh: [0x44; 20],
+                    redemption_pkh: redemption,
+                    frozen: false,
+                    freezable: true,
+                    service_fields: vec![],
+                    optional_data: vec![],
+                    action_data: None,
+                },
+                DstasOutputParams {
+                    satoshis: 5000,
+                    owner_pkh: [0x55; 20],
+                    redemption_pkh: redemption,
+                    frozen: false,
+                    freezable: true,
+                    service_fields: vec![],
+                    optional_data: vec![],
+                    action_data: None,
+                },
+            ],
+            spend_type: DstasSpendType::SwapCancellation, // should be overridden
+            fee_rate: 500,
+        };
+
+        // Auto-detect: one has swap data → TransferSwap → spending type Transfer
+        let tx = build_dstas_swap_flow_tx(&mut config).unwrap();
+        assert_eq!(tx.input_count(), 3);
+    }
+
+    #[test]
+    fn swap_flow_auto_detects_swap_swap() {
+        let fee_key = test_key();
+        let swap_data = test_swap_data();
+        let redemption = [0x22; 20];
+
+        let mut config = DstasBaseConfig {
+            token_inputs: vec![
+                TokenInput {
+                    txid: dummy_hash(),
+                    vout: 0,
+                    satoshis: 5000,
+                    locking_script: make_dstas_swap_locking(&[0x11; 20], &redemption, &swap_data),
+                    private_key: test_key(),
+                },
+                TokenInput {
+                    txid: dummy_hash(),
+                    vout: 1,
+                    satoshis: 5000,
+                    locking_script: make_dstas_swap_locking(&[0x33; 20], &redemption, &swap_data),
+                    private_key: test_key(),
+                },
+            ],
+            fee_txid: dummy_hash(),
+            fee_vout: 2,
+            fee_satoshis: 50_000,
+            fee_locking_script: test_p2pkh_script(&fee_key),
+            fee_private_key: fee_key,
+            destinations: vec![
+                DstasOutputParams {
+                    satoshis: 5000,
+                    owner_pkh: [0x44; 20],
+                    redemption_pkh: redemption,
+                    frozen: false,
+                    freezable: true,
+                    service_fields: vec![],
+                    optional_data: vec![],
+                    action_data: None,
+                },
+                DstasOutputParams {
+                    satoshis: 5000,
+                    owner_pkh: [0x55; 20],
+                    redemption_pkh: redemption,
+                    frozen: false,
+                    freezable: true,
+                    service_fields: vec![],
+                    optional_data: vec![],
+                    action_data: None,
+                },
+            ],
+            spend_type: DstasSpendType::Transfer, // should be overridden to SwapCancellation
+            fee_rate: 500,
+        };
+
+        // Auto-detect: both have swap data → SwapSwap → spending type SwapCancellation
+        let tx = build_dstas_swap_flow_tx(&mut config).unwrap();
+        assert_eq!(tx.input_count(), 3);
+    }
+
+    #[test]
+    fn swap_action_data_roundtrip() {
+        let owner = [0x11; 20];
+        let redemption = [0x22; 20];
+        let swap_data = ActionData::Swap {
+            requested_script_hash: [0xab; 32],
+            requested_pkh: [0xef; 20],
+            rate_numerator: 42,
+            rate_denominator: 7,
+        };
+
+        let script = build_dstas_locking_script(
+            &owner, &redemption, Some(&swap_data), false, true, &[], &[],
+        )
+        .unwrap();
+
+        let parsed = read_locking_script(script.to_bytes());
+        assert_eq!(parsed.script_type, ScriptType::Dstas);
+        let dstas = parsed.dstas.unwrap();
+
+        match dstas.action_data_parsed {
+            Some(ActionData::Swap {
+                requested_script_hash,
+                requested_pkh,
+                rate_numerator,
+                rate_denominator,
+            }) => {
+                assert_eq!(requested_script_hash, [0xab; 32]);
+                assert_eq!(requested_pkh, [0xef; 20]);
+                assert_eq!(rate_numerator, 42);
+                assert_eq!(rate_denominator, 7);
+            }
+            other => panic!("expected Swap action data, got {:?}", other),
+        }
     }
 }

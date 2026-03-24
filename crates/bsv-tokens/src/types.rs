@@ -46,13 +46,31 @@ pub enum DstasSpendType {
 /// Additional data attached to a dSTAS action.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ActionData {
-    /// Atomic swap with a requested script hash.
+    /// Atomic swap action data.
+    ///
+    /// Encoded as 61 bytes per leg: 1 (kind 0x01) + 32 (hash) + 20 (PKH) +
+    /// 4 (numerator LE) + 4 (denominator LE).
     Swap {
-        /// The SHA-256 hash of the requested output script.
+        /// SHA-256 hash of the counterparty's locking script tail.
         requested_script_hash: [u8; 32],
+        /// The 20-byte public key hash of the requested recipient.
+        requested_pkh: [u8; 20],
+        /// Exchange rate numerator (little-endian u32).
+        rate_numerator: u32,
+        /// Exchange rate denominator (little-endian u32).
+        rate_denominator: u32,
     },
     /// Custom application data.
     Custom(Vec<u8>),
+}
+
+/// The detected swap mode for a two-input DSTAS transaction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DstasSwapMode {
+    /// One input is a regular transfer, the other is consumed via swap matching.
+    TransferSwap,
+    /// Both inputs have swap action data — atomic counter-swap.
+    SwapSwap,
 }
 
 /// Parameters for constructing a dSTAS locking script.
