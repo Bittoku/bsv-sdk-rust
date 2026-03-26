@@ -200,11 +200,29 @@ fn try_parse_dstas(script: &[u8]) -> Option<DstasFields> {
 
     // Parse action data
     let action_data_parsed = action_data_raw.as_ref().and_then(|raw| {
-        if raw.len() == 32 {
+        // Swap action data: 61 bytes starting with kind 0x01
+        if raw.len() == 61 && raw[0] == 0x01 {
+            let mut hash = [0u8; 32];
+            hash.copy_from_slice(&raw[1..33]);
+            let mut pkh = [0u8; 20];
+            pkh.copy_from_slice(&raw[33..53]);
+            let rate_numerator = u32::from_le_bytes([raw[53], raw[54], raw[55], raw[56]]);
+            let rate_denominator = u32::from_le_bytes([raw[57], raw[58], raw[59], raw[60]]);
+            Some(ActionData::Swap {
+                requested_script_hash: hash,
+                requested_pkh: pkh,
+                rate_numerator,
+                rate_denominator,
+            })
+        } else if raw.len() == 32 {
+            // Legacy: bare 32-byte hash (no kind byte) — treat as swap with zero rate
             let mut hash = [0u8; 32];
             hash.copy_from_slice(raw);
             Some(ActionData::Swap {
                 requested_script_hash: hash,
+                requested_pkh: [0u8; 20],
+                rate_numerator: 0,
+                rate_denominator: 0,
             })
         } else if !raw.is_empty() && raw != &[0x52] {
             Some(ActionData::Custom(raw.clone()))

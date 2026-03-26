@@ -8,4 +8,10 @@ pub mod dstas_bundle;
 
 pub use planner::{PlannedOp, plan_operations};
 pub use stas_bundle::{PayoutBundle, StasBundleConfig, TokenUtxo, FundingUtxo, build_stas_bundle};
-pub use dstas_bundle::{DstasBundleConfig, build_dstas_bundle};
+pub use dstas_bundle::{
+    DstasBundleFactory, BundleResult, BundleSpendType,
+    StasOutPoint, FundingOutPoint, FundingRequest, Recipient,
+    TransferOutput, TransferRequest,
+    LockingParamsArgs, LockingParamsResult,
+    AVG_FEE_FOR_DSTAS_MERGE,
+};

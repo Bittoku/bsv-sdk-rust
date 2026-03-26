@@ -9,6 +9,7 @@ pub mod stas;
 pub use contract::{build_contract_tx, ContractConfig};
 pub use dstas::{
     build_dstas_base_tx, build_dstas_freeze_tx, build_dstas_issue_txs, build_dstas_swap_flow_tx,
+    build_dstas_transfer_swap_tx, build_dstas_swap_swap_tx,
     build_dstas_unfreeze_tx, DstasBaseConfig, DstasIssueConfig, DstasIssueOutput, DstasIssueTxs,
     DstasOutputParams, TokenInput,
 };

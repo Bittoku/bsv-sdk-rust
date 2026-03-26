@@ -49,6 +49,14 @@ pub enum TokenError {
         available: u64,
     },
 
+    /// The token is frozen and cannot be used for this operation.
+    #[error("token is frozen")]
+    FrozenToken,
+
+    /// The operation is restricted to the token issuer.
+    #[error("issuer only: {0}")]
+    IssuerOnly(String),
+
     /// Bundle operation error.
     #[error("bundle error: {0}")]
     BundleError(String),
