@@ -1454,4 +1454,227 @@ mod tests {
             "checkpoint output should be a STAS-BTG script (starts with OP_IF)"
         );
     }
+
+    // -------------------------------------------------------------------
+    // Gap 4: Factory integration with SigningKey::Multi
+    // -------------------------------------------------------------------
+
+    /// Create a Payment backed by a multisig signing key.
+    fn test_multi_payment(satoshis: u64) -> Payment {
+        use bsv_transaction::template::p2mpkh::MultisigScript;
+
+        let keys: Vec<PrivateKey> = (0..3).map(|_| PrivateKey::new()).collect();
+        let pubs: Vec<_> = keys.iter().map(|k| k.pub_key()).collect();
+        let ms = MultisigScript::new(2, pubs).unwrap();
+        let mpkh = ms.mpkh();
+        let addr = bsv_script::Address::from_public_key_hash(&mpkh, bsv_script::Network::Mainnet);
+        let locking = p2pkh::lock(&addr).unwrap();
+
+        Payment {
+            txid: Hash::from_bytes(&[0xcc; 32]).unwrap(),
+            vout: 0,
+            satoshis,
+            locking_script: locking,
+            signing_key: SigningKey::Multi {
+                private_keys: vec![keys[0].clone(), keys[1].clone()],
+                multisig: ms,
+            },
+        }
+    }
+
+    #[test]
+    fn transfer_with_multi_signing_key_succeeds() {
+        let token = test_multi_payment(5000);
+        let funding = test_multi_payment(50000);
+        let dest = test_destination(5000);
+
+        let config = TransferConfig {
+            token_utxo: token,
+            destination: dest,
+            redemption_pkh: redemption_pkh(),
+            splittable: true,
+            funding,
+            fee_rate: 500,
+        };
+
+        let tx = build_transfer_tx(&config).unwrap();
+
+        // Transaction should have 2 inputs, both signed
+        assert_eq!(tx.input_count(), 2);
+        assert!(
+            tx.inputs[0].unlocking_script.is_some(),
+            "token input should be signed"
+        );
+        assert!(
+            tx.inputs[1].unlocking_script.is_some(),
+            "funding input should be signed"
+        );
+
+        // Unlocking scripts should be non-empty
+        let token_unlock = tx.inputs[0].unlocking_script.as_ref().unwrap();
+        assert!(
+            token_unlock.len() > 0,
+            "token unlocking script should be non-empty"
+        );
+        let funding_unlock = tx.inputs[1].unlocking_script.as_ref().unwrap();
+        assert!(
+            funding_unlock.len() > 0,
+            "funding unlocking script should be non-empty"
+        );
+
+        // Both unlocking scripts should be longer than P2PKH (106 bytes)
+        // because they use multisig
+        assert!(
+            token_unlock.len() > 106,
+            "multisig token unlock ({}) should be longer than P2PKH",
+            token_unlock.len()
+        );
+
+        // Change output should exist and use the MPKH-derived address
+        assert!(
+            tx.output_count() >= 2,
+            "should have token output + change output"
+        );
+    }
+
+    #[test]
+    fn transfer_with_mixed_keys_token_multi_funding_single() {
+        let token = test_multi_payment(5000);
+        let funding = test_payment(50000); // single key funding
+        let dest = test_destination(5000);
+
+        let config = TransferConfig {
+            token_utxo: token,
+            destination: dest,
+            redemption_pkh: redemption_pkh(),
+            splittable: true,
+            funding,
+            fee_rate: 500,
+        };
+
+        let tx = build_transfer_tx(&config).unwrap();
+        assert_eq!(tx.input_count(), 2);
+        assert!(tx.inputs[0].unlocking_script.is_some());
+        assert!(tx.inputs[1].unlocking_script.is_some());
+
+        // Token input (multisig) should be longer than funding (P2PKH)
+        let token_len = tx.inputs[0].unlocking_script.as_ref().unwrap().len();
+        let funding_len = tx.inputs[1].unlocking_script.as_ref().unwrap().len();
+        assert!(
+            token_len > funding_len,
+            "multisig token unlock ({}) should be longer than P2PKH funding ({})",
+            token_len,
+            funding_len
+        );
+    }
+
+    // -------------------------------------------------------------------
+    // Gap 5: BTG rejection of P2MPKH
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn btg_transfer_rejects_multisig_token_key() {
+        use bsv_transaction::template::p2mpkh::MultisigScript;
+
+        let keys: Vec<PrivateKey> = (0..3).map(|_| PrivateKey::new()).collect();
+        let pubs: Vec<_> = keys.iter().map(|k| k.pub_key()).collect();
+        let ms = MultisigScript::new(2, pubs).unwrap();
+        let mpkh = ms.mpkh();
+        let addr = bsv_script::Address::from_public_key_hash(&mpkh, bsv_script::Network::Mainnet);
+        let locking = p2pkh::lock(&addr).unwrap();
+
+        let multi_payment = Payment {
+            txid: Hash::from_bytes(&[0xcc; 32]).unwrap(),
+            vout: 0,
+            satoshis: 5000,
+            locking_script: locking,
+            signing_key: SigningKey::Multi {
+                private_keys: vec![keys[0].clone(), keys[1].clone()],
+                multisig: ms,
+            },
+        };
+
+        // Build a fake prev tx for the BTG proof
+        let mut prev_tx = Transaction::new();
+        let mut prev_input = TransactionInput::new();
+        prev_input.source_txid = [0xdd; 32];
+        prev_input.unlocking_script = Some(Script::new());
+        prev_tx.add_input(prev_input);
+        prev_tx.add_output(TransactionOutput {
+            satoshis: 5000,
+            locking_script: multi_payment.locking_script.clone(),
+            change: false,
+        });
+        let prev_raw = prev_tx.to_bytes();
+
+        let funding = test_payment(50000);
+        let dest = test_destination(5000);
+
+        let config = BtgTransferConfig {
+            token_utxo: BtgPayment {
+                payment: multi_payment,
+                prev_raw_tx: prev_raw,
+            },
+            destination: dest,
+            redemption_pkh: redemption_pkh(),
+            splittable: true,
+            funding,
+            fee_rate: 500,
+        };
+
+        let result = build_btg_transfer_tx(&config);
+        assert!(result.is_err(), "BTG should reject P2MPKH token key");
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("P2MPKH") || err_msg.contains("multisig"),
+            "error should mention P2MPKH or multisig, got: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn btg_checkpoint_rejects_multisig_token_key() {
+        use bsv_transaction::template::p2mpkh::MultisigScript;
+
+        let keys: Vec<PrivateKey> = (0..3).map(|_| PrivateKey::new()).collect();
+        let pubs: Vec<_> = keys.iter().map(|k| k.pub_key()).collect();
+        let ms = MultisigScript::new(2, pubs).unwrap();
+        let mpkh = ms.mpkh();
+        let addr = bsv_script::Address::from_public_key_hash(&mpkh, bsv_script::Network::Mainnet);
+        let locking = p2pkh::lock(&addr).unwrap();
+
+        let multi_payment = Payment {
+            txid: Hash::from_bytes(&[0xcc; 32]).unwrap(),
+            vout: 0,
+            satoshis: 5000,
+            locking_script: locking,
+            signing_key: SigningKey::Multi {
+                private_keys: vec![keys[0].clone(), keys[1].clone()],
+                multisig: ms,
+            },
+        };
+
+        let issuer_key = PrivateKey::new();
+        let funding = test_payment(50000);
+        let dest = test_destination(5000);
+
+        let config = BtgCheckpointConfig {
+            token_utxo: multi_payment,
+            issuer_private_key: issuer_key,
+            destination: dest,
+            redemption_pkh: redemption_pkh(),
+            splittable: true,
+            funding,
+            fee_rate: 500,
+        };
+
+        let result = build_btg_checkpoint_tx(&config);
+        assert!(result.is_err(), "BTG checkpoint should reject P2MPKH token key");
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("P2MPKH") || err_msg.contains("multisig"),
+            "error should mention P2MPKH or multisig, got: {}",
+            err_msg
+        );
+    }
 }

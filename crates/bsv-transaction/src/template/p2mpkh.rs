@@ -547,4 +547,173 @@ mod tests {
         let err = MultisigScript::from_script_bytes(&[0x00, 0x01, 0x02]).unwrap_err();
         assert!(err.to_string().contains("too short"));
     }
+
+    // -------------------------------------------------------------------
+    // Gap 3: P2MPKH::sign() tests
+    // -------------------------------------------------------------------
+
+    use crate::input::TransactionInput;
+    use crate::output::TransactionOutput;
+
+    /// Build a mock transaction with a source output on input 0.
+    fn mock_tx_with_source(satoshis: u64) -> Transaction {
+        use bsv_script::Script;
+
+        let locking_script = Script::from_asm(
+            "OP_DUP OP_HASH160 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa OP_EQUALVERIFY OP_CHECKSIG",
+        )
+        .unwrap();
+
+        let source_output = TransactionOutput {
+            satoshis,
+            locking_script: locking_script.clone(),
+            change: false,
+        };
+
+        let mut input = TransactionInput::new();
+        input.source_txid = [0u8; 32];
+        input.source_tx_out_index = 0;
+        input.set_source_output(Some(source_output));
+
+        let mut tx = Transaction::new();
+        tx.add_input(input);
+        tx.add_output(TransactionOutput {
+            satoshis: satoshis.saturating_sub(1000),
+            locking_script,
+            change: false,
+        });
+        tx
+    }
+
+    #[test]
+    fn p2mpkh_sign_2_of_3_script_structure() {
+        let (privs, pubs) = gen_keys(3);
+        let ms = MultisigScript::new(2, pubs).unwrap();
+        let unlocker = unlock(vec![privs[0].clone(), privs[1].clone()], ms, None).unwrap();
+
+        let tx = mock_tx_with_source(10_000);
+        let script = unlocker.sign(&tx, 0).unwrap();
+        let chunks = script.chunks().unwrap();
+
+        // OP_0 (empty push) + 2 signatures = 3 chunks
+        assert_eq!(chunks.len(), 3, "expected OP_0 + 2 signature pushes");
+
+        // First chunk: OP_0 / empty push (the dummy element)
+        let dummy = &chunks[0];
+        assert!(
+            dummy.data.is_none() || dummy.data.as_ref().map_or(false, |d| d.is_empty()),
+            "first chunk should be OP_0 (empty push)"
+        );
+
+        // Signature chunks
+        for i in 1..3 {
+            let sig_data = chunks[i].data.as_ref().expect("signature should be push data");
+            assert!(
+                sig_data.len() >= 71 && sig_data.len() <= 73,
+                "signature {} length {} not in 71..=73",
+                i - 1,
+                sig_data.len()
+            );
+            // Last byte: SIGHASH_ALL_FORKID (0x41)
+            assert_eq!(
+                *sig_data.last().unwrap(),
+                0x41,
+                "signature should end with SIGHASH_ALL_FORKID"
+            );
+        }
+    }
+
+    #[test]
+    fn p2mpkh_sign_1_of_1() {
+        let (privs, pubs) = gen_keys(1);
+        let ms = MultisigScript::new(1, pubs).unwrap();
+        let unlocker = unlock(vec![privs[0].clone()], ms, None).unwrap();
+
+        let tx = mock_tx_with_source(5_000);
+        let script = unlocker.sign(&tx, 0).unwrap();
+        let chunks = script.chunks().unwrap();
+
+        // OP_0 + 1 signature = 2 chunks
+        assert_eq!(chunks.len(), 2);
+        let sig = chunks[1].data.as_ref().unwrap();
+        assert!(sig.len() >= 71 && sig.len() <= 73);
+        assert_eq!(*sig.last().unwrap(), 0x41);
+    }
+
+    #[test]
+    fn p2mpkh_sign_missing_source_output_returns_error() {
+        let (privs, pubs) = gen_keys(3);
+        let ms = MultisigScript::new(2, pubs).unwrap();
+        let unlocker = unlock(vec![privs[0].clone(), privs[1].clone()], ms, None).unwrap();
+
+        // Input without source output
+        let mut tx = Transaction::new();
+        tx.add_input(TransactionInput::new());
+        tx.add_output(TransactionOutput::new());
+
+        let result = unlocker.sign(&tx, 0);
+        assert!(result.is_err());
+        assert!(
+            result.unwrap_err().to_string().contains("missing source output"),
+            "error should mention missing source output"
+        );
+    }
+
+    #[test]
+    fn p2mpkh_sign_custom_sighash_flag() {
+        use crate::sighash::{SIGHASH_NONE, SIGHASH_FORKID};
+        let sighash_none_forkid = SIGHASH_NONE | SIGHASH_FORKID; // 0x42
+
+        let (privs, pubs) = gen_keys(2);
+        let ms = MultisigScript::new(1, pubs).unwrap();
+        let unlocker = unlock(
+            vec![privs[0].clone()],
+            ms,
+            Some(sighash_none_forkid),
+        )
+        .unwrap();
+
+        let tx = mock_tx_with_source(8_000);
+        let script = unlocker.sign(&tx, 0).unwrap();
+        let chunks = script.chunks().unwrap();
+
+        // OP_0 + 1 sig = 2 chunks
+        assert_eq!(chunks.len(), 2);
+        let sig = chunks[1].data.as_ref().unwrap();
+        // Last byte should be SIGHASH_NONE | SIGHASH_FORKID (0x42)
+        assert_eq!(
+            *sig.last().unwrap(),
+            sighash_none_forkid as u8,
+            "signature should use the custom sighash flag"
+        );
+    }
+
+    // -------------------------------------------------------------------
+    // Gap 6 (standalone P2MPKH): estimate_length for multiple combos
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn p2mpkh_estimate_length_1_of_1() {
+        let (privs, pubs) = gen_keys(1);
+        let ms = MultisigScript::new(1, pubs).unwrap();
+        let unlocker = unlock(vec![privs[0].clone()], ms, None).unwrap();
+        let tx = Transaction::default();
+        // 1 (OP_0) + 1 * 73 = 74
+        assert_eq!(unlocker.estimate_length(&tx, 0), 74);
+    }
+
+    #[test]
+    fn p2mpkh_estimate_length_3_of_5() {
+        let (privs, pubs) = gen_keys(5);
+        let ms = MultisigScript::new(3, pubs).unwrap();
+        let unlocker = unlock(
+            vec![privs[0].clone(), privs[1].clone(), privs[2].clone()],
+            ms,
+            None,
+        )
+        .unwrap();
+        let tx = Transaction::default();
+        // 1 + 3 * 73 = 220
+        assert_eq!(unlocker.estimate_length(&tx, 0), 220);
+    }
 }

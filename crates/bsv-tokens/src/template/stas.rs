@@ -278,4 +278,209 @@ mod tests {
         assert!(est > 106); // must be more than P2PKH
         assert_eq!(est, 2 * 73 + 3 + 3 * 34 + 3);
     }
+
+    // -------------------------------------------------------------------
+    // Gap 1: StasMpkhUnlockingTemplate::sign() tests
+    // -------------------------------------------------------------------
+
+    /// Build a mock transaction with a source output set on input 0.
+    fn mock_tx_with_source(satoshis: u64) -> bsv_transaction::transaction::Transaction {
+        use bsv_transaction::input::TransactionInput;
+        use bsv_transaction::output::TransactionOutput;
+
+        let locking_script = Script::from_asm(
+            "OP_DUP OP_HASH160 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa OP_EQUALVERIFY OP_CHECKSIG",
+        )
+        .unwrap();
+
+        let source_output = TransactionOutput {
+            satoshis,
+            locking_script: locking_script.clone(),
+            change: false,
+        };
+
+        let mut input = TransactionInput::new();
+        input.source_txid = [0u8; 32];
+        input.source_tx_out_index = 0;
+        input.set_source_output(Some(source_output));
+
+        let mut tx = bsv_transaction::transaction::Transaction::new();
+        tx.add_input(input);
+        tx.add_output(TransactionOutput {
+            satoshis: satoshis.saturating_sub(1000),
+            locking_script,
+            change: false,
+        });
+        tx
+    }
+
+    #[test]
+    fn stas_mpkh_sign_2_of_3_script_structure() {
+        let keys: Vec<PrivateKey> = (0..3).map(|_| PrivateKey::new()).collect();
+        let pubs: Vec<_> = keys.iter().map(|k| k.pub_key()).collect();
+        let ms = MultisigScript::new(2, pubs).unwrap();
+        let ms_bytes = ms.to_bytes();
+
+        let unlocker = unlock_mpkh(
+            vec![keys[0].clone(), keys[1].clone()],
+            ms,
+            None,
+        )
+        .unwrap();
+
+        let tx = mock_tx_with_source(10_000);
+        let script = unlocker.sign(&tx, 0).unwrap();
+        let chunks = script.chunks().unwrap();
+
+        // M signatures + 1 multisig script push = 3 chunks total
+        assert_eq!(chunks.len(), 3, "expected 2 sigs + 1 multisig script push");
+
+        // Verify each signature chunk
+        for i in 0..2 {
+            let sig_data = chunks[i].data.as_ref().expect("signature should be push data");
+            // DER signature + sighash flag: 71-73 bytes
+            assert!(
+                sig_data.len() >= 71 && sig_data.len() <= 73,
+                "signature {} length {} not in 71..=73",
+                i,
+                sig_data.len()
+            );
+            // Last byte is SIGHASH_ALL_FORKID (0x41)
+            assert_eq!(
+                *sig_data.last().unwrap(),
+                0x41,
+                "signature {} should end with SIGHASH_ALL_FORKID",
+                i
+            );
+        }
+
+        // Last chunk is the serialized multisig script
+        let ms_chunk = chunks[2].data.as_ref().expect("multisig script should be push data");
+        assert_eq!(ms_chunk, &ms_bytes, "final chunk should be the multisig script bytes");
+    }
+
+    #[test]
+    fn stas_mpkh_sign_1_of_1() {
+        let keys: Vec<PrivateKey> = (0..1).map(|_| PrivateKey::new()).collect();
+        let pubs: Vec<_> = keys.iter().map(|k| k.pub_key()).collect();
+        let ms = MultisigScript::new(1, pubs).unwrap();
+
+        let unlocker = unlock_mpkh(vec![keys[0].clone()], ms, None).unwrap();
+        let tx = mock_tx_with_source(5_000);
+        let script = unlocker.sign(&tx, 0).unwrap();
+        let chunks = script.chunks().unwrap();
+
+        // 1 signature + 1 multisig script = 2 chunks
+        assert_eq!(chunks.len(), 2);
+        let sig_data = chunks[0].data.as_ref().unwrap();
+        assert!(sig_data.len() >= 71 && sig_data.len() <= 73);
+        assert_eq!(*sig_data.last().unwrap(), 0x41);
+    }
+
+    #[test]
+    fn stas_mpkh_sign_3_of_5() {
+        let keys: Vec<PrivateKey> = (0..5).map(|_| PrivateKey::new()).collect();
+        let pubs: Vec<_> = keys.iter().map(|k| k.pub_key()).collect();
+        let ms = MultisigScript::new(3, pubs).unwrap();
+
+        let unlocker = unlock_mpkh(
+            vec![keys[0].clone(), keys[1].clone(), keys[2].clone()],
+            ms,
+            None,
+        )
+        .unwrap();
+
+        let tx = mock_tx_with_source(20_000);
+        let script = unlocker.sign(&tx, 0).unwrap();
+        let chunks = script.chunks().unwrap();
+
+        // 3 signatures + 1 multisig script = 4 chunks
+        assert_eq!(chunks.len(), 4);
+        for i in 0..3 {
+            let sig = chunks[i].data.as_ref().unwrap();
+            assert!(sig.len() >= 71 && sig.len() <= 73);
+            assert_eq!(*sig.last().unwrap(), 0x41);
+        }
+    }
+
+    #[test]
+    fn stas_mpkh_sign_missing_source_output_returns_error() {
+        let keys: Vec<PrivateKey> = (0..3).map(|_| PrivateKey::new()).collect();
+        let pubs: Vec<_> = keys.iter().map(|k| k.pub_key()).collect();
+        let ms = MultisigScript::new(2, pubs).unwrap();
+        let unlocker = unlock_mpkh(
+            vec![keys[0].clone(), keys[1].clone()],
+            ms,
+            None,
+        )
+        .unwrap();
+
+        // Transaction with an input but no source output set
+        let mut tx = bsv_transaction::transaction::Transaction::new();
+        let input = bsv_transaction::input::TransactionInput::new();
+        tx.add_input(input);
+        tx.add_output(bsv_transaction::output::TransactionOutput::new());
+
+        let result = unlocker.sign(&tx, 0);
+        assert!(result.is_err());
+        assert!(
+            result.unwrap_err().to_string().contains("missing source output"),
+            "error should mention missing source output"
+        );
+    }
+
+    #[test]
+    fn stas_mpkh_sign_signatures_unique_per_key() {
+        let keys: Vec<PrivateKey> = (0..3).map(|_| PrivateKey::new()).collect();
+        let pubs: Vec<_> = keys.iter().map(|k| k.pub_key()).collect();
+        let ms = MultisigScript::new(2, pubs).unwrap();
+
+        let unlocker = unlock_mpkh(
+            vec![keys[0].clone(), keys[1].clone()],
+            ms,
+            None,
+        )
+        .unwrap();
+
+        let tx = mock_tx_with_source(10_000);
+        let script = unlocker.sign(&tx, 0).unwrap();
+        let chunks = script.chunks().unwrap();
+
+        let sig0 = chunks[0].data.as_ref().unwrap();
+        let sig1 = chunks[1].data.as_ref().unwrap();
+        assert_ne!(sig0, sig1, "signatures from different keys must differ");
+    }
+
+    // -------------------------------------------------------------------
+    // Gap 6 (STAS): estimate_length across multiple m-of-n combinations
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn stas_mpkh_estimate_length_1_of_1() {
+        let keys: Vec<PrivateKey> = (0..1).map(|_| PrivateKey::new()).collect();
+        let pubs = keys.iter().map(|k| k.pub_key()).collect();
+        let ms = MultisigScript::new(1, pubs).unwrap();
+        let unlocker = unlock_mpkh(vec![keys[0].clone()], ms, None).unwrap();
+        let tx = bsv_transaction::transaction::Transaction::default();
+        let est = unlocker.estimate_length(&tx, 0);
+        // 1 * 73 + 3 + 1*34 + 3 = 73 + 40 = 113
+        assert_eq!(est, 1 * 73 + 3 + 1 * 34 + 3);
+    }
+
+    #[test]
+    fn stas_mpkh_estimate_length_3_of_5() {
+        let keys: Vec<PrivateKey> = (0..5).map(|_| PrivateKey::new()).collect();
+        let pubs = keys.iter().map(|k| k.pub_key()).collect();
+        let ms = MultisigScript::new(3, pubs).unwrap();
+        let unlocker = unlock_mpkh(
+            vec![keys[0].clone(), keys[1].clone(), keys[2].clone()],
+            ms,
+            None,
+        )
+        .unwrap();
+        let tx = bsv_transaction::transaction::Transaction::default();
+        let est = unlocker.estimate_length(&tx, 0);
+        // 3 * 73 + 3 + 5*34 + 3 = 219 + 176 = 395
+        assert_eq!(est, 3 * 73 + 3 + 5 * 34 + 3);
+    }
 }
