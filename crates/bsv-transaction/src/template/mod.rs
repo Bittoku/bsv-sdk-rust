@@ -5,6 +5,7 @@
 //! Ported from the Go BSV SDK (`transaction/template/p2pkh`).
 
 pub mod p2pkh;
+pub mod p2mpkh;
 
 use bsv_script::Script;
 use crate::transaction::Transaction;

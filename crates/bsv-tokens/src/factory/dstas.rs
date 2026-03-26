@@ -19,7 +19,7 @@ use crate::scheme::TokenScheme;
 use crate::script::dstas_builder::build_dstas_locking_script;
 use crate::script::dstas_swap::{is_dstas_frozen, resolve_dstas_swap_mode};
 use crate::template::dstas as dstas_template;
-use crate::types::{DstasSpendType, DstasSwapMode};
+use crate::types::{DstasSpendType, DstasSwapMode, SigningKey};
 
 // -----------------------------------------------------------------------
 // Config structs
@@ -64,6 +64,9 @@ pub struct DstasIssueTxs {
 }
 
 /// A token input for DSTAS spend operations.
+///
+/// For P2PKH-owned tokens, use `SigningKey::Single`.
+/// For P2MPKH-owned tokens, use `SigningKey::Multi`.
 pub struct TokenInput {
     /// UTXO txid.
     pub txid: Hash,
@@ -73,8 +76,8 @@ pub struct TokenInput {
     pub satoshis: u64,
     /// UTXO locking script.
     pub locking_script: Script,
-    /// Private key to sign.
-    pub private_key: PrivateKey,
+    /// Signing credentials for this input.
+    pub signing_key: SigningKey,
 }
 
 /// Parameters for a DSTAS output in spend operations.
@@ -529,9 +532,11 @@ pub fn build_dstas_base_tx(config: &DstasBaseConfig) -> Result<Transaction, Toke
         config.fee_rate,
     )?;
 
-    // Sign token inputs with DSTAS template
+    // Sign token inputs with DSTAS template (dispatches P2PKH vs P2MPKH).
     for (i, ti) in config.token_inputs.iter().enumerate() {
-        let unlocker = dstas_template::unlock(ti.private_key.clone(), config.spend_type, None);
+        let unlocker = dstas_template::unlock_from_signing_key(
+            &ti.signing_key, config.spend_type, None,
+        )?;
         let sig = unlocker.sign(&tx, i as u32)?;
         tx.inputs[i].unlocking_script = Some(sig);
     }
@@ -787,10 +792,9 @@ pub fn build_dstas_redeem_tx(config: DstasRedeemConfig) -> Result<Transaction, T
         });
     }
 
-    // Issuer-only check: we need the token input owner_pkh to match redemption_pkh.
-    // The owner pubkey hash is derivable from the private key provided.
-    let owner_pkh =
-        bsv_primitives::hash::hash160(&config.token_input.private_key.pub_key().to_compressed());
+    // Issuer-only check: we need the token input owner hash to match redemption_pkh.
+    // For P2PKH this is HASH160(pubkey), for P2MPKH this is the MPKH.
+    let owner_pkh = config.token_input.signing_key.hash160();
     if owner_pkh != config.redemption_pkh {
         return Err(TokenError::IssuerOnly(
             "token input owner must be the issuer (redemption_pkh)".into(),
@@ -859,12 +863,12 @@ pub fn build_dstas_redeem_tx(config: DstasRedeemConfig) -> Result<Transaction, T
         config.fee_rate,
     )?;
 
-    // Sign token input with DSTAS template (spending type 1 = Transfer)
-    let unlocker = dstas_template::unlock(
-        config.token_input.private_key.clone(),
+    // Sign token input with DSTAS template (spending type 1 = Transfer).
+    let unlocker = dstas_template::unlock_from_signing_key(
+        &config.token_input.signing_key,
         DstasSpendType::Transfer,
         None,
-    );
+    )?;
     let sig = unlocker.sign(&tx, 0)?;
     tx.inputs[0].unlocking_script = Some(sig);
 
@@ -1052,7 +1056,7 @@ mod tests {
                 vout: 0,
                 satoshis: 5000,
                 locking_script: make_dstas_locking(&owner_pkh, &redemption_pkh),
-                private_key: token_key,
+                signing_key: SigningKey::Single(token_key),
             }],
             fee_txid: dummy_hash(),
             fee_vout: 1,
@@ -1095,7 +1099,7 @@ mod tests {
                 vout: 0,
                 satoshis: 10000,
                 locking_script: make_dstas_locking(&[0x11; 20], &[0x22; 20]),
-                private_key: token_key,
+                signing_key: SigningKey::Single(token_key),
             }],
             fee_txid: dummy_hash(),
             fee_vout: 1,
@@ -1145,7 +1149,7 @@ mod tests {
                 vout: 0,
                 satoshis: 10000,
                 locking_script: make_dstas_locking(&[0x11; 20], &[0x22; 20]),
-                private_key: token_key,
+                signing_key: SigningKey::Single(token_key),
             }],
             fee_txid: dummy_hash(),
             fee_vout: 1,
@@ -1180,7 +1184,7 @@ mod tests {
                 vout: 0,
                 satoshis: 5000,
                 locking_script: make_dstas_locking(&[0x11; 20], &[0x22; 20]),
-                private_key: token_key,
+                signing_key: SigningKey::Single(token_key),
             }],
             fee_txid: dummy_hash(),
             fee_vout: 1,
@@ -1201,9 +1205,9 @@ mod tests {
 
         let config = DstasBaseConfig {
             token_inputs: vec![
-                TokenInput { txid: dummy_hash(), vout: 0, satoshis: 1000, locking_script: make_dstas_locking(&[0x11; 20], &[0x22; 20]), private_key: test_key() },
-                TokenInput { txid: dummy_hash(), vout: 1, satoshis: 1000, locking_script: make_dstas_locking(&[0x11; 20], &[0x22; 20]), private_key: test_key() },
-                TokenInput { txid: dummy_hash(), vout: 2, satoshis: 1000, locking_script: make_dstas_locking(&[0x11; 20], &[0x22; 20]), private_key: test_key() },
+                TokenInput { txid: dummy_hash(), vout: 0, satoshis: 1000, locking_script: make_dstas_locking(&[0x11; 20], &[0x22; 20]), signing_key: SigningKey::Single(test_key()) },
+                TokenInput { txid: dummy_hash(), vout: 1, satoshis: 1000, locking_script: make_dstas_locking(&[0x11; 20], &[0x22; 20]), signing_key: SigningKey::Single(test_key()) },
+                TokenInput { txid: dummy_hash(), vout: 2, satoshis: 1000, locking_script: make_dstas_locking(&[0x11; 20], &[0x22; 20]), signing_key: SigningKey::Single(test_key()) },
             ],
             fee_txid: dummy_hash(),
             fee_vout: 3,
@@ -1242,7 +1246,7 @@ mod tests {
                 vout: 0,
                 satoshis: 5000,
                 locking_script: make_dstas_locking(&[0x11; 20], &[0x22; 20]),
-                private_key: token_key,
+                signing_key: SigningKey::Single(token_key),
             }],
             fee_txid: dummy_hash(),
             fee_vout: 1,
@@ -1283,7 +1287,7 @@ mod tests {
                 vout: 0,
                 satoshis: 5000,
                 locking_script: make_dstas_locking(&[0x11; 20], &[0x22; 20]),
-                private_key: token_key,
+                signing_key: SigningKey::Single(token_key),
             }],
             fee_txid: dummy_hash(),
             fee_vout: 1,
@@ -1326,7 +1330,7 @@ mod tests {
                 vout: 0,
                 satoshis: 5000,
                 locking_script: make_dstas_locking(&[0x11; 20], &[0x22; 20]),
-                private_key: test_key(),
+                signing_key: SigningKey::Single(test_key()),
             }],
             fee_txid: dummy_hash(),
             fee_vout: 1,
@@ -1361,14 +1365,14 @@ mod tests {
                     vout: 0,
                     satoshis: 3000,
                     locking_script: make_dstas_locking(&[0x11; 20], &[0x22; 20]),
-                    private_key: test_key(),
+                    signing_key: SigningKey::Single(test_key()),
                 },
                 TokenInput {
                     txid: dummy_hash(),
                     vout: 1,
                     satoshis: 7000,
                     locking_script: make_dstas_locking(&[0x33; 20], &[0x22; 20]),
-                    private_key: test_key(),
+                    signing_key: SigningKey::Single(test_key()),
                 },
             ],
             fee_txid: dummy_hash(),
@@ -1423,7 +1427,7 @@ mod tests {
                 vout: 0,
                 satoshis: 10000,
                 locking_script: make_dstas_locking(&[0x11; 20], &redemption_pkh),
-                private_key: token_key,
+                signing_key: SigningKey::Single(token_key),
             },
             fee_txid: dummy_hash(),
             fee_vout: 1,
@@ -1479,7 +1483,7 @@ mod tests {
                 vout: 0,
                 satoshis: 10000,
                 locking_script: make_dstas_locking(&[0x11; 20], &redemption_pkh),
-                private_key: token_key,
+                signing_key: SigningKey::Single(token_key),
             },
             fee_txid: dummy_hash(),
             fee_vout: 1,
@@ -1510,7 +1514,7 @@ mod tests {
                 vout: 0,
                 satoshis: 10000,
                 locking_script: make_dstas_locking(&[0x11; 20], &[0x22; 20]),
-                private_key: token_key,
+                signing_key: SigningKey::Single(token_key),
             },
             fee_txid: dummy_hash(),
             fee_vout: 1,
@@ -1547,7 +1551,7 @@ mod tests {
                 vout: 0,
                 satoshis: 10000,
                 locking_script: make_dstas_locking(&[0x11; 20], &redemption_pkh),
-                private_key: token_key,
+                signing_key: SigningKey::Single(token_key),
             },
             fee_txid: dummy_hash(),
             fee_vout: 1,
@@ -1573,7 +1577,7 @@ mod tests {
                 vout: 0,
                 satoshis: 10000,
                 locking_script: make_dstas_locking(&[0x11; 20], &redemption_pkh),
-                private_key: token_key,
+                signing_key: SigningKey::Single(token_key),
             },
             fee_txid: dummy_hash(),
             fee_vout: 1,
@@ -1614,14 +1618,14 @@ mod tests {
                     vout: 0,
                     satoshis: 3000,
                     locking_script: make_dstas_locking(&[0x11; 20], &redemption_pkh),
-                    private_key: key_a,
+                    signing_key: SigningKey::Single(key_a),
                 },
                 TokenInput {
                     txid: dummy_hash(),
                     vout: 1,
                     satoshis: 7000,
                     locking_script: make_dstas_locking(&[0x33; 20], &redemption_pkh),
-                    private_key: key_b,
+                    signing_key: SigningKey::Single(key_b),
                 },
             ],
             fee_txid: dummy_hash(),
@@ -1659,8 +1663,8 @@ mod tests {
 
         let config = DstasMergeConfig {
             token_inputs: [
-                TokenInput { txid: dummy_hash(), vout: 0, satoshis: 3000, locking_script: make_dstas_locking(&[0x11; 20], &redemption_pkh), private_key: test_key() },
-                TokenInput { txid: dummy_hash(), vout: 1, satoshis: 7000, locking_script: make_dstas_locking(&[0x33; 20], &redemption_pkh), private_key: test_key() },
+                TokenInput { txid: dummy_hash(), vout: 0, satoshis: 3000, locking_script: make_dstas_locking(&[0x11; 20], &redemption_pkh), signing_key: SigningKey::Single(test_key()) },
+                TokenInput { txid: dummy_hash(), vout: 1, satoshis: 7000, locking_script: make_dstas_locking(&[0x33; 20], &redemption_pkh), signing_key: SigningKey::Single(test_key()) },
             ],
             fee_txid: dummy_hash(),
             fee_vout: 2,
@@ -1692,8 +1696,8 @@ mod tests {
 
         let config = DstasMergeConfig {
             token_inputs: [
-                TokenInput { txid: dummy_hash(), vout: 0, satoshis: 5000, locking_script: make_dstas_locking(&[0x11; 20], &redemption_pkh), private_key: test_key() },
-                TokenInput { txid: dummy_hash(), vout: 1, satoshis: 4000, locking_script: make_dstas_locking(&[0x33; 20], &redemption_pkh), private_key: test_key() },
+                TokenInput { txid: dummy_hash(), vout: 0, satoshis: 5000, locking_script: make_dstas_locking(&[0x11; 20], &redemption_pkh), signing_key: SigningKey::Single(test_key()) },
+                TokenInput { txid: dummy_hash(), vout: 1, satoshis: 4000, locking_script: make_dstas_locking(&[0x33; 20], &redemption_pkh), signing_key: SigningKey::Single(test_key()) },
             ],
             fee_txid: dummy_hash(),
             fee_vout: 2,
@@ -1714,8 +1718,8 @@ mod tests {
 
         let config = DstasMergeConfig {
             token_inputs: [
-                TokenInput { txid: dummy_hash(), vout: 0, satoshis: 3000, locking_script: make_dstas_locking(&[0x11; 20], &redemption_pkh), private_key: test_key() },
-                TokenInput { txid: dummy_hash(), vout: 1, satoshis: 7000, locking_script: make_dstas_locking(&[0x33; 20], &redemption_pkh), private_key: test_key() },
+                TokenInput { txid: dummy_hash(), vout: 0, satoshis: 3000, locking_script: make_dstas_locking(&[0x11; 20], &redemption_pkh), signing_key: SigningKey::Single(test_key()) },
+                TokenInput { txid: dummy_hash(), vout: 1, satoshis: 7000, locking_script: make_dstas_locking(&[0x33; 20], &redemption_pkh), signing_key: SigningKey::Single(test_key()) },
             ],
             fee_txid: dummy_hash(),
             fee_vout: 2,
@@ -1754,7 +1758,7 @@ mod tests {
                 vout: 0,
                 satoshis: 5000,
                 locking_script: make_dstas_locking(&[0x11; 20], &redemption_pkh),
-                private_key: token_key,
+                signing_key: SigningKey::Single(token_key),
             }],
             fee_txid: dummy_hash(),
             fee_vout: 1,
@@ -1801,7 +1805,7 @@ mod tests {
                 vout: 0,
                 satoshis: 5000,
                 locking_script: frozen_locking,
-                private_key: token_key,
+                signing_key: SigningKey::Single(token_key),
             }],
             fee_txid: dummy_hash(),
             fee_vout: 1,
@@ -1878,7 +1882,7 @@ mod tests {
                 vout: 0,
                 satoshis: token_sats,
                 locking_script: locking,
-                private_key: issuer_key.clone(),
+                signing_key: SigningKey::Single(issuer_key.clone()),
             },
             fee_txid: dummy_hash(),
             fee_vout: 1,
@@ -1969,7 +1973,7 @@ mod tests {
                 vout: 0,
                 satoshis: 10000,
                 locking_script: locking,
-                private_key: non_issuer_key,
+                signing_key: SigningKey::Single(non_issuer_key),
             },
             fee_txid: dummy_hash(),
             fee_vout: 1,
@@ -2075,14 +2079,14 @@ mod tests {
                     vout: 0,
                     satoshis: 5000,
                     locking_script: make_dstas_locking(&[0x11; 20], &redemption),
-                    private_key: test_key(),
+                    signing_key: SigningKey::Single(test_key()),
                 },
                 TokenInput {
                     txid: dummy_hash(),
                     vout: 1,
                     satoshis: 5000,
                     locking_script: make_dstas_swap_locking(&[0x33; 20], &redemption, &swap_data),
-                    private_key: test_key(),
+                    signing_key: SigningKey::Single(test_key()),
                 },
             ],
             fee_txid: dummy_hash(),
@@ -2136,14 +2140,14 @@ mod tests {
                     vout: 0,
                     satoshis: 5000,
                     locking_script: make_dstas_swap_locking(&[0x11; 20], &redemption, &swap_data),
-                    private_key: test_key(),
+                    signing_key: SigningKey::Single(test_key()),
                 },
                 TokenInput {
                     txid: dummy_hash(),
                     vout: 1,
                     satoshis: 5000,
                     locking_script: make_dstas_swap_locking(&[0x33; 20], &redemption, &swap_data),
-                    private_key: test_key(),
+                    signing_key: SigningKey::Single(test_key()),
                 },
             ],
             fee_txid: dummy_hash(),
@@ -2202,14 +2206,14 @@ mod tests {
                     vout: 0,
                     satoshis: 6000,
                     locking_script: make_dstas_locking(&[0x11; 20], &redemption),
-                    private_key: test_key(),
+                    signing_key: SigningKey::Single(test_key()),
                 },
                 TokenInput {
                     txid: dummy_hash(),
                     vout: 1,
                     satoshis: 4000,
                     locking_script: make_dstas_swap_locking(&[0x33; 20], &redemption, &swap_data),
-                    private_key: test_key(),
+                    signing_key: SigningKey::Single(test_key()),
                 },
             ],
             fee_txid: dummy_hash(),
@@ -2285,14 +2289,14 @@ mod tests {
                     vout: 0,
                     satoshis: 7000,
                     locking_script: make_dstas_swap_locking(&[0x11; 20], &redemption, &swap_data),
-                    private_key: test_key(),
+                    signing_key: SigningKey::Single(test_key()),
                 },
                 TokenInput {
                     txid: dummy_hash(),
                     vout: 1,
                     satoshis: 3000,
                     locking_script: make_dstas_swap_locking(&[0x33; 20], &redemption, &swap_data),
-                    private_key: test_key(),
+                    signing_key: SigningKey::Single(test_key()),
                 },
             ],
             fee_txid: dummy_hash(),
@@ -2354,14 +2358,14 @@ mod tests {
                     vout: 0,
                     satoshis: 8000,
                     locking_script: make_dstas_locking(&[0x11; 20], &redemption),
-                    private_key: test_key(),
+                    signing_key: SigningKey::Single(test_key()),
                 },
                 TokenInput {
                     txid: dummy_hash(),
                     vout: 1,
                     satoshis: 7000,
                     locking_script: make_dstas_swap_locking(&[0x33; 20], &redemption, &swap_data),
-                    private_key: test_key(),
+                    signing_key: SigningKey::Single(test_key()),
                 },
             ],
             fee_txid: dummy_hash(),
@@ -2437,14 +2441,14 @@ mod tests {
                     vout: 0,
                     satoshis: 8000,
                     locking_script: make_dstas_swap_locking(&[0x11; 20], &redemption, &swap_data),
-                    private_key: test_key(),
+                    signing_key: SigningKey::Single(test_key()),
                 },
                 TokenInput {
                     txid: dummy_hash(),
                     vout: 1,
                     satoshis: 7000,
                     locking_script: make_dstas_swap_locking(&[0x33; 20], &redemption, &swap_data),
-                    private_key: test_key(),
+                    signing_key: SigningKey::Single(test_key()),
                 },
             ],
             fee_txid: dummy_hash(),
@@ -2515,14 +2519,14 @@ mod tests {
                     vout: 0,
                     satoshis: 5000,
                     locking_script: make_dstas_frozen_locking(&[0x11; 20], &redemption),
-                    private_key: test_key(),
+                    signing_key: SigningKey::Single(test_key()),
                 },
                 TokenInput {
                     txid: dummy_hash(),
                     vout: 1,
                     satoshis: 5000,
                     locking_script: make_dstas_locking(&[0x33; 20], &redemption),
-                    private_key: test_key(),
+                    signing_key: SigningKey::Single(test_key()),
                 },
             ],
             fee_txid: dummy_hash(),
@@ -2574,14 +2578,14 @@ mod tests {
                     vout: 0,
                     satoshis: 5000,
                     locking_script: make_dstas_swap_locking(&[0x11; 20], &redemption, &swap_data),
-                    private_key: test_key(),
+                    signing_key: SigningKey::Single(test_key()),
                 },
                 TokenInput {
                     txid: dummy_hash(),
                     vout: 1,
                     satoshis: 5000,
                     locking_script: make_dstas_frozen_locking(&[0x33; 20], &redemption),
-                    private_key: test_key(),
+                    signing_key: SigningKey::Single(test_key()),
                 },
             ],
             fee_txid: dummy_hash(),
@@ -2633,14 +2637,14 @@ mod tests {
                     vout: 0,
                     satoshis: 5000,
                     locking_script: make_dstas_locking(&[0x11; 20], &redemption),
-                    private_key: test_key(),
+                    signing_key: SigningKey::Single(test_key()),
                 },
                 TokenInput {
                     txid: dummy_hash(),
                     vout: 1,
                     satoshis: 5000,
                     locking_script: make_dstas_swap_locking(&[0x33; 20], &redemption, &swap_data),
-                    private_key: test_key(),
+                    signing_key: SigningKey::Single(test_key()),
                 },
             ],
             fee_txid: dummy_hash(),
@@ -2692,14 +2696,14 @@ mod tests {
                     vout: 0,
                     satoshis: 5000,
                     locking_script: make_dstas_swap_locking(&[0x11; 20], &redemption, &swap_data),
-                    private_key: test_key(),
+                    signing_key: SigningKey::Single(test_key()),
                 },
                 TokenInput {
                     txid: dummy_hash(),
                     vout: 1,
                     satoshis: 5000,
                     locking_script: make_dstas_swap_locking(&[0x33; 20], &redemption, &swap_data),
-                    private_key: test_key(),
+                    signing_key: SigningKey::Single(test_key()),
                 },
             ],
             fee_txid: dummy_hash(),

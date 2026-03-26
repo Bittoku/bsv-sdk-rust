@@ -25,14 +25,14 @@ pub use error::TokenError;
 pub use scheme::{Authority, TokenScheme};
 pub use token_id::TokenId;
 pub use script_type::ScriptType;
-pub use types::{Payment, Destination, DstasSpendType, DstasSwapMode, ActionData, DstasLockingParams, DstasDestination};
+pub use types::{Payment, Destination, DstasSpendType, DstasSwapMode, ActionData, DstasLockingParams, DstasDestination, SigningKey, OwnerAddress};
 pub use script::stas_builder::build_stas_locking_script;
 pub use script::stas_btg_builder::build_stas_btg_locking_script;
 pub use script::dstas_builder::{build_dstas_locking_script, build_dstas_flags};
 pub use script::dstas_swap::{compute_dstas_requested_script_hash, resolve_dstas_swap_mode, is_dstas_frozen};
-pub use template::stas::StasUnlockingTemplate;
+pub use template::stas::{StasUnlockingTemplate, StasMpkhUnlockingTemplate};
 pub use template::stas_btg::{StasBtgUnlockingTemplate, StasBtgCheckpointUnlockingTemplate};
-pub use template::dstas::DstasUnlockingTemplate;
+pub use template::dstas::{DstasUnlockingTemplate, DstasMpkhUnlockingTemplate};
 pub use proof::split_tx_around_output;
 pub use lineage::{LineageValidator, TxFetcher};
 pub use factory::{
