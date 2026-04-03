@@ -1,8 +1,8 @@
 #![deny(missing_docs)]
-//! BSV Token protocol support (STAS, dSTAS, STAS-BTG).
+//! BSV Token protocol support (STAS, STAS 3.0, STAS-BTG).
 //!
 //! Provides types and utilities for creating, transferring, and managing
-//! tokens on the BSV blockchain using the STAS and dSTAS protocols.
+//! tokens on the BSV blockchain using the STAS and STAS 3.0 protocols.
 //!
 //! The STAS-BTG (Back-to-Genesis) variant adds on-chain prev-TX verification
 //! to each token hop, eliminating the need for full ancestor chain traversal

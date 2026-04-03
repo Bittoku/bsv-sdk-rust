@@ -1,4 +1,4 @@
-//! Script parsing and template matching for STAS/dSTAS/STAS-BTG tokens.
+//! Script parsing and template matching for STAS/STAS 3.0/STAS-BTG tokens.
 
 pub mod dstas_builder;
 pub mod dstas_swap;

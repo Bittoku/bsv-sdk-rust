@@ -26,7 +26,7 @@ Add a `bsv-tokens` crate to the BSV Rust SDK that enables creation, transfer, an
 |---|----------|----------|-----------|
 | 1 | Async strategy for bundle factory | Generic `Fn` bounds returning `impl Future` | Avoids `async-trait` dep; consistent with existing transport traits in SDK |
 | 2 | Signing abstraction | Use existing `UnlockingScriptTemplate` trait from `bsv-transaction` | Already defined and implemented for P2PKH; extend with STAS/DSTAS template impls |
-| 3 | Script template versions | Build v3 only, read v1/v2/v3 | v3 (stas3-freeze-multisig) is current; reader should classify legacy outputs found on-chain |
+| 3 | Script template versions | Build STAS 3.0 only, read v1/v2/STAS 3.0 | STAS 3.0 (stas3-freeze-multisig) is current; reader should classify legacy outputs found on-chain |
 | 4 | WASM compatibility | Core crate is `no_std + alloc`; bundle factory behind `feature = "bundle"` requiring `std` | Clean boundary; bundle is the only module needing async I/O |
 | 5 | Factory function signatures | `*Config` structs for 4+ parameter functions; direct params for simple functions | Idiomatic Rust; enables `#[derive(Default)]` and `..Default::default()` struct update syntax; prevents argument-order bugs; consistent with existing `interpreter::Config` pattern in SDK |
 | 6 | TokenScheme serialization | Dual: `to_bytes()`/`from_bytes()` for on-chain embedding + `serde` JSON for human-readable interchange | On-chain contract TXs use compact bytes; external tooling and tests benefit from JSON |
@@ -187,7 +187,7 @@ pub enum TokenError {
 - Extract: script template bytes, OP_RETURN structure, token ID / issuance txid embedding
 
 **Deliverables:**
-- `templates.rs`: Byte-prefix constants for STAS v1, v2, v3 (stas3-freeze-multisig) script identification. Extracted from TS `script-samples.ts`.
+- `templates.rs`: Byte-prefix constants for STAS v1, v2, STAS 3.0 (stas3-freeze-multisig) script identification. Extracted from TS `script-samples.ts`.
 - `read_locking_script(script: &[u8]) -> ParsedScript`:
   - Match against known templates to determine `ScriptType`
   - For STAS: extract owner hash, token ID

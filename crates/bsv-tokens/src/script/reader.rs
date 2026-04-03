@@ -1,4 +1,4 @@
-//! Script reader for parsing STAS and dSTAS locking scripts.
+//! Script reader for parsing STAS and STAS 3.0 locking scripts.
 
 use crate::script::templates::*;
 use crate::types::ActionData;
@@ -11,7 +11,7 @@ pub struct ParsedScript {
     pub script_type: ScriptType,
     /// STAS-specific fields, if applicable.
     pub stas: Option<StasFields>,
-    /// dSTAS-specific fields, if applicable.
+    /// STAS 3.0-specific fields, if applicable.
     pub dstas: Option<DstasFields>,
 }
 
@@ -28,7 +28,7 @@ pub struct StasFields {
     pub flags: Vec<u8>,
 }
 
-/// Fields extracted from a dSTAS locking script.
+/// Fields extracted from a STAS 3.0 locking script.
 #[derive(Debug, Clone)]
 pub struct DstasFields {
     /// The 20-byte owner public key hash.
@@ -60,7 +60,7 @@ pub fn read_locking_script(script: &[u8]) -> ParsedScript {
         };
     }
 
-    // Try dSTAS
+    // Try STAS 3.0
     if let Some(dstas) = try_parse_dstas(script) {
         return ParsedScript {
             script_type: ScriptType::Dstas,
@@ -152,9 +152,9 @@ fn try_parse_stas_v2(script: &[u8]) -> Option<StasFields> {
     })
 }
 
-/// Attempt to parse a dSTAS script.
+/// Attempt to parse a STAS 3.0 script.
 fn try_parse_dstas(script: &[u8]) -> Option<DstasFields> {
-    // dSTAS starts with OP_DATA_20 (0x14) + 20 bytes owner
+    // STAS 3.0 starts with OP_DATA_20 (0x14) + 20 bytes owner
     if script.len() < 26 || script[0] != 0x14 {
         return None;
     }
@@ -165,7 +165,7 @@ fn try_parse_dstas(script: &[u8]) -> Option<DstasFields> {
     // Next: action data push
     let (action_data_raw, action_offset) = read_push_data(script, 21)?;
 
-    // After action data, check for dSTAS base template prefix
+    // After action data, check for STAS 3.0 base template prefix
     if script.len() < action_offset + DSTAS_BASE_PREFIX.len() {
         return None;
     }

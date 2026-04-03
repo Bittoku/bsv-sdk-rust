@@ -171,7 +171,7 @@ pub struct DstasMergeConfig {
 
 /// Configuration for a DSTAS confiscation transaction.
 ///
-/// Confiscates 1–2 STAS inputs using spending type 3 (confiscation authority
+/// Confiscates 1–2 STAS 3.0 inputs using spending type 3 (confiscation authority
 /// path). Frozen inputs may be confiscated. The confiscation flag (0x02) must
 /// be enabled in the token scheme.
 pub struct DstasConfiscateConfig {

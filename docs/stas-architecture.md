@@ -296,5 +296,5 @@ T6 is the capstone — requires async runtime and external UTXO provider callbac
 
 1. **Async runtime**: Bundle factory needs async for UTXO fetching. Use `async-trait` or generic `Future`?
 2. **Signing abstraction**: TS uses `PrivateKey | Wallet`. Our `bsv-wallet` already has both — confirm API compatibility.
-3. **Script template versioning**: STAS has evolved (stas, stas2, stas3). Which versions to support? The TS SDK focuses on stas3 (freeze-multisig). Start there.
+3. **Script template versioning**: STAS has evolved (stas, stas2, STAS 3.0). Which versions to support? The TS SDK focuses on STAS 3.0 (freeze-multisig). Start there.
 4. **WASM compatibility**: Keep the crate `no_std`-compatible where possible for WASM target.

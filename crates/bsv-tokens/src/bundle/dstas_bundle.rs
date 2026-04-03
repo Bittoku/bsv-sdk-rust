@@ -1,4 +1,4 @@
-//! DSTAS bundle factory for automatic merge/split/transfer planning.
+//! STAS 3.0 bundle factory for automatic merge/split/transfer planning.
 //!
 //! The [`DstasBundleFactory`] orchestrates multi-transaction sequences to
 //! fulfill payouts from a pool of STAS UTXOs. It handles:
@@ -83,7 +83,7 @@ pub struct TransferOutput {
     pub satoshis: u64,
 }
 
-/// The spend type for bundle operations — maps to the DSTAS protocol spend
+/// The spend type for bundle operations — maps to the STAS 3.0 protocol spend
 /// types but using names that match the TypeScript reference.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BundleSpendType {
@@ -100,7 +100,7 @@ pub enum BundleSpendType {
 }
 
 impl BundleSpendType {
-    /// Convert to the underlying DSTAS protocol spend type.
+    /// Convert to the underlying STAS 3.0 protocol spend type.
     fn to_dstas_spend_type(self) -> DstasSpendType {
         match self {
             BundleSpendType::Transfer => DstasSpendType::Transfer,
@@ -183,7 +183,7 @@ pub struct LockingParamsResult {
     pub action_data: Option<crate::types::ActionData>,
 }
 
-/// Average fee estimate for a single DSTAS merge transaction (satoshis).
+/// Average fee estimate for a single STAS 3.0 merge transaction (satoshis).
 pub const AVG_FEE_FOR_DSTAS_MERGE: u64 = 500;
 
 /// Default fee rate (satoshis per KB).
@@ -193,7 +193,7 @@ const DEFAULT_FEE_RATE: u64 = 500;
 // DstasBundleFactory
 // -----------------------------------------------------------------------
 
-/// Automatic merge/split/transfer planner for DSTAS token bundles.
+/// Automatic merge/split/transfer planner for STAS 3.0 token bundles.
 ///
 /// The factory uses callbacks to:
 /// 1. Fetch available STAS UTXOs from the wallet.

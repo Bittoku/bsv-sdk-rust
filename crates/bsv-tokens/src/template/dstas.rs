@@ -1,7 +1,7 @@
-//! DSTAS unlocking script templates (P2PKH and P2MPKH).
+//! STAS 3.0 unlocking script templates (P2PKH and P2MPKH).
 //!
 //! Structurally identical to the STAS unlocking scripts but stores the
-//! [`DstasSpendType`] for future use when preimage-based validation is added.
+//! [`STAS 3.0 spend type for future use when preimage-based validation is added.
 
 use bsv_primitives::ec::PrivateKey;
 use bsv_script::Script;
@@ -14,10 +14,10 @@ use bsv_transaction::TransactionError;
 use crate::types::{DstasSpendType, SigningKey};
 
 // ---------------------------------------------------------------------------
-// P2PKH DSTAS unlocker (existing)
+// P2PKH STAS 3.0 unlocker (existing)
 // ---------------------------------------------------------------------------
 
-/// DSTAS unlocking script template.
+/// STAS 3.0 unlocking script template.
 ///
 /// Produces `<DER_signature + sighash_byte> <compressed_pubkey>`, identical
 /// to P2PKH / STAS.  The `spend_type` is stored for future preimage encoding.
@@ -29,11 +29,11 @@ pub struct DstasUnlockingTemplate {
     spend_type: DstasSpendType,
 }
 
-/// Create a DSTAS unlocker.
+/// Create a STAS 3.0 unlocker.
 ///
 /// # Arguments
 /// * `private_key` – Signing key.
-/// * `spend_type` – The DSTAS spend type.
+/// * `spend_type` – The STAS 3.0 spend type.
 /// * `sighash_flag` – Optional sighash flag (defaults to `SIGHASH_ALL_FORKID`).
 pub fn unlock(
     private_key: PrivateKey,
@@ -83,17 +83,17 @@ impl UnlockingScriptTemplate for DstasUnlockingTemplate {
         Ok(script)
     }
 
-    /// Estimate the byte length of a DSTAS unlocking script (same as P2PKH).
+    /// Estimate the byte length of a STAS 3.0 unlocking script (same as P2PKH).
     fn estimate_length(&self, _tx: &Transaction, _input_index: u32) -> u32 {
         106
     }
 }
 
 // ---------------------------------------------------------------------------
-// P2MPKH DSTAS unlocker (new)
+// P2MPKH STAS 3.0 unlocker (new)
 // ---------------------------------------------------------------------------
 
-/// DSTAS P2MPKH unlocking script template.
+/// STAS 3.0 P2MPKH unlocking script template.
 ///
 /// Produces: `<sig1> <sig2> … <sigM> <serialized_multisig_script>`
 ///
@@ -110,12 +110,12 @@ pub struct DstasMpkhUnlockingTemplate {
     spend_type: DstasSpendType,
 }
 
-/// Create a DSTAS P2MPKH unlocker.
+/// Create a STAS 3.0 P2MPKH unlocker.
 ///
 /// # Arguments
 /// * `private_keys` - The m private keys satisfying the threshold.
 /// * `multisig` - The full m-of-n multisig script.
-/// * `spend_type` - The DSTAS spend type.
+/// * `spend_type` - The STAS 3.0 spend type.
 /// * `sighash_flag` - Optional sighash flag. Defaults to `SIGHASH_ALL_FORKID`.
 ///
 /// # Errors
@@ -141,7 +141,7 @@ pub fn unlock_mpkh(
     })
 }
 
-/// Create a DSTAS unlocker from a [`SigningKey`] (dispatches P2PKH vs P2MPKH).
+/// Create a STAS 3.0 unlocker from a [`SigningKey`] (dispatches P2PKH vs P2MPKH).
 ///
 /// Returns a boxed `UnlockingScriptTemplate` suitable for either signing mode.
 pub fn unlock_from_signing_key(
@@ -205,7 +205,7 @@ impl UnlockingScriptTemplate for DstasMpkhUnlockingTemplate {
         Ok(script)
     }
 
-    /// Estimate the byte length of a DSTAS P2MPKH unlocking script.
+    /// Estimate the byte length of a STAS 3.0 P2MPKH unlocking script.
     fn estimate_length(&self, _tx: &Transaction, _input_index: u32) -> u32 {
         let m = self.multisig.threshold() as u32;
         let n = self.multisig.n() as u32;
@@ -408,7 +408,7 @@ mod tests {
     }
 
     // -------------------------------------------------------------------
-    // Gap 6 (DSTAS): estimate_length across multiple m-of-n combinations
+    // Gap 6 (STAS 3.0): estimate_length across multiple m-of-n combinations
     // -------------------------------------------------------------------
 
     #[test]

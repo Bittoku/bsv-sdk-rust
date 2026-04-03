@@ -136,7 +136,7 @@ pub struct Destination {
     pub satoshis: u64,
 }
 
-/// dSTAS spending operation type.
+/// STAS 3.0 spending operation type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum DstasSpendType {
@@ -150,7 +150,7 @@ pub enum DstasSpendType {
     SwapCancellation = 4,
 }
 
-/// Additional data attached to a dSTAS action.
+/// Additional data attached to a STAS 3.0 action.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ActionData {
     /// Atomic swap action data.
@@ -180,7 +180,7 @@ pub enum DstasSwapMode {
     SwapSwap,
 }
 
-/// Parameters for constructing a dSTAS locking script.
+/// Parameters for constructing a STAS 3.0 locking script.
 #[derive(Debug, Clone)]
 pub struct DstasLockingParams {
     /// The recipient address.
@@ -191,14 +191,14 @@ pub struct DstasLockingParams {
     pub action_data: Option<ActionData>,
 }
 
-/// A destination specific to dSTAS token operations.
+/// A destination specific to STAS 3.0 token operations.
 #[derive(Debug, Clone)]
 pub struct DstasDestination {
     /// The recipient address.
     pub address: Address,
     /// Satoshi amount.
     pub satoshis: u64,
-    /// The dSTAS spend type.
+    /// The STAS 3.0 spend type.
     pub spend_type: DstasSpendType,
     /// Optional action data.
     pub action_data: Option<ActionData>,
