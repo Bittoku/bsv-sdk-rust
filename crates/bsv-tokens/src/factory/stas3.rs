@@ -1,4 +1,4 @@
-//! DSTAS transaction factories.
+//! STAS3 transaction factories.
 //!
 //! Pure functions that build complete, signed transactions for dSTAS token
 //! operations: two-tx issuance, base spend, freeze, unfreeze, swap, split,
@@ -16,17 +16,17 @@ use bsv_transaction::transaction::Transaction;
 
 use crate::error::TokenError;
 use crate::scheme::TokenScheme;
-use crate::script::dstas_builder::build_dstas_locking_script;
-use crate::script::dstas_swap::{is_dstas_frozen, resolve_dstas_swap_mode};
-use crate::template::dstas as dstas_template;
-use crate::types::{DstasSpendType, DstasSwapMode, SigningKey};
+use crate::script::stas3_builder::build_stas3_locking_script;
+use crate::script::stas3_swap::{is_stas3_frozen, resolve_stas3_swap_mode};
+use crate::template::stas3 as stas3_template;
+use crate::types::{Stas3SpendType, Stas3SwapMode, SigningKey};
 
 // -----------------------------------------------------------------------
 // Config structs
 // -----------------------------------------------------------------------
 
-/// A single output in a DSTAS issuance.
-pub struct DstasIssueOutput {
+/// A single output in a STAS3 issuance.
+pub struct Stas3IssueOutput {
     /// Satoshi value for this token output.
     pub satoshis: u64,
     /// Owner public key hash (20 bytes).
@@ -35,8 +35,8 @@ pub struct DstasIssueOutput {
     pub freezable: bool,
 }
 
-/// Configuration for DSTAS issuance (two-transaction flow).
-pub struct DstasIssueConfig {
+/// Configuration for STAS3 issuance (two-transaction flow).
+pub struct Stas3IssueConfig {
     /// The token scheme to embed.
     pub scheme: TokenScheme,
     /// Funding UTXO txid.
@@ -50,20 +50,20 @@ pub struct DstasIssueConfig {
     /// Private key to sign funding input.
     pub funding_private_key: PrivateKey,
     /// Token outputs to create.
-    pub outputs: Vec<DstasIssueOutput>,
+    pub outputs: Vec<Stas3IssueOutput>,
     /// Fee rate in satoshis per kilobyte.
     pub fee_rate: u64,
 }
 
-/// Result of the two-transaction DSTAS issuance flow.
-pub struct DstasIssueTxs {
+/// Result of the two-transaction STAS3 issuance flow.
+pub struct Stas3IssueTxs {
     /// The contract transaction.
     pub contract_tx: Transaction,
     /// The issue transaction that spends the contract output.
     pub issue_tx: Transaction,
 }
 
-/// A token input for DSTAS spend operations.
+/// A token input for STAS3 spend operations.
 ///
 /// For P2PKH-owned tokens, use `SigningKey::Single`.
 /// For P2MPKH-owned tokens, use `SigningKey::Multi`.
@@ -80,9 +80,9 @@ pub struct TokenInput {
     pub signing_key: SigningKey,
 }
 
-/// Parameters for a DSTAS output in spend operations.
+/// Parameters for a STAS3 output in spend operations.
 #[derive(Clone)]
-pub struct DstasOutputParams {
+pub struct Stas3OutputParams {
     /// Satoshi value.
     pub satoshis: u64,
     /// Owner public key hash.
@@ -101,8 +101,8 @@ pub struct DstasOutputParams {
     pub action_data: Option<crate::types::ActionData>,
 }
 
-/// Configuration for a generic DSTAS spend transaction.
-pub struct DstasBaseConfig {
+/// Configuration for a generic STAS3 spend transaction.
+pub struct Stas3BaseConfig {
     /// Token inputs (1 or 2).
     pub token_inputs: Vec<TokenInput>,
     /// Fee UTXO txid.
@@ -116,18 +116,18 @@ pub struct DstasBaseConfig {
     /// Fee UTXO private key.
     pub fee_private_key: PrivateKey,
     /// Output destinations.
-    pub destinations: Vec<DstasOutputParams>,
+    pub destinations: Vec<Stas3OutputParams>,
     /// Spend type for this transaction.
-    pub spend_type: DstasSpendType,
+    pub spend_type: Stas3SpendType,
     /// Fee rate in satoshis per kilobyte.
     pub fee_rate: u64,
 }
 
-/// Configuration for a DSTAS split transaction.
+/// Configuration for a STAS3 split transaction.
 ///
-/// Splits a single STAS input into 1–4 DSTAS outputs while conserving
+/// Splits a single STAS input into 1–4 STAS3 outputs while conserving
 /// the total token satoshi value. Uses spending type 1 (regular transfer).
-pub struct DstasSplitConfig {
+pub struct Stas3SplitConfig {
     /// The single STAS token input to split.
     pub token_input: TokenInput,
     /// Fee UTXO txid.
@@ -141,16 +141,16 @@ pub struct DstasSplitConfig {
     /// Fee UTXO private key.
     pub fee_private_key: PrivateKey,
     /// Output destinations (1–4).
-    pub destinations: Vec<DstasOutputParams>,
+    pub destinations: Vec<Stas3OutputParams>,
     /// Fee rate in satoshis per kilobyte.
     pub fee_rate: u64,
 }
 
-/// Configuration for a DSTAS merge transaction.
+/// Configuration for a STAS3 merge transaction.
 ///
-/// Merges exactly 2 STAS inputs into 1–2 DSTAS outputs while conserving
+/// Merges exactly 2 STAS inputs into 1–2 STAS3 outputs while conserving
 /// the total token satoshi value. Uses spending type 1 (regular transfer).
-pub struct DstasMergeConfig {
+pub struct Stas3MergeConfig {
     /// Exactly 2 STAS token inputs to merge.
     pub token_inputs: [TokenInput; 2],
     /// Fee UTXO txid.
@@ -164,17 +164,17 @@ pub struct DstasMergeConfig {
     /// Fee UTXO private key.
     pub fee_private_key: PrivateKey,
     /// Output destinations (1–2).
-    pub destinations: Vec<DstasOutputParams>,
+    pub destinations: Vec<Stas3OutputParams>,
     /// Fee rate in satoshis per kilobyte.
     pub fee_rate: u64,
 }
 
-/// Configuration for a DSTAS confiscation transaction.
+/// Configuration for a STAS3 confiscation transaction.
 ///
 /// Confiscates 1–2 STAS 3.0 inputs using spending type 3 (confiscation authority
 /// path). Frozen inputs may be confiscated. The confiscation flag (0x02) must
 /// be enabled in the token scheme.
-pub struct DstasConfiscateConfig {
+pub struct Stas3ConfiscateConfig {
     /// Token inputs (1 or 2) to confiscate.
     pub token_inputs: Vec<TokenInput>,
     /// Fee UTXO txid.
@@ -188,19 +188,19 @@ pub struct DstasConfiscateConfig {
     /// Fee UTXO private key.
     pub fee_private_key: PrivateKey,
     /// Output destinations (redirected to authority/issuer).
-    pub destinations: Vec<DstasOutputParams>,
+    pub destinations: Vec<Stas3OutputParams>,
     /// Fee rate in satoshis per kilobyte.
     pub fee_rate: u64,
 }
 
-/// Configuration for a DSTAS redeem transaction.
+/// Configuration for a STAS3 redeem transaction.
 ///
 /// Redeems a single STAS token by returning its satoshis to a P2PKH output.
 /// Only the token issuer (owner_pkh == redemption_pkh) may redeem. Frozen
 /// tokens cannot be redeemed. Uses spending type 1 (regular transfer).
 ///
 /// Conservation: `stas_input_sats == redeem_sats + sum(remaining STAS outputs)`.
-pub struct DstasRedeemConfig {
+pub struct Stas3RedeemConfig {
     /// The single STAS token input to redeem.
     pub token_input: TokenInput,
     /// Fee UTXO txid.
@@ -222,7 +222,7 @@ pub struct DstasRedeemConfig {
     /// cannot be redeemed).
     pub input_frozen: bool,
     /// Optional remaining STAS outputs (partial redeem).
-    pub remaining_outputs: Vec<DstasOutputParams>,
+    pub remaining_outputs: Vec<Stas3OutputParams>,
     /// Fee rate in satoshis per kilobyte.
     pub fee_rate: u64,
 }
@@ -279,7 +279,7 @@ fn add_fee_change(
 // Factory functions
 // -----------------------------------------------------------------------
 
-/// Build the two-transaction DSTAS issuance flow.
+/// Build the two-transaction STAS3 issuance flow.
 ///
 /// # Transaction 1 (Contract TX)
 /// - Input 0: Funding UTXO (P2PKH)
@@ -290,12 +290,12 @@ fn add_fee_change(
 /// # Transaction 2 (Issue TX)
 /// - Input 0: Contract output from TX 1
 /// - Input 1: Change output from TX 1 (for fees)
-/// - Outputs 0..N-1: DSTAS token outputs
+/// - Outputs 0..N-1: STAS3 token outputs
 /// - Output N: Change
-pub fn build_dstas_issue_txs(config: &DstasIssueConfig) -> Result<DstasIssueTxs, TokenError> {
+pub fn build_stas3_issue_txs(config: &Stas3IssueConfig) -> Result<Stas3IssueTxs, TokenError> {
     if config.outputs.is_empty() {
         return Err(TokenError::InvalidDestination(
-            "at least one output required for DSTAS issuance".into(),
+            "at least one output required for STAS3 issuance".into(),
         ));
     }
 
@@ -410,9 +410,9 @@ pub fn build_dstas_issue_txs(config: &DstasIssueConfig) -> Result<DstasIssueTxs,
     // Derive redemption PKH from scheme.token_id
     let redemption_pkh = issuer_pkh;
 
-    // DSTAS token outputs
+    // STAS3 token outputs
     for out in &config.outputs {
-        let locking = build_dstas_locking_script(
+        let locking = build_stas3_locking_script(
             &out.owner_pkh,
             &redemption_pkh,
             None,
@@ -445,20 +445,20 @@ pub fn build_dstas_issue_txs(config: &DstasIssueConfig) -> Result<DstasIssueTxs,
         issue_tx.inputs[i].unlocking_script = Some(sig);
     }
 
-    Ok(DstasIssueTxs {
+    Ok(Stas3IssueTxs {
         contract_tx,
         issue_tx,
     })
 }
 
-/// Build a generic DSTAS spend transaction.
+/// Build a generic STAS3 spend transaction.
 ///
 /// # Transaction structure
-/// - Inputs 0..N-1: Token inputs (DSTAS, signed with DSTAS template)
+/// - Inputs 0..N-1: Token inputs (STAS3, signed with STAS3 template)
 /// - Input N: Fee input (P2PKH)
-/// - Outputs 0..M-1: DSTAS token outputs
+/// - Outputs 0..M-1: STAS3 token outputs
 /// - Output M: Fee change
-pub fn build_dstas_base_tx(config: &DstasBaseConfig) -> Result<Transaction, TokenError> {
+pub fn build_stas3_base_tx(config: &Stas3BaseConfig) -> Result<Transaction, TokenError> {
     if config.destinations.is_empty() {
         return Err(TokenError::InvalidDestination(
             "at least one destination required".into(),
@@ -467,7 +467,7 @@ pub fn build_dstas_base_tx(config: &DstasBaseConfig) -> Result<Transaction, Toke
 
     if config.token_inputs.is_empty() || config.token_inputs.len() > 2 {
         return Err(TokenError::InvalidDestination(
-            "DSTAS base tx requires 1 or 2 token inputs".into(),
+            "STAS3 base tx requires 1 or 2 token inputs".into(),
         ));
     }
 
@@ -506,9 +506,9 @@ pub fn build_dstas_base_tx(config: &DstasBaseConfig) -> Result<Transaction, Toke
     }));
     tx.add_input(fee_input);
 
-    // DSTAS outputs
+    // STAS3 outputs
     for dest in &config.destinations {
-        let locking = build_dstas_locking_script(
+        let locking = build_stas3_locking_script(
             &dest.owner_pkh,
             &dest.redemption_pkh,
             dest.action_data.as_ref(),
@@ -532,9 +532,9 @@ pub fn build_dstas_base_tx(config: &DstasBaseConfig) -> Result<Transaction, Toke
         config.fee_rate,
     )?;
 
-    // Sign token inputs with DSTAS template (dispatches P2PKH vs P2MPKH).
+    // Sign token inputs with STAS3 template (dispatches P2PKH vs P2MPKH).
     for (i, ti) in config.token_inputs.iter().enumerate() {
-        let unlocker = dstas_template::unlock_from_signing_key(
+        let unlocker = stas3_template::unlock_from_signing_key(
             &ti.signing_key, config.spend_type, None,
         )?;
         let sig = unlocker.sign(&tx, i as u32)?;
@@ -550,31 +550,31 @@ pub fn build_dstas_base_tx(config: &DstasBaseConfig) -> Result<Transaction, Toke
     Ok(tx)
 }
 
-/// Build a DSTAS freeze transaction.
+/// Build a STAS3 freeze transaction.
 ///
-/// Wrapper around [`build_dstas_base_tx`] that sets `frozen = true` on all outputs
-/// and uses `DstasSpendType::FreezeUnfreeze`.
-pub fn build_dstas_freeze_tx(config: &mut DstasBaseConfig) -> Result<Transaction, TokenError> {
-    config.spend_type = DstasSpendType::FreezeUnfreeze;
+/// Wrapper around [`build_stas3_base_tx`] that sets `frozen = true` on all outputs
+/// and uses `Stas3SpendType::FreezeUnfreeze`.
+pub fn build_stas3_freeze_tx(config: &mut Stas3BaseConfig) -> Result<Transaction, TokenError> {
+    config.spend_type = Stas3SpendType::FreezeUnfreeze;
     for dest in &mut config.destinations {
         dest.frozen = true;
     }
-    build_dstas_base_tx(config)
+    build_stas3_base_tx(config)
 }
 
-/// Build a DSTAS unfreeze transaction.
+/// Build a STAS3 unfreeze transaction.
 ///
-/// Wrapper around [`build_dstas_base_tx`] that sets `frozen = false` on all outputs
-/// and uses `DstasSpendType::FreezeUnfreeze`.
-pub fn build_dstas_unfreeze_tx(config: &mut DstasBaseConfig) -> Result<Transaction, TokenError> {
-    config.spend_type = DstasSpendType::FreezeUnfreeze;
+/// Wrapper around [`build_stas3_base_tx`] that sets `frozen = false` on all outputs
+/// and uses `Stas3SpendType::FreezeUnfreeze`.
+pub fn build_stas3_unfreeze_tx(config: &mut Stas3BaseConfig) -> Result<Transaction, TokenError> {
+    config.spend_type = Stas3SpendType::FreezeUnfreeze;
     for dest in &mut config.destinations {
         dest.frozen = false;
     }
-    build_dstas_base_tx(config)
+    build_stas3_base_tx(config)
 }
 
-/// Build a DSTAS transfer-swap transaction.
+/// Build a STAS3 transfer-swap transaction.
 ///
 /// One input is spent via the regular transfer path (spending type 1),
 /// the other is consumed via swap matching. Requires exactly 2 token inputs.
@@ -582,15 +582,15 @@ pub fn build_dstas_unfreeze_tx(config: &mut DstasBaseConfig) -> Result<Transacti
 ///
 /// Outputs can be 2–4: principal swap legs (ownership exchanged) plus
 /// optional remainder outputs for fractional-rate swaps.
-pub fn build_dstas_transfer_swap_tx(
-    config: &mut DstasBaseConfig,
+pub fn build_stas3_transfer_swap_tx(
+    config: &mut Stas3BaseConfig,
 ) -> Result<Transaction, TokenError> {
     validate_swap_inputs(config)?;
-    config.spend_type = DstasSpendType::Transfer;
-    build_dstas_base_tx(config)
+    config.spend_type = Stas3SpendType::Transfer;
+    build_stas3_base_tx(config)
 }
 
-/// Build a DSTAS swap-swap transaction.
+/// Build a STAS3 swap-swap transaction.
 ///
 /// Both inputs have swap action data and are spent via the swap path
 /// (spending type 4). Requires exactly 2 token inputs.
@@ -598,41 +598,41 @@ pub fn build_dstas_transfer_swap_tx(
 ///
 /// Outputs can be 2–4: principal swap legs (ownership exchanged) plus
 /// optional remainder outputs for fractional-rate swaps.
-pub fn build_dstas_swap_swap_tx(
-    config: &mut DstasBaseConfig,
+pub fn build_stas3_swap_swap_tx(
+    config: &mut Stas3BaseConfig,
 ) -> Result<Transaction, TokenError> {
     validate_swap_inputs(config)?;
-    config.spend_type = DstasSpendType::SwapCancellation;
-    build_dstas_base_tx(config)
+    config.spend_type = Stas3SpendType::SwapCancellation;
+    build_stas3_base_tx(config)
 }
 
-/// Build a DSTAS swap flow transaction with auto-detected mode.
+/// Build a STAS3 swap flow transaction with auto-detected mode.
 ///
 /// Inspects both input locking scripts to determine whether this is a
 /// transfer-swap (one side transfers) or swap-swap (both sides have swap
 /// action data). Delegates to the appropriate builder.
 ///
 /// Requires exactly 2 token inputs. Frozen inputs are rejected.
-pub fn build_dstas_swap_flow_tx(config: &mut DstasBaseConfig) -> Result<Transaction, TokenError> {
+pub fn build_stas3_swap_flow_tx(config: &mut Stas3BaseConfig) -> Result<Transaction, TokenError> {
     if config.token_inputs.len() != 2 {
         return Err(TokenError::InvalidDestination(
             "swap flow requires exactly 2 token inputs".into(),
         ));
     }
 
-    let mode = resolve_dstas_swap_mode(
+    let mode = resolve_stas3_swap_mode(
         config.token_inputs[0].locking_script.to_bytes(),
         config.token_inputs[1].locking_script.to_bytes(),
     );
 
     match mode {
-        DstasSwapMode::SwapSwap => build_dstas_swap_swap_tx(config),
-        DstasSwapMode::TransferSwap => build_dstas_transfer_swap_tx(config),
+        Stas3SwapMode::SwapSwap => build_stas3_swap_swap_tx(config),
+        Stas3SwapMode::TransferSwap => build_stas3_transfer_swap_tx(config),
     }
 }
 
 /// Validate swap inputs: exactly 2, none frozen.
-fn validate_swap_inputs(config: &DstasBaseConfig) -> Result<(), TokenError> {
+fn validate_swap_inputs(config: &Stas3BaseConfig) -> Result<(), TokenError> {
     if config.token_inputs.len() != 2 {
         return Err(TokenError::InvalidDestination(
             "swap requires exactly 2 token inputs".into(),
@@ -640,7 +640,7 @@ fn validate_swap_inputs(config: &DstasBaseConfig) -> Result<(), TokenError> {
     }
 
     for ti in &config.token_inputs {
-        if is_dstas_frozen(ti.locking_script.to_bytes()) {
+        if is_stas3_frozen(ti.locking_script.to_bytes()) {
             return Err(TokenError::FrozenToken);
         }
     }
@@ -648,23 +648,23 @@ fn validate_swap_inputs(config: &DstasBaseConfig) -> Result<(), TokenError> {
     Ok(())
 }
 
-/// Build a DSTAS split transaction.
+/// Build a STAS3 split transaction.
 ///
-/// Splits a single STAS token input into 1–4 DSTAS outputs. The total
+/// Splits a single STAS token input into 1–4 STAS3 outputs. The total
 /// satoshi value across all outputs must equal the input value (conservation).
 ///
 /// # Errors
 ///
 /// Returns [`TokenError::InvalidDestination`] if destinations is empty or
-/// exceeds 4, and propagates any error from [`build_dstas_base_tx`].
-pub fn build_dstas_split_tx(config: DstasSplitConfig) -> Result<Transaction, TokenError> {
+/// exceeds 4, and propagates any error from [`build_stas3_base_tx`].
+pub fn build_stas3_split_tx(config: Stas3SplitConfig) -> Result<Transaction, TokenError> {
     if config.destinations.is_empty() || config.destinations.len() > 4 {
         return Err(TokenError::InvalidDestination(
             "split requires 1–4 destinations".into(),
         ));
     }
 
-    let base = DstasBaseConfig {
+    let base = Stas3BaseConfig {
         token_inputs: vec![config.token_input],
         fee_txid: config.fee_txid,
         fee_vout: config.fee_vout,
@@ -672,23 +672,23 @@ pub fn build_dstas_split_tx(config: DstasSplitConfig) -> Result<Transaction, Tok
         fee_locking_script: config.fee_locking_script,
         fee_private_key: config.fee_private_key,
         destinations: config.destinations,
-        spend_type: DstasSpendType::Transfer,
+        spend_type: Stas3SpendType::Transfer,
         fee_rate: config.fee_rate,
     };
 
-    build_dstas_base_tx(&base)
+    build_stas3_base_tx(&base)
 }
 
-/// Build a DSTAS merge transaction.
+/// Build a STAS3 merge transaction.
 ///
-/// Merges exactly 2 STAS token inputs into 1–2 DSTAS outputs. The combined
+/// Merges exactly 2 STAS token inputs into 1–2 STAS3 outputs. The combined
 /// input value must equal the total output value (conservation).
 ///
 /// # Errors
 ///
 /// Returns [`TokenError::InvalidDestination`] if destinations is empty or
-/// exceeds 2, and propagates any error from [`build_dstas_base_tx`].
-pub fn build_dstas_merge_tx(config: DstasMergeConfig) -> Result<Transaction, TokenError> {
+/// exceeds 2, and propagates any error from [`build_stas3_base_tx`].
+pub fn build_stas3_merge_tx(config: Stas3MergeConfig) -> Result<Transaction, TokenError> {
     if config.destinations.is_empty() || config.destinations.len() > 2 {
         return Err(TokenError::InvalidDestination(
             "merge requires 1–2 destinations".into(),
@@ -696,7 +696,7 @@ pub fn build_dstas_merge_tx(config: DstasMergeConfig) -> Result<Transaction, Tok
     }
 
     let [input_a, input_b] = config.token_inputs;
-    let base = DstasBaseConfig {
+    let base = Stas3BaseConfig {
         token_inputs: vec![input_a, input_b],
         fee_txid: config.fee_txid,
         fee_vout: config.fee_vout,
@@ -704,14 +704,14 @@ pub fn build_dstas_merge_tx(config: DstasMergeConfig) -> Result<Transaction, Tok
         fee_locking_script: config.fee_locking_script,
         fee_private_key: config.fee_private_key,
         destinations: config.destinations,
-        spend_type: DstasSpendType::Transfer,
+        spend_type: Stas3SpendType::Transfer,
         fee_rate: config.fee_rate,
     };
 
-    build_dstas_base_tx(&base)
+    build_stas3_base_tx(&base)
 }
 
-/// Build a DSTAS confiscation transaction.
+/// Build a STAS3 confiscation transaction.
 ///
 /// Confiscates 1–2 STAS token inputs using the confiscation authority path
 /// (spending type 3). Frozen tokens *can* be confiscated. The token scheme
@@ -720,15 +720,15 @@ pub fn build_dstas_merge_tx(config: DstasMergeConfig) -> Result<Transaction, Tok
 /// # Errors
 ///
 /// Returns [`TokenError::InvalidDestination`] if `token_inputs` is empty,
-/// and propagates any error from [`build_dstas_base_tx`].
-pub fn build_dstas_confiscate_tx(config: DstasConfiscateConfig) -> Result<Transaction, TokenError> {
+/// and propagates any error from [`build_stas3_base_tx`].
+pub fn build_stas3_confiscate_tx(config: Stas3ConfiscateConfig) -> Result<Transaction, TokenError> {
     if config.token_inputs.is_empty() {
         return Err(TokenError::InvalidDestination(
             "confiscation requires at least 1 token input".into(),
         ));
     }
 
-    let base = DstasBaseConfig {
+    let base = Stas3BaseConfig {
         token_inputs: config.token_inputs,
         fee_txid: config.fee_txid,
         fee_vout: config.fee_vout,
@@ -736,14 +736,14 @@ pub fn build_dstas_confiscate_tx(config: DstasConfiscateConfig) -> Result<Transa
         fee_locking_script: config.fee_locking_script,
         fee_private_key: config.fee_private_key,
         destinations: config.destinations,
-        spend_type: DstasSpendType::Confiscation,
+        spend_type: Stas3SpendType::Confiscation,
         fee_rate: config.fee_rate,
     };
 
-    build_dstas_base_tx(&base)
+    build_stas3_base_tx(&base)
 }
 
-/// Build a DSTAS redeem transaction.
+/// Build a STAS3 redeem transaction.
 ///
 /// Redeems a single STAS token input by sending part or all of its satoshis
 /// to a P2PKH output. Only the token issuer may redeem (the input `owner_pkh`
@@ -753,11 +753,11 @@ pub fn build_dstas_confiscate_tx(config: DstasConfiscateConfig) -> Result<Transa
 /// - Input 0: STAS token input
 /// - Input 1: Fee input (P2PKH)
 /// - Output 0: P2PKH redeem output (`redeem_satoshis`)
-/// - Outputs 1..N: Optional remaining DSTAS outputs (partial redeem)
+/// - Outputs 1..N: Optional remaining STAS3 outputs (partial redeem)
 /// - Output N+1: Fee change (P2PKH)
 ///
 /// # Conservation
-/// `token_input.satoshis == redeem_satoshis + sum(remaining DSTAS outputs)`
+/// `token_input.satoshis == redeem_satoshis + sum(remaining STAS3 outputs)`
 ///
 /// # Errors
 ///
@@ -765,7 +765,7 @@ pub fn build_dstas_confiscate_tx(config: DstasConfiscateConfig) -> Result<Transa
 /// - [`TokenError::IssuerOnly`] if the token input owner is not the issuer.
 /// - [`TokenError::AmountMismatch`] if conservation is violated.
 /// - [`TokenError::InvalidDestination`] if `redeem_satoshis` is zero.
-pub fn build_dstas_redeem_tx(config: DstasRedeemConfig) -> Result<Transaction, TokenError> {
+pub fn build_stas3_redeem_tx(config: Stas3RedeemConfig) -> Result<Transaction, TokenError> {
     // Frozen tokens cannot be redeemed
     if config.input_frozen {
         return Err(TokenError::FrozenToken);
@@ -837,9 +837,9 @@ pub fn build_dstas_redeem_tx(config: DstasRedeemConfig) -> Result<Transaction, T
         change: false,
     });
 
-    // Outputs 1..N: Remaining DSTAS outputs (partial redeem)
+    // Outputs 1..N: Remaining STAS3 outputs (partial redeem)
     for dest in &config.remaining_outputs {
-        let locking = build_dstas_locking_script(
+        let locking = build_stas3_locking_script(
             &dest.owner_pkh,
             &dest.redemption_pkh,
             None,
@@ -863,10 +863,10 @@ pub fn build_dstas_redeem_tx(config: DstasRedeemConfig) -> Result<Transaction, T
         config.fee_rate,
     )?;
 
-    // Sign token input with DSTAS template (spending type 1 = Transfer).
-    let unlocker = dstas_template::unlock_from_signing_key(
+    // Sign token input with STAS3 template (spending type 1 = Transfer).
+    let unlocker = stas3_template::unlock_from_signing_key(
         &config.token_input.signing_key,
-        DstasSpendType::Transfer,
+        Stas3SpendType::Transfer,
         None,
     )?;
     let sig = unlocker.sign(&tx, 0)?;
@@ -906,9 +906,9 @@ mod tests {
 
     fn test_scheme() -> TokenScheme {
         TokenScheme {
-            name: "TestDSTAS".into(),
+            name: "TestSTAS3".into(),
             token_id: TokenId::from_pkh([0xaa; 20]),
-            symbol: "TDSTAS".into(),
+            symbol: "TSTAS3".into(),
             satoshis_per_token: 1,
             freeze: true,
             confiscation: false,
@@ -920,8 +920,8 @@ mod tests {
         }
     }
 
-    fn make_dstas_locking(owner_pkh: &[u8; 20], redemption_pkh: &[u8; 20]) -> Script {
-        build_dstas_locking_script(owner_pkh, redemption_pkh, None, false, true, &[], &[]).unwrap()
+    fn make_stas3_locking(owner_pkh: &[u8; 20], redemption_pkh: &[u8; 20]) -> Script {
+        build_stas3_locking_script(owner_pkh, redemption_pkh, None, false, true, &[], &[]).unwrap()
     }
 
     // ---------------------------------------------------------------
@@ -931,7 +931,7 @@ mod tests {
     #[test]
     fn issue_txs_structure() {
         let key = test_key();
-        let config = DstasIssueConfig {
+        let config = Stas3IssueConfig {
             scheme: test_scheme(),
             funding_txid: dummy_hash(),
             funding_vout: 0,
@@ -939,12 +939,12 @@ mod tests {
             funding_locking_script: test_p2pkh_script(&key),
             funding_private_key: key,
             outputs: vec![
-                DstasIssueOutput {
+                Stas3IssueOutput {
                     satoshis: 5000,
                     owner_pkh: [0x11; 20],
                     freezable: true,
                 },
-                DstasIssueOutput {
+                Stas3IssueOutput {
                     satoshis: 5000,
                     owner_pkh: [0x22; 20],
                     freezable: false,
@@ -953,7 +953,7 @@ mod tests {
             fee_rate: 500,
         };
 
-        let result = build_dstas_issue_txs(&config).unwrap();
+        let result = build_stas3_issue_txs(&config).unwrap();
 
         // Contract TX: 1 input, 2-3 outputs (contract + OP_RETURN + optional change)
         assert_eq!(result.contract_tx.input_count(), 1);
@@ -979,14 +979,14 @@ mod tests {
     #[test]
     fn issue_txid_chaining() {
         let key = test_key();
-        let config = DstasIssueConfig {
+        let config = Stas3IssueConfig {
             scheme: test_scheme(),
             funding_txid: dummy_hash(),
             funding_vout: 0,
             funding_satoshis: 100_000,
             funding_locking_script: test_p2pkh_script(&key),
             funding_private_key: key,
-            outputs: vec![DstasIssueOutput {
+            outputs: vec![Stas3IssueOutput {
                 satoshis: 10000,
                 owner_pkh: [0x11; 20],
                 freezable: true,
@@ -994,7 +994,7 @@ mod tests {
             fee_rate: 500,
         };
 
-        let result = build_dstas_issue_txs(&config).unwrap();
+        let result = build_stas3_issue_txs(&config).unwrap();
 
         // Issue TX input 0 should reference contract TX's txid
         let contract_txid = result.contract_tx.tx_id();
@@ -1004,7 +1004,7 @@ mod tests {
     #[test]
     fn issue_empty_outputs_rejected() {
         let key = test_key();
-        let config = DstasIssueConfig {
+        let config = Stas3IssueConfig {
             scheme: test_scheme(),
             funding_txid: dummy_hash(),
             funding_vout: 0,
@@ -1015,20 +1015,20 @@ mod tests {
             fee_rate: 500,
         };
 
-        assert!(build_dstas_issue_txs(&config).is_err());
+        assert!(build_stas3_issue_txs(&config).is_err());
     }
 
     #[test]
     fn issue_insufficient_funds() {
         let key = test_key();
-        let config = DstasIssueConfig {
+        let config = Stas3IssueConfig {
             scheme: test_scheme(),
             funding_txid: dummy_hash(),
             funding_vout: 0,
             funding_satoshis: 100, // too low
             funding_locking_script: test_p2pkh_script(&key),
             funding_private_key: key,
-            outputs: vec![DstasIssueOutput {
+            outputs: vec![Stas3IssueOutput {
                 satoshis: 10000,
                 owner_pkh: [0x11; 20],
                 freezable: true,
@@ -1036,7 +1036,7 @@ mod tests {
             fee_rate: 500,
         };
 
-        assert!(build_dstas_issue_txs(&config).is_err());
+        assert!(build_stas3_issue_txs(&config).is_err());
     }
 
     // ---------------------------------------------------------------
@@ -1050,12 +1050,12 @@ mod tests {
         let owner_pkh = [0x11; 20];
         let redemption_pkh = [0x22; 20];
 
-        let config = DstasBaseConfig {
+        let config = Stas3BaseConfig {
             token_inputs: vec![TokenInput {
                 txid: dummy_hash(),
                 vout: 0,
                 satoshis: 5000,
-                locking_script: make_dstas_locking(&owner_pkh, &redemption_pkh),
+                locking_script: make_stas3_locking(&owner_pkh, &redemption_pkh),
                 signing_key: SigningKey::Single(token_key),
             }],
             fee_txid: dummy_hash(),
@@ -1063,7 +1063,7 @@ mod tests {
             fee_satoshis: 50_000,
             fee_locking_script: test_p2pkh_script(&fee_key),
             fee_private_key: fee_key,
-            destinations: vec![DstasOutputParams {
+            destinations: vec![Stas3OutputParams {
                 satoshis: 5000,
                 owner_pkh: [0x33; 20],
                 redemption_pkh,
@@ -1073,11 +1073,11 @@ mod tests {
                 optional_data: vec![],
                 action_data: None,
             }],
-            spend_type: DstasSpendType::Transfer,
+            spend_type: Stas3SpendType::Transfer,
             fee_rate: 500,
         };
 
-        let tx = build_dstas_base_tx(&config).unwrap();
+        let tx = build_stas3_base_tx(&config).unwrap();
         assert_eq!(tx.input_count(), 2); // 1 token + 1 fee
         assert!(tx.output_count() >= 1); // 1 token + optional change
         assert_eq!(tx.outputs[0].satoshis, 5000);
@@ -1093,12 +1093,12 @@ mod tests {
         let token_key = test_key();
         let fee_key = test_key();
 
-        let config = DstasBaseConfig {
+        let config = Stas3BaseConfig {
             token_inputs: vec![TokenInput {
                 txid: dummy_hash(),
                 vout: 0,
                 satoshis: 10000,
-                locking_script: make_dstas_locking(&[0x11; 20], &[0x22; 20]),
+                locking_script: make_stas3_locking(&[0x11; 20], &[0x22; 20]),
                 signing_key: SigningKey::Single(token_key),
             }],
             fee_txid: dummy_hash(),
@@ -1107,7 +1107,7 @@ mod tests {
             fee_locking_script: test_p2pkh_script(&fee_key),
             fee_private_key: fee_key,
             destinations: vec![
-                DstasOutputParams {
+                Stas3OutputParams {
                     satoshis: 4000,
                     owner_pkh: [0x33; 20],
                     redemption_pkh: [0x22; 20],
@@ -1117,7 +1117,7 @@ mod tests {
                     optional_data: vec![],
                 action_data: None,
                 },
-                DstasOutputParams {
+                Stas3OutputParams {
                     satoshis: 6000,
                     owner_pkh: [0x44; 20],
                     redemption_pkh: [0x22; 20],
@@ -1128,11 +1128,11 @@ mod tests {
                 action_data: None,
                 },
             ],
-            spend_type: DstasSpendType::Transfer,
+            spend_type: Stas3SpendType::Transfer,
             fee_rate: 500,
         };
 
-        let tx = build_dstas_base_tx(&config).unwrap();
+        let tx = build_stas3_base_tx(&config).unwrap();
         // Token outputs should sum to input
         let token_out: u64 = tx.outputs.iter().filter(|o| !o.change).map(|o| o.satoshis).sum();
         assert_eq!(token_out, 10000);
@@ -1143,12 +1143,12 @@ mod tests {
         let token_key = test_key();
         let fee_key = test_key();
 
-        let config = DstasBaseConfig {
+        let config = Stas3BaseConfig {
             token_inputs: vec![TokenInput {
                 txid: dummy_hash(),
                 vout: 0,
                 satoshis: 10000,
-                locking_script: make_dstas_locking(&[0x11; 20], &[0x22; 20]),
+                locking_script: make_stas3_locking(&[0x11; 20], &[0x22; 20]),
                 signing_key: SigningKey::Single(token_key),
             }],
             fee_txid: dummy_hash(),
@@ -1156,7 +1156,7 @@ mod tests {
             fee_satoshis: 50_000,
             fee_locking_script: test_p2pkh_script(&fee_key),
             fee_private_key: fee_key,
-            destinations: vec![DstasOutputParams {
+            destinations: vec![Stas3OutputParams {
                 satoshis: 9000, // != 10000
                 owner_pkh: [0x33; 20],
                 redemption_pkh: [0x22; 20],
@@ -1166,11 +1166,11 @@ mod tests {
                 optional_data: vec![],
                 action_data: None,
             }],
-            spend_type: DstasSpendType::Transfer,
+            spend_type: Stas3SpendType::Transfer,
             fee_rate: 500,
         };
 
-        assert!(build_dstas_base_tx(&config).is_err());
+        assert!(build_stas3_base_tx(&config).is_err());
     }
 
     #[test]
@@ -1178,12 +1178,12 @@ mod tests {
         let token_key = test_key();
         let fee_key = test_key();
 
-        let config = DstasBaseConfig {
+        let config = Stas3BaseConfig {
             token_inputs: vec![TokenInput {
                 txid: dummy_hash(),
                 vout: 0,
                 satoshis: 5000,
-                locking_script: make_dstas_locking(&[0x11; 20], &[0x22; 20]),
+                locking_script: make_stas3_locking(&[0x11; 20], &[0x22; 20]),
                 signing_key: SigningKey::Single(token_key),
             }],
             fee_txid: dummy_hash(),
@@ -1192,29 +1192,29 @@ mod tests {
             fee_locking_script: test_p2pkh_script(&fee_key),
             fee_private_key: fee_key,
             destinations: vec![],
-            spend_type: DstasSpendType::Transfer,
+            spend_type: Stas3SpendType::Transfer,
             fee_rate: 500,
         };
 
-        assert!(build_dstas_base_tx(&config).is_err());
+        assert!(build_stas3_base_tx(&config).is_err());
     }
 
     #[test]
     fn base_tx_too_many_inputs() {
         let fee_key = test_key();
 
-        let config = DstasBaseConfig {
+        let config = Stas3BaseConfig {
             token_inputs: vec![
-                TokenInput { txid: dummy_hash(), vout: 0, satoshis: 1000, locking_script: make_dstas_locking(&[0x11; 20], &[0x22; 20]), signing_key: SigningKey::Single(test_key()) },
-                TokenInput { txid: dummy_hash(), vout: 1, satoshis: 1000, locking_script: make_dstas_locking(&[0x11; 20], &[0x22; 20]), signing_key: SigningKey::Single(test_key()) },
-                TokenInput { txid: dummy_hash(), vout: 2, satoshis: 1000, locking_script: make_dstas_locking(&[0x11; 20], &[0x22; 20]), signing_key: SigningKey::Single(test_key()) },
+                TokenInput { txid: dummy_hash(), vout: 0, satoshis: 1000, locking_script: make_stas3_locking(&[0x11; 20], &[0x22; 20]), signing_key: SigningKey::Single(test_key()) },
+                TokenInput { txid: dummy_hash(), vout: 1, satoshis: 1000, locking_script: make_stas3_locking(&[0x11; 20], &[0x22; 20]), signing_key: SigningKey::Single(test_key()) },
+                TokenInput { txid: dummy_hash(), vout: 2, satoshis: 1000, locking_script: make_stas3_locking(&[0x11; 20], &[0x22; 20]), signing_key: SigningKey::Single(test_key()) },
             ],
             fee_txid: dummy_hash(),
             fee_vout: 3,
             fee_satoshis: 50_000,
             fee_locking_script: test_p2pkh_script(&fee_key),
             fee_private_key: fee_key,
-            destinations: vec![DstasOutputParams {
+            destinations: vec![Stas3OutputParams {
                 satoshis: 3000,
                 owner_pkh: [0x33; 20],
                 redemption_pkh: [0x22; 20],
@@ -1224,11 +1224,11 @@ mod tests {
                 optional_data: vec![],
                 action_data: None,
             }],
-            spend_type: DstasSpendType::Transfer,
+            spend_type: Stas3SpendType::Transfer,
             fee_rate: 500,
         };
 
-        assert!(build_dstas_base_tx(&config).is_err());
+        assert!(build_stas3_base_tx(&config).is_err());
     }
 
     // ---------------------------------------------------------------
@@ -1240,12 +1240,12 @@ mod tests {
         let token_key = test_key();
         let fee_key = test_key();
 
-        let mut config = DstasBaseConfig {
+        let mut config = Stas3BaseConfig {
             token_inputs: vec![TokenInput {
                 txid: dummy_hash(),
                 vout: 0,
                 satoshis: 5000,
-                locking_script: make_dstas_locking(&[0x11; 20], &[0x22; 20]),
+                locking_script: make_stas3_locking(&[0x11; 20], &[0x22; 20]),
                 signing_key: SigningKey::Single(token_key),
             }],
             fee_txid: dummy_hash(),
@@ -1253,7 +1253,7 @@ mod tests {
             fee_satoshis: 50_000,
             fee_locking_script: test_p2pkh_script(&fee_key),
             fee_private_key: fee_key,
-            destinations: vec![DstasOutputParams {
+            destinations: vec![Stas3OutputParams {
                 satoshis: 5000,
                 owner_pkh: [0x33; 20],
                 redemption_pkh: [0x22; 20],
@@ -1263,17 +1263,17 @@ mod tests {
                 optional_data: vec![],
                 action_data: None,
             }],
-            spend_type: DstasSpendType::Transfer, // will be overridden
+            spend_type: Stas3SpendType::Transfer, // will be overridden
             fee_rate: 500,
         };
 
-        let tx = build_dstas_freeze_tx(&mut config).unwrap();
+        let tx = build_stas3_freeze_tx(&mut config).unwrap();
 
         // Parse the first output script to verify frozen
         let parsed = read_locking_script(tx.outputs[0].locking_script.to_bytes());
-        assert_eq!(parsed.script_type, ScriptType::Dstas);
-        let dstas = parsed.dstas.unwrap();
-        assert!(dstas.frozen);
+        assert_eq!(parsed.script_type, ScriptType::Stas3);
+        let stas3 = parsed.stas3.unwrap();
+        assert!(stas3.frozen);
     }
 
     #[test]
@@ -1281,12 +1281,12 @@ mod tests {
         let token_key = test_key();
         let fee_key = test_key();
 
-        let mut config = DstasBaseConfig {
+        let mut config = Stas3BaseConfig {
             token_inputs: vec![TokenInput {
                 txid: dummy_hash(),
                 vout: 0,
                 satoshis: 5000,
-                locking_script: make_dstas_locking(&[0x11; 20], &[0x22; 20]),
+                locking_script: make_stas3_locking(&[0x11; 20], &[0x22; 20]),
                 signing_key: SigningKey::Single(token_key),
             }],
             fee_txid: dummy_hash(),
@@ -1294,7 +1294,7 @@ mod tests {
             fee_satoshis: 50_000,
             fee_locking_script: test_p2pkh_script(&fee_key),
             fee_private_key: fee_key,
-            destinations: vec![DstasOutputParams {
+            destinations: vec![Stas3OutputParams {
                 satoshis: 5000,
                 owner_pkh: [0x33; 20],
                 redemption_pkh: [0x22; 20],
@@ -1304,16 +1304,16 @@ mod tests {
                 optional_data: vec![],
                 action_data: None,
             }],
-            spend_type: DstasSpendType::Transfer,
+            spend_type: Stas3SpendType::Transfer,
             fee_rate: 500,
         };
 
-        let tx = build_dstas_unfreeze_tx(&mut config).unwrap();
+        let tx = build_stas3_unfreeze_tx(&mut config).unwrap();
 
         let parsed = read_locking_script(tx.outputs[0].locking_script.to_bytes());
-        assert_eq!(parsed.script_type, ScriptType::Dstas);
-        let dstas = parsed.dstas.unwrap();
-        assert!(!dstas.frozen);
+        assert_eq!(parsed.script_type, ScriptType::Stas3);
+        let stas3 = parsed.stas3.unwrap();
+        assert!(!stas3.frozen);
     }
 
     // ---------------------------------------------------------------
@@ -1324,12 +1324,12 @@ mod tests {
     fn swap_flow_requires_two_inputs() {
         let fee_key = test_key();
 
-        let mut config = DstasBaseConfig {
+        let mut config = Stas3BaseConfig {
             token_inputs: vec![TokenInput {
                 txid: dummy_hash(),
                 vout: 0,
                 satoshis: 5000,
-                locking_script: make_dstas_locking(&[0x11; 20], &[0x22; 20]),
+                locking_script: make_stas3_locking(&[0x11; 20], &[0x22; 20]),
                 signing_key: SigningKey::Single(test_key()),
             }],
             fee_txid: dummy_hash(),
@@ -1337,7 +1337,7 @@ mod tests {
             fee_satoshis: 50_000,
             fee_locking_script: test_p2pkh_script(&fee_key),
             fee_private_key: fee_key,
-            destinations: vec![DstasOutputParams {
+            destinations: vec![Stas3OutputParams {
                 satoshis: 5000,
                 owner_pkh: [0x33; 20],
                 redemption_pkh: [0x22; 20],
@@ -1347,31 +1347,31 @@ mod tests {
                 optional_data: vec![],
                 action_data: None,
             }],
-            spend_type: DstasSpendType::Transfer,
+            spend_type: Stas3SpendType::Transfer,
             fee_rate: 500,
         };
 
-        assert!(build_dstas_swap_flow_tx(&mut config).is_err());
+        assert!(build_stas3_swap_flow_tx(&mut config).is_err());
     }
 
     #[test]
     fn swap_flow_with_two_inputs() {
         let fee_key = test_key();
 
-        let mut config = DstasBaseConfig {
+        let mut config = Stas3BaseConfig {
             token_inputs: vec![
                 TokenInput {
                     txid: dummy_hash(),
                     vout: 0,
                     satoshis: 3000,
-                    locking_script: make_dstas_locking(&[0x11; 20], &[0x22; 20]),
+                    locking_script: make_stas3_locking(&[0x11; 20], &[0x22; 20]),
                     signing_key: SigningKey::Single(test_key()),
                 },
                 TokenInput {
                     txid: dummy_hash(),
                     vout: 1,
                     satoshis: 7000,
-                    locking_script: make_dstas_locking(&[0x33; 20], &[0x22; 20]),
+                    locking_script: make_stas3_locking(&[0x33; 20], &[0x22; 20]),
                     signing_key: SigningKey::Single(test_key()),
                 },
             ],
@@ -1381,7 +1381,7 @@ mod tests {
             fee_locking_script: test_p2pkh_script(&fee_key),
             fee_private_key: fee_key,
             destinations: vec![
-                DstasOutputParams {
+                Stas3OutputParams {
                     satoshis: 3000,
                     owner_pkh: [0x44; 20],
                     redemption_pkh: [0x22; 20],
@@ -1391,7 +1391,7 @@ mod tests {
                     optional_data: vec![],
                 action_data: None,
                 },
-                DstasOutputParams {
+                Stas3OutputParams {
                     satoshis: 7000,
                     owner_pkh: [0x55; 20],
                     redemption_pkh: [0x22; 20],
@@ -1402,11 +1402,11 @@ mod tests {
                 action_data: None,
                 },
             ],
-            spend_type: DstasSpendType::SwapCancellation, // will be overridden
+            spend_type: Stas3SpendType::SwapCancellation, // will be overridden
             fee_rate: 500,
         };
 
-        let tx = build_dstas_swap_flow_tx(&mut config).unwrap();
+        let tx = build_stas3_swap_flow_tx(&mut config).unwrap();
         assert_eq!(tx.input_count(), 3); // 2 token + 1 fee
         assert!(tx.output_count() >= 2);
     }
@@ -1421,12 +1421,12 @@ mod tests {
         let fee_key = test_key();
         let redemption_pkh = [0x22; 20];
 
-        let config = DstasSplitConfig {
+        let config = Stas3SplitConfig {
             token_input: TokenInput {
                 txid: dummy_hash(),
                 vout: 0,
                 satoshis: 10000,
-                locking_script: make_dstas_locking(&[0x11; 20], &redemption_pkh),
+                locking_script: make_stas3_locking(&[0x11; 20], &redemption_pkh),
                 signing_key: SigningKey::Single(token_key),
             },
             fee_txid: dummy_hash(),
@@ -1435,7 +1435,7 @@ mod tests {
             fee_locking_script: test_p2pkh_script(&fee_key),
             fee_private_key: fee_key,
             destinations: vec![
-                DstasOutputParams {
+                Stas3OutputParams {
                     satoshis: 4000,
                     owner_pkh: [0x33; 20],
                     redemption_pkh,
@@ -1445,7 +1445,7 @@ mod tests {
                     optional_data: vec![],
                 action_data: None,
                 },
-                DstasOutputParams {
+                Stas3OutputParams {
                     satoshis: 6000,
                     owner_pkh: [0x44; 20],
                     redemption_pkh,
@@ -1459,9 +1459,9 @@ mod tests {
             fee_rate: 500,
         };
 
-        let tx = build_dstas_split_tx(config).unwrap();
+        let tx = build_stas3_split_tx(config).unwrap();
         assert_eq!(tx.input_count(), 2); // 1 token + 1 fee
-        assert!(tx.output_count() >= 2); // 2 DSTAS + optional change
+        assert!(tx.output_count() >= 2); // 2 STAS3 + optional change
         assert_eq!(tx.outputs[0].satoshis, 4000);
         assert_eq!(tx.outputs[1].satoshis, 6000);
 
@@ -1477,12 +1477,12 @@ mod tests {
         let fee_key = test_key();
         let redemption_pkh = [0x22; 20];
 
-        let config = DstasSplitConfig {
+        let config = Stas3SplitConfig {
             token_input: TokenInput {
                 txid: dummy_hash(),
                 vout: 0,
                 satoshis: 10000,
-                locking_script: make_dstas_locking(&[0x11; 20], &redemption_pkh),
+                locking_script: make_stas3_locking(&[0x11; 20], &redemption_pkh),
                 signing_key: SigningKey::Single(token_key),
             },
             fee_txid: dummy_hash(),
@@ -1491,15 +1491,15 @@ mod tests {
             fee_locking_script: test_p2pkh_script(&fee_key),
             fee_private_key: fee_key,
             destinations: vec![
-                DstasOutputParams { satoshis: 2500, owner_pkh: [0x33; 20], redemption_pkh, frozen: false, freezable: true, service_fields: vec![], optional_data: vec![], action_data: None },
-                DstasOutputParams { satoshis: 2500, owner_pkh: [0x44; 20], redemption_pkh, frozen: false, freezable: true, service_fields: vec![], optional_data: vec![], action_data: None },
-                DstasOutputParams { satoshis: 2500, owner_pkh: [0x55; 20], redemption_pkh, frozen: false, freezable: true, service_fields: vec![], optional_data: vec![], action_data: None },
-                DstasOutputParams { satoshis: 2500, owner_pkh: [0x66; 20], redemption_pkh, frozen: false, freezable: true, service_fields: vec![], optional_data: vec![], action_data: None },
+                Stas3OutputParams { satoshis: 2500, owner_pkh: [0x33; 20], redemption_pkh, frozen: false, freezable: true, service_fields: vec![], optional_data: vec![], action_data: None },
+                Stas3OutputParams { satoshis: 2500, owner_pkh: [0x44; 20], redemption_pkh, frozen: false, freezable: true, service_fields: vec![], optional_data: vec![], action_data: None },
+                Stas3OutputParams { satoshis: 2500, owner_pkh: [0x55; 20], redemption_pkh, frozen: false, freezable: true, service_fields: vec![], optional_data: vec![], action_data: None },
+                Stas3OutputParams { satoshis: 2500, owner_pkh: [0x66; 20], redemption_pkh, frozen: false, freezable: true, service_fields: vec![], optional_data: vec![], action_data: None },
             ],
             fee_rate: 500,
         };
 
-        let tx = build_dstas_split_tx(config).unwrap();
+        let tx = build_stas3_split_tx(config).unwrap();
         assert!(tx.output_count() >= 4);
     }
 
@@ -1508,12 +1508,12 @@ mod tests {
         let token_key = test_key();
         let fee_key = test_key();
 
-        let config = DstasSplitConfig {
+        let config = Stas3SplitConfig {
             token_input: TokenInput {
                 txid: dummy_hash(),
                 vout: 0,
                 satoshis: 10000,
-                locking_script: make_dstas_locking(&[0x11; 20], &[0x22; 20]),
+                locking_script: make_stas3_locking(&[0x11; 20], &[0x22; 20]),
                 signing_key: SigningKey::Single(token_key),
             },
             fee_txid: dummy_hash(),
@@ -1525,7 +1525,7 @@ mod tests {
             fee_rate: 500,
         };
 
-        assert!(build_dstas_split_tx(config).is_err());
+        assert!(build_stas3_split_tx(config).is_err());
     }
 
     #[test]
@@ -1534,7 +1534,7 @@ mod tests {
         let fee_key = test_key();
         let redemption_pkh = [0x22; 20];
 
-        let dest = DstasOutputParams {
+        let dest = Stas3OutputParams {
             satoshis: 2000,
             owner_pkh: [0x33; 20],
             redemption_pkh,
@@ -1545,12 +1545,12 @@ mod tests {
                 action_data: None,
         };
 
-        let config = DstasSplitConfig {
+        let config = Stas3SplitConfig {
             token_input: TokenInput {
                 txid: dummy_hash(),
                 vout: 0,
                 satoshis: 10000,
-                locking_script: make_dstas_locking(&[0x11; 20], &redemption_pkh),
+                locking_script: make_stas3_locking(&[0x11; 20], &redemption_pkh),
                 signing_key: SigningKey::Single(token_key),
             },
             fee_txid: dummy_hash(),
@@ -1562,7 +1562,7 @@ mod tests {
             fee_rate: 500,
         };
 
-        assert!(build_dstas_split_tx(config).is_err());
+        assert!(build_stas3_split_tx(config).is_err());
     }
 
     #[test]
@@ -1571,12 +1571,12 @@ mod tests {
         let fee_key = test_key();
         let redemption_pkh = [0x22; 20];
 
-        let config = DstasSplitConfig {
+        let config = Stas3SplitConfig {
             token_input: TokenInput {
                 txid: dummy_hash(),
                 vout: 0,
                 satoshis: 10000,
-                locking_script: make_dstas_locking(&[0x11; 20], &redemption_pkh),
+                locking_script: make_stas3_locking(&[0x11; 20], &redemption_pkh),
                 signing_key: SigningKey::Single(token_key),
             },
             fee_txid: dummy_hash(),
@@ -1584,7 +1584,7 @@ mod tests {
             fee_satoshis: 50_000,
             fee_locking_script: test_p2pkh_script(&fee_key),
             fee_private_key: fee_key,
-            destinations: vec![DstasOutputParams {
+            destinations: vec![Stas3OutputParams {
                 satoshis: 9000, // != 10000
                 owner_pkh: [0x33; 20],
                 redemption_pkh,
@@ -1597,7 +1597,7 @@ mod tests {
             fee_rate: 500,
         };
 
-        assert!(build_dstas_split_tx(config).is_err());
+        assert!(build_stas3_split_tx(config).is_err());
     }
 
     // ---------------------------------------------------------------
@@ -1611,20 +1611,20 @@ mod tests {
         let fee_key = test_key();
         let redemption_pkh = [0x22; 20];
 
-        let config = DstasMergeConfig {
+        let config = Stas3MergeConfig {
             token_inputs: [
                 TokenInput {
                     txid: dummy_hash(),
                     vout: 0,
                     satoshis: 3000,
-                    locking_script: make_dstas_locking(&[0x11; 20], &redemption_pkh),
+                    locking_script: make_stas3_locking(&[0x11; 20], &redemption_pkh),
                     signing_key: SigningKey::Single(key_a),
                 },
                 TokenInput {
                     txid: dummy_hash(),
                     vout: 1,
                     satoshis: 7000,
-                    locking_script: make_dstas_locking(&[0x33; 20], &redemption_pkh),
+                    locking_script: make_stas3_locking(&[0x33; 20], &redemption_pkh),
                     signing_key: SigningKey::Single(key_b),
                 },
             ],
@@ -1633,7 +1633,7 @@ mod tests {
             fee_satoshis: 50_000,
             fee_locking_script: test_p2pkh_script(&fee_key),
             fee_private_key: fee_key,
-            destinations: vec![DstasOutputParams {
+            destinations: vec![Stas3OutputParams {
                 satoshis: 10000,
                 owner_pkh: [0x55; 20],
                 redemption_pkh,
@@ -1646,9 +1646,9 @@ mod tests {
             fee_rate: 500,
         };
 
-        let tx = build_dstas_merge_tx(config).unwrap();
+        let tx = build_stas3_merge_tx(config).unwrap();
         assert_eq!(tx.input_count(), 3); // 2 token + 1 fee
-        assert!(tx.output_count() >= 1); // 1 DSTAS + optional change
+        assert!(tx.output_count() >= 1); // 1 STAS3 + optional change
         assert_eq!(tx.outputs[0].satoshis, 10000);
 
         for input in &tx.inputs {
@@ -1661,10 +1661,10 @@ mod tests {
         let fee_key = test_key();
         let redemption_pkh = [0x22; 20];
 
-        let config = DstasMergeConfig {
+        let config = Stas3MergeConfig {
             token_inputs: [
-                TokenInput { txid: dummy_hash(), vout: 0, satoshis: 3000, locking_script: make_dstas_locking(&[0x11; 20], &redemption_pkh), signing_key: SigningKey::Single(test_key()) },
-                TokenInput { txid: dummy_hash(), vout: 1, satoshis: 7000, locking_script: make_dstas_locking(&[0x33; 20], &redemption_pkh), signing_key: SigningKey::Single(test_key()) },
+                TokenInput { txid: dummy_hash(), vout: 0, satoshis: 3000, locking_script: make_stas3_locking(&[0x11; 20], &redemption_pkh), signing_key: SigningKey::Single(test_key()) },
+                TokenInput { txid: dummy_hash(), vout: 1, satoshis: 7000, locking_script: make_stas3_locking(&[0x33; 20], &redemption_pkh), signing_key: SigningKey::Single(test_key()) },
             ],
             fee_txid: dummy_hash(),
             fee_vout: 2,
@@ -1675,7 +1675,7 @@ mod tests {
             fee_rate: 500,
         };
 
-        assert!(build_dstas_merge_tx(config).is_err());
+        assert!(build_stas3_merge_tx(config).is_err());
     }
 
     #[test]
@@ -1683,7 +1683,7 @@ mod tests {
         let fee_key = test_key();
         let redemption_pkh = [0x22; 20];
 
-        let dest = DstasOutputParams {
+        let dest = Stas3OutputParams {
             satoshis: 3000,
             owner_pkh: [0x33; 20],
             redemption_pkh,
@@ -1694,10 +1694,10 @@ mod tests {
                 action_data: None,
         };
 
-        let config = DstasMergeConfig {
+        let config = Stas3MergeConfig {
             token_inputs: [
-                TokenInput { txid: dummy_hash(), vout: 0, satoshis: 5000, locking_script: make_dstas_locking(&[0x11; 20], &redemption_pkh), signing_key: SigningKey::Single(test_key()) },
-                TokenInput { txid: dummy_hash(), vout: 1, satoshis: 4000, locking_script: make_dstas_locking(&[0x33; 20], &redemption_pkh), signing_key: SigningKey::Single(test_key()) },
+                TokenInput { txid: dummy_hash(), vout: 0, satoshis: 5000, locking_script: make_stas3_locking(&[0x11; 20], &redemption_pkh), signing_key: SigningKey::Single(test_key()) },
+                TokenInput { txid: dummy_hash(), vout: 1, satoshis: 4000, locking_script: make_stas3_locking(&[0x33; 20], &redemption_pkh), signing_key: SigningKey::Single(test_key()) },
             ],
             fee_txid: dummy_hash(),
             fee_vout: 2,
@@ -1708,7 +1708,7 @@ mod tests {
             fee_rate: 500,
         };
 
-        assert!(build_dstas_merge_tx(config).is_err());
+        assert!(build_stas3_merge_tx(config).is_err());
     }
 
     #[test]
@@ -1716,17 +1716,17 @@ mod tests {
         let fee_key = test_key();
         let redemption_pkh = [0x22; 20];
 
-        let config = DstasMergeConfig {
+        let config = Stas3MergeConfig {
             token_inputs: [
-                TokenInput { txid: dummy_hash(), vout: 0, satoshis: 3000, locking_script: make_dstas_locking(&[0x11; 20], &redemption_pkh), signing_key: SigningKey::Single(test_key()) },
-                TokenInput { txid: dummy_hash(), vout: 1, satoshis: 7000, locking_script: make_dstas_locking(&[0x33; 20], &redemption_pkh), signing_key: SigningKey::Single(test_key()) },
+                TokenInput { txid: dummy_hash(), vout: 0, satoshis: 3000, locking_script: make_stas3_locking(&[0x11; 20], &redemption_pkh), signing_key: SigningKey::Single(test_key()) },
+                TokenInput { txid: dummy_hash(), vout: 1, satoshis: 7000, locking_script: make_stas3_locking(&[0x33; 20], &redemption_pkh), signing_key: SigningKey::Single(test_key()) },
             ],
             fee_txid: dummy_hash(),
             fee_vout: 2,
             fee_satoshis: 50_000,
             fee_locking_script: test_p2pkh_script(&fee_key),
             fee_private_key: fee_key,
-            destinations: vec![DstasOutputParams {
+            destinations: vec![Stas3OutputParams {
                 satoshis: 9000, // != 10000
                 owner_pkh: [0x55; 20],
                 redemption_pkh,
@@ -1739,7 +1739,7 @@ mod tests {
             fee_rate: 500,
         };
 
-        assert!(build_dstas_merge_tx(config).is_err());
+        assert!(build_stas3_merge_tx(config).is_err());
     }
 
     // ---------------------------------------------------------------
@@ -1752,12 +1752,12 @@ mod tests {
         let fee_key = test_key();
         let redemption_pkh = [0x22; 20];
 
-        let config = DstasConfiscateConfig {
+        let config = Stas3ConfiscateConfig {
             token_inputs: vec![TokenInput {
                 txid: dummy_hash(),
                 vout: 0,
                 satoshis: 5000,
-                locking_script: make_dstas_locking(&[0x11; 20], &redemption_pkh),
+                locking_script: make_stas3_locking(&[0x11; 20], &redemption_pkh),
                 signing_key: SigningKey::Single(token_key),
             }],
             fee_txid: dummy_hash(),
@@ -1765,7 +1765,7 @@ mod tests {
             fee_satoshis: 50_000,
             fee_locking_script: test_p2pkh_script(&fee_key),
             fee_private_key: fee_key,
-            destinations: vec![DstasOutputParams {
+            destinations: vec![Stas3OutputParams {
                 satoshis: 5000,
                 owner_pkh: redemption_pkh, // redirected to issuer
                 redemption_pkh,
@@ -1778,7 +1778,7 @@ mod tests {
             fee_rate: 500,
         };
 
-        let tx = build_dstas_confiscate_tx(config).unwrap();
+        let tx = build_stas3_confiscate_tx(config).unwrap();
         assert_eq!(tx.input_count(), 2); // 1 token + 1 fee
         assert!(tx.output_count() >= 1);
         assert_eq!(tx.outputs[0].satoshis, 5000);
@@ -1796,10 +1796,10 @@ mod tests {
         let redemption_pkh = [0x22; 20];
 
         let frozen_locking =
-            build_dstas_locking_script(&[0x11; 20], &redemption_pkh, None, true, true, &[], &[])
+            build_stas3_locking_script(&[0x11; 20], &redemption_pkh, None, true, true, &[], &[])
                 .unwrap();
 
-        let config = DstasConfiscateConfig {
+        let config = Stas3ConfiscateConfig {
             token_inputs: vec![TokenInput {
                 txid: dummy_hash(),
                 vout: 0,
@@ -1812,7 +1812,7 @@ mod tests {
             fee_satoshis: 50_000,
             fee_locking_script: test_p2pkh_script(&fee_key),
             fee_private_key: fee_key,
-            destinations: vec![DstasOutputParams {
+            destinations: vec![Stas3OutputParams {
                 satoshis: 5000,
                 owner_pkh: redemption_pkh,
                 redemption_pkh,
@@ -1826,7 +1826,7 @@ mod tests {
         };
 
         // Should succeed — confiscation path is valid for frozen UTXOs
-        let tx = build_dstas_confiscate_tx(config).unwrap();
+        let tx = build_stas3_confiscate_tx(config).unwrap();
         assert_eq!(tx.outputs[0].satoshis, 5000);
     }
 
@@ -1834,14 +1834,14 @@ mod tests {
     fn confiscate_empty_inputs_rejected() {
         let fee_key = test_key();
 
-        let config = DstasConfiscateConfig {
+        let config = Stas3ConfiscateConfig {
             token_inputs: vec![],
             fee_txid: dummy_hash(),
             fee_vout: 1,
             fee_satoshis: 50_000,
             fee_locking_script: test_p2pkh_script(&fee_key),
             fee_private_key: fee_key,
-            destinations: vec![DstasOutputParams {
+            destinations: vec![Stas3OutputParams {
                 satoshis: 5000,
                 owner_pkh: [0x22; 20],
                 redemption_pkh: [0x22; 20],
@@ -1854,7 +1854,7 @@ mod tests {
             fee_rate: 500,
         };
 
-        assert!(build_dstas_confiscate_tx(config).is_err());
+        assert!(build_stas3_confiscate_tx(config).is_err());
     }
 
     // ---------------------------------------------------------------
@@ -1867,16 +1867,16 @@ mod tests {
         fee_key: &PrivateKey,
         token_sats: u64,
         redeem_sats: u64,
-        remaining: Vec<DstasOutputParams>,
+        remaining: Vec<Stas3OutputParams>,
         frozen: bool,
-    ) -> DstasRedeemConfig {
+    ) -> Stas3RedeemConfig {
         let issuer_pkh =
             bsv_primitives::hash::hash160(&issuer_key.pub_key().to_compressed());
-        let locking = build_dstas_locking_script(
+        let locking = build_stas3_locking_script(
             &issuer_pkh, &issuer_pkh, None, frozen, true, &[], &[],
         ).unwrap();
 
-        DstasRedeemConfig {
+        Stas3RedeemConfig {
             token_input: TokenInput {
                 txid: dummy_hash(),
                 vout: 0,
@@ -1903,7 +1903,7 @@ mod tests {
         let fee_key = test_key();
 
         let config = make_redeem_config(&issuer_key, &fee_key, 10000, 10000, vec![], false);
-        let tx = build_dstas_redeem_tx(config).unwrap();
+        let tx = build_stas3_redeem_tx(config).unwrap();
 
         // Input: 1 token + 1 fee
         assert_eq!(tx.input_count(), 2);
@@ -1923,7 +1923,7 @@ mod tests {
         let issuer_pkh =
             bsv_primitives::hash::hash160(&issuer_key.pub_key().to_compressed());
 
-        let remaining = vec![DstasOutputParams {
+        let remaining = vec![Stas3OutputParams {
             satoshis: 4000,
             owner_pkh: issuer_pkh,
             redemption_pkh: issuer_pkh,
@@ -1935,10 +1935,10 @@ mod tests {
         }];
 
         let config = make_redeem_config(&issuer_key, &fee_key, 10000, 6000, remaining, false);
-        let tx = build_dstas_redeem_tx(config).unwrap();
+        let tx = build_stas3_redeem_tx(config).unwrap();
 
         assert_eq!(tx.outputs[0].satoshis, 6000); // P2PKH redeem
-        assert_eq!(tx.outputs[1].satoshis, 4000); // remaining DSTAS
+        assert_eq!(tx.outputs[1].satoshis, 4000); // remaining STAS3
     }
 
     #[test]
@@ -1947,7 +1947,7 @@ mod tests {
         let fee_key = test_key();
 
         let config = make_redeem_config(&issuer_key, &fee_key, 10000, 10000, vec![], true);
-        let result = build_dstas_redeem_tx(config);
+        let result = build_stas3_redeem_tx(config);
 
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), TokenError::FrozenToken));
@@ -1963,11 +1963,11 @@ mod tests {
             bsv_primitives::hash::hash160(&issuer_key.pub_key().to_compressed());
 
         // Token is owned by non_issuer but redemption_pkh is the issuer
-        let locking = build_dstas_locking_script(
+        let locking = build_stas3_locking_script(
             &[0x99; 20], &issuer_pkh, None, false, true, &[], &[],
         ).unwrap();
 
-        let config = DstasRedeemConfig {
+        let config = Stas3RedeemConfig {
             token_input: TokenInput {
                 txid: dummy_hash(),
                 vout: 0,
@@ -1987,7 +1987,7 @@ mod tests {
             fee_rate: 500,
         };
 
-        let result = build_dstas_redeem_tx(config);
+        let result = build_stas3_redeem_tx(config);
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), TokenError::IssuerOnly(_)));
     }
@@ -1999,7 +1999,7 @@ mod tests {
 
         // redeem_sats (8000) + remaining (0) != token_input (10000)
         let config = make_redeem_config(&issuer_key, &fee_key, 10000, 8000, vec![], false);
-        let result = build_dstas_redeem_tx(config);
+        let result = build_stas3_redeem_tx(config);
 
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), TokenError::AmountMismatch { .. }));
@@ -2012,7 +2012,7 @@ mod tests {
         let issuer_pkh =
             bsv_primitives::hash::hash160(&issuer_key.pub_key().to_compressed());
 
-        let remaining = vec![DstasOutputParams {
+        let remaining = vec![Stas3OutputParams {
             satoshis: 10000,
             owner_pkh: issuer_pkh,
             redemption_pkh: issuer_pkh,
@@ -2024,7 +2024,7 @@ mod tests {
         }];
 
         let config = make_redeem_config(&issuer_key, &fee_key, 10000, 0, remaining, false);
-        let result = build_dstas_redeem_tx(config);
+        let result = build_stas3_redeem_tx(config);
         assert!(result.is_err());
     }
 
@@ -2034,24 +2034,24 @@ mod tests {
 
     use crate::types::ActionData;
 
-    /// Build a DSTAS locking script with swap action data embedded.
-    fn make_dstas_swap_locking(
+    /// Build a STAS3 locking script with swap action data embedded.
+    fn make_stas3_swap_locking(
         owner_pkh: &[u8; 20],
         redemption_pkh: &[u8; 20],
         swap_data: &ActionData,
     ) -> Script {
-        build_dstas_locking_script(
+        build_stas3_locking_script(
             owner_pkh, redemption_pkh, Some(swap_data), false, true, &[], &[],
         )
         .unwrap()
     }
 
-    /// Build a frozen DSTAS locking script (no action data).
-    fn make_dstas_frozen_locking(
+    /// Build a frozen STAS3 locking script (no action data).
+    fn make_stas3_frozen_locking(
         owner_pkh: &[u8; 20],
         redemption_pkh: &[u8; 20],
     ) -> Script {
-        build_dstas_locking_script(
+        build_stas3_locking_script(
             owner_pkh, redemption_pkh, None, true, true, &[], &[],
         )
         .unwrap()
@@ -2072,20 +2072,20 @@ mod tests {
         let swap_data = test_swap_data();
         let redemption = [0x22; 20];
 
-        let mut config = DstasBaseConfig {
+        let mut config = Stas3BaseConfig {
             token_inputs: vec![
                 TokenInput {
                     txid: dummy_hash(),
                     vout: 0,
                     satoshis: 5000,
-                    locking_script: make_dstas_locking(&[0x11; 20], &redemption),
+                    locking_script: make_stas3_locking(&[0x11; 20], &redemption),
                     signing_key: SigningKey::Single(test_key()),
                 },
                 TokenInput {
                     txid: dummy_hash(),
                     vout: 1,
                     satoshis: 5000,
-                    locking_script: make_dstas_swap_locking(&[0x33; 20], &redemption, &swap_data),
+                    locking_script: make_stas3_swap_locking(&[0x33; 20], &redemption, &swap_data),
                     signing_key: SigningKey::Single(test_key()),
                 },
             ],
@@ -2095,7 +2095,7 @@ mod tests {
             fee_locking_script: test_p2pkh_script(&fee_key),
             fee_private_key: fee_key,
             destinations: vec![
-                DstasOutputParams {
+                Stas3OutputParams {
                     satoshis: 5000,
                     owner_pkh: [0x44; 20],
                     redemption_pkh: redemption,
@@ -2105,7 +2105,7 @@ mod tests {
                     optional_data: vec![],
                     action_data: None,
                 },
-                DstasOutputParams {
+                Stas3OutputParams {
                     satoshis: 5000,
                     owner_pkh: [0x55; 20],
                     redemption_pkh: redemption,
@@ -2116,11 +2116,11 @@ mod tests {
                     action_data: None,
                 },
             ],
-            spend_type: DstasSpendType::Transfer,
+            spend_type: Stas3SpendType::Transfer,
             fee_rate: 500,
         };
 
-        let tx = build_dstas_transfer_swap_tx(&mut config).unwrap();
+        let tx = build_stas3_transfer_swap_tx(&mut config).unwrap();
         assert_eq!(tx.input_count(), 3); // 2 token + 1 fee
         assert!(tx.output_count() >= 2);
         assert_eq!(tx.outputs[0].satoshis, 5000);
@@ -2133,20 +2133,20 @@ mod tests {
         let swap_data = test_swap_data();
         let redemption = [0x22; 20];
 
-        let mut config = DstasBaseConfig {
+        let mut config = Stas3BaseConfig {
             token_inputs: vec![
                 TokenInput {
                     txid: dummy_hash(),
                     vout: 0,
                     satoshis: 5000,
-                    locking_script: make_dstas_swap_locking(&[0x11; 20], &redemption, &swap_data),
+                    locking_script: make_stas3_swap_locking(&[0x11; 20], &redemption, &swap_data),
                     signing_key: SigningKey::Single(test_key()),
                 },
                 TokenInput {
                     txid: dummy_hash(),
                     vout: 1,
                     satoshis: 5000,
-                    locking_script: make_dstas_swap_locking(&[0x33; 20], &redemption, &swap_data),
+                    locking_script: make_stas3_swap_locking(&[0x33; 20], &redemption, &swap_data),
                     signing_key: SigningKey::Single(test_key()),
                 },
             ],
@@ -2156,7 +2156,7 @@ mod tests {
             fee_locking_script: test_p2pkh_script(&fee_key),
             fee_private_key: fee_key,
             destinations: vec![
-                DstasOutputParams {
+                Stas3OutputParams {
                     satoshis: 5000,
                     owner_pkh: [0x44; 20],
                     redemption_pkh: redemption,
@@ -2166,7 +2166,7 @@ mod tests {
                     optional_data: vec![],
                     action_data: None,
                 },
-                DstasOutputParams {
+                Stas3OutputParams {
                     satoshis: 5000,
                     owner_pkh: [0x55; 20],
                     redemption_pkh: redemption,
@@ -2177,11 +2177,11 @@ mod tests {
                     action_data: None,
                 },
             ],
-            spend_type: DstasSpendType::Transfer,
+            spend_type: Stas3SpendType::Transfer,
             fee_rate: 500,
         };
 
-        let tx = build_dstas_swap_swap_tx(&mut config).unwrap();
+        let tx = build_stas3_swap_swap_tx(&mut config).unwrap();
         assert_eq!(tx.input_count(), 3);
         assert!(tx.output_count() >= 2);
     }
@@ -2199,20 +2199,20 @@ mod tests {
 
         // Input A: 6000 sats, Input B: 4000 sats with swap data
         // Output 0: 4000 (principal A→B), Output 1: 4000 (principal B→A), Output 2: 2000 (remainder A)
-        let mut config = DstasBaseConfig {
+        let mut config = Stas3BaseConfig {
             token_inputs: vec![
                 TokenInput {
                     txid: dummy_hash(),
                     vout: 0,
                     satoshis: 6000,
-                    locking_script: make_dstas_locking(&[0x11; 20], &redemption),
+                    locking_script: make_stas3_locking(&[0x11; 20], &redemption),
                     signing_key: SigningKey::Single(test_key()),
                 },
                 TokenInput {
                     txid: dummy_hash(),
                     vout: 1,
                     satoshis: 4000,
-                    locking_script: make_dstas_swap_locking(&[0x33; 20], &redemption, &swap_data),
+                    locking_script: make_stas3_swap_locking(&[0x33; 20], &redemption, &swap_data),
                     signing_key: SigningKey::Single(test_key()),
                 },
             ],
@@ -2222,7 +2222,7 @@ mod tests {
             fee_locking_script: test_p2pkh_script(&fee_key),
             fee_private_key: fee_key,
             destinations: vec![
-                DstasOutputParams {
+                Stas3OutputParams {
                     satoshis: 4000,
                     owner_pkh: [0x44; 20],
                     redemption_pkh: redemption,
@@ -2232,7 +2232,7 @@ mod tests {
                     optional_data: vec![],
                     action_data: None, // principal — neutral
                 },
-                DstasOutputParams {
+                Stas3OutputParams {
                     satoshis: 4000,
                     owner_pkh: [0x55; 20],
                     redemption_pkh: redemption,
@@ -2242,7 +2242,7 @@ mod tests {
                     optional_data: vec![],
                     action_data: None, // principal — neutral
                 },
-                DstasOutputParams {
+                Stas3OutputParams {
                     satoshis: 2000,
                     owner_pkh: [0x11; 20], // remainder back to original owner
                     redemption_pkh: redemption,
@@ -2253,11 +2253,11 @@ mod tests {
                     action_data: Some(swap_data.clone()), // remainder inherits action data
                 },
             ],
-            spend_type: DstasSpendType::Transfer,
+            spend_type: Stas3SpendType::Transfer,
             fee_rate: 500,
         };
 
-        let tx = build_dstas_transfer_swap_tx(&mut config).unwrap();
+        let tx = build_stas3_transfer_swap_tx(&mut config).unwrap();
         assert_eq!(tx.input_count(), 3);
         assert!(tx.output_count() >= 3);
         assert_eq!(tx.outputs[0].satoshis, 4000);
@@ -2266,9 +2266,9 @@ mod tests {
 
         // Verify remainder output has swap action data
         let parsed = read_locking_script(tx.outputs[2].locking_script.to_bytes());
-        assert_eq!(parsed.script_type, ScriptType::Dstas);
-        let dstas = parsed.dstas.unwrap();
-        assert!(matches!(dstas.action_data_parsed, Some(ActionData::Swap { .. })));
+        assert_eq!(parsed.script_type, ScriptType::Stas3);
+        let stas3 = parsed.stas3.unwrap();
+        assert!(matches!(stas3.action_data_parsed, Some(ActionData::Swap { .. })));
     }
 
     #[test]
@@ -2282,20 +2282,20 @@ mod tests {
         };
         let redemption = [0x22; 20];
 
-        let mut config = DstasBaseConfig {
+        let mut config = Stas3BaseConfig {
             token_inputs: vec![
                 TokenInput {
                     txid: dummy_hash(),
                     vout: 0,
                     satoshis: 7000,
-                    locking_script: make_dstas_swap_locking(&[0x11; 20], &redemption, &swap_data),
+                    locking_script: make_stas3_swap_locking(&[0x11; 20], &redemption, &swap_data),
                     signing_key: SigningKey::Single(test_key()),
                 },
                 TokenInput {
                     txid: dummy_hash(),
                     vout: 1,
                     satoshis: 3000,
-                    locking_script: make_dstas_swap_locking(&[0x33; 20], &redemption, &swap_data),
+                    locking_script: make_stas3_swap_locking(&[0x33; 20], &redemption, &swap_data),
                     signing_key: SigningKey::Single(test_key()),
                 },
             ],
@@ -2305,7 +2305,7 @@ mod tests {
             fee_locking_script: test_p2pkh_script(&fee_key),
             fee_private_key: fee_key,
             destinations: vec![
-                DstasOutputParams {
+                Stas3OutputParams {
                     satoshis: 3000,
                     owner_pkh: [0x44; 20],
                     redemption_pkh: redemption,
@@ -2315,7 +2315,7 @@ mod tests {
                     optional_data: vec![],
                     action_data: None,
                 },
-                DstasOutputParams {
+                Stas3OutputParams {
                     satoshis: 3000,
                     owner_pkh: [0x55; 20],
                     redemption_pkh: redemption,
@@ -2325,7 +2325,7 @@ mod tests {
                     optional_data: vec![],
                     action_data: None,
                 },
-                DstasOutputParams {
+                Stas3OutputParams {
                     satoshis: 4000,
                     owner_pkh: [0x11; 20],
                     redemption_pkh: redemption,
@@ -2336,11 +2336,11 @@ mod tests {
                     action_data: Some(swap_data.clone()),
                 },
             ],
-            spend_type: DstasSpendType::Transfer,
+            spend_type: Stas3SpendType::Transfer,
             fee_rate: 500,
         };
 
-        let tx = build_dstas_swap_swap_tx(&mut config).unwrap();
+        let tx = build_stas3_swap_swap_tx(&mut config).unwrap();
         assert_eq!(tx.input_count(), 3);
         assert!(tx.output_count() >= 3);
     }
@@ -2351,20 +2351,20 @@ mod tests {
         let swap_data = test_swap_data();
         let redemption = [0x22; 20];
 
-        let mut config = DstasBaseConfig {
+        let mut config = Stas3BaseConfig {
             token_inputs: vec![
                 TokenInput {
                     txid: dummy_hash(),
                     vout: 0,
                     satoshis: 8000,
-                    locking_script: make_dstas_locking(&[0x11; 20], &redemption),
+                    locking_script: make_stas3_locking(&[0x11; 20], &redemption),
                     signing_key: SigningKey::Single(test_key()),
                 },
                 TokenInput {
                     txid: dummy_hash(),
                     vout: 1,
                     satoshis: 7000,
-                    locking_script: make_dstas_swap_locking(&[0x33; 20], &redemption, &swap_data),
+                    locking_script: make_stas3_swap_locking(&[0x33; 20], &redemption, &swap_data),
                     signing_key: SigningKey::Single(test_key()),
                 },
             ],
@@ -2374,7 +2374,7 @@ mod tests {
             fee_locking_script: test_p2pkh_script(&fee_key),
             fee_private_key: fee_key,
             destinations: vec![
-                DstasOutputParams {
+                Stas3OutputParams {
                     satoshis: 5000,
                     owner_pkh: [0x44; 20],
                     redemption_pkh: redemption,
@@ -2384,7 +2384,7 @@ mod tests {
                     optional_data: vec![],
                     action_data: None,
                 },
-                DstasOutputParams {
+                Stas3OutputParams {
                     satoshis: 5000,
                     owner_pkh: [0x55; 20],
                     redemption_pkh: redemption,
@@ -2394,7 +2394,7 @@ mod tests {
                     optional_data: vec![],
                     action_data: None,
                 },
-                DstasOutputParams {
+                Stas3OutputParams {
                     satoshis: 3000,
                     owner_pkh: [0x11; 20],
                     redemption_pkh: redemption,
@@ -2404,7 +2404,7 @@ mod tests {
                     optional_data: vec![],
                     action_data: None,
                 },
-                DstasOutputParams {
+                Stas3OutputParams {
                     satoshis: 2000,
                     owner_pkh: [0x33; 20],
                     redemption_pkh: redemption,
@@ -2415,11 +2415,11 @@ mod tests {
                     action_data: Some(swap_data.clone()),
                 },
             ],
-            spend_type: DstasSpendType::Transfer,
+            spend_type: Stas3SpendType::Transfer,
             fee_rate: 500,
         };
 
-        let tx = build_dstas_transfer_swap_tx(&mut config).unwrap();
+        let tx = build_stas3_transfer_swap_tx(&mut config).unwrap();
         assert_eq!(tx.input_count(), 3);
         assert!(tx.output_count() >= 4);
         assert_eq!(tx.outputs[0].satoshis, 5000);
@@ -2434,20 +2434,20 @@ mod tests {
         let swap_data = test_swap_data();
         let redemption = [0x22; 20];
 
-        let mut config = DstasBaseConfig {
+        let mut config = Stas3BaseConfig {
             token_inputs: vec![
                 TokenInput {
                     txid: dummy_hash(),
                     vout: 0,
                     satoshis: 8000,
-                    locking_script: make_dstas_swap_locking(&[0x11; 20], &redemption, &swap_data),
+                    locking_script: make_stas3_swap_locking(&[0x11; 20], &redemption, &swap_data),
                     signing_key: SigningKey::Single(test_key()),
                 },
                 TokenInput {
                     txid: dummy_hash(),
                     vout: 1,
                     satoshis: 7000,
-                    locking_script: make_dstas_swap_locking(&[0x33; 20], &redemption, &swap_data),
+                    locking_script: make_stas3_swap_locking(&[0x33; 20], &redemption, &swap_data),
                     signing_key: SigningKey::Single(test_key()),
                 },
             ],
@@ -2457,7 +2457,7 @@ mod tests {
             fee_locking_script: test_p2pkh_script(&fee_key),
             fee_private_key: fee_key,
             destinations: vec![
-                DstasOutputParams {
+                Stas3OutputParams {
                     satoshis: 5000,
                     owner_pkh: [0x44; 20],
                     redemption_pkh: redemption,
@@ -2467,7 +2467,7 @@ mod tests {
                     optional_data: vec![],
                     action_data: None,
                 },
-                DstasOutputParams {
+                Stas3OutputParams {
                     satoshis: 5000,
                     owner_pkh: [0x55; 20],
                     redemption_pkh: redemption,
@@ -2477,7 +2477,7 @@ mod tests {
                     optional_data: vec![],
                     action_data: None,
                 },
-                DstasOutputParams {
+                Stas3OutputParams {
                     satoshis: 3000,
                     owner_pkh: [0x11; 20],
                     redemption_pkh: redemption,
@@ -2487,7 +2487,7 @@ mod tests {
                     optional_data: vec![],
                     action_data: None,
                 },
-                DstasOutputParams {
+                Stas3OutputParams {
                     satoshis: 2000,
                     owner_pkh: [0x33; 20],
                     redemption_pkh: redemption,
@@ -2498,11 +2498,11 @@ mod tests {
                     action_data: None,
                 },
             ],
-            spend_type: DstasSpendType::Transfer,
+            spend_type: Stas3SpendType::Transfer,
             fee_rate: 500,
         };
 
-        let tx = build_dstas_swap_swap_tx(&mut config).unwrap();
+        let tx = build_stas3_swap_swap_tx(&mut config).unwrap();
         assert_eq!(tx.input_count(), 3);
         assert!(tx.output_count() >= 4);
     }
@@ -2512,20 +2512,20 @@ mod tests {
         let fee_key = test_key();
         let redemption = [0x22; 20];
 
-        let mut config = DstasBaseConfig {
+        let mut config = Stas3BaseConfig {
             token_inputs: vec![
                 TokenInput {
                     txid: dummy_hash(),
                     vout: 0,
                     satoshis: 5000,
-                    locking_script: make_dstas_frozen_locking(&[0x11; 20], &redemption),
+                    locking_script: make_stas3_frozen_locking(&[0x11; 20], &redemption),
                     signing_key: SigningKey::Single(test_key()),
                 },
                 TokenInput {
                     txid: dummy_hash(),
                     vout: 1,
                     satoshis: 5000,
-                    locking_script: make_dstas_locking(&[0x33; 20], &redemption),
+                    locking_script: make_stas3_locking(&[0x33; 20], &redemption),
                     signing_key: SigningKey::Single(test_key()),
                 },
             ],
@@ -2535,7 +2535,7 @@ mod tests {
             fee_locking_script: test_p2pkh_script(&fee_key),
             fee_private_key: fee_key,
             destinations: vec![
-                DstasOutputParams {
+                Stas3OutputParams {
                     satoshis: 5000,
                     owner_pkh: [0x44; 20],
                     redemption_pkh: redemption,
@@ -2545,7 +2545,7 @@ mod tests {
                     optional_data: vec![],
                     action_data: None,
                 },
-                DstasOutputParams {
+                Stas3OutputParams {
                     satoshis: 5000,
                     owner_pkh: [0x55; 20],
                     redemption_pkh: redemption,
@@ -2556,11 +2556,11 @@ mod tests {
                     action_data: None,
                 },
             ],
-            spend_type: DstasSpendType::Transfer,
+            spend_type: Stas3SpendType::Transfer,
             fee_rate: 500,
         };
 
-        let result = build_dstas_transfer_swap_tx(&mut config);
+        let result = build_stas3_transfer_swap_tx(&mut config);
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), TokenError::FrozenToken));
     }
@@ -2571,20 +2571,20 @@ mod tests {
         let swap_data = test_swap_data();
         let redemption = [0x22; 20];
 
-        let mut config = DstasBaseConfig {
+        let mut config = Stas3BaseConfig {
             token_inputs: vec![
                 TokenInput {
                     txid: dummy_hash(),
                     vout: 0,
                     satoshis: 5000,
-                    locking_script: make_dstas_swap_locking(&[0x11; 20], &redemption, &swap_data),
+                    locking_script: make_stas3_swap_locking(&[0x11; 20], &redemption, &swap_data),
                     signing_key: SigningKey::Single(test_key()),
                 },
                 TokenInput {
                     txid: dummy_hash(),
                     vout: 1,
                     satoshis: 5000,
-                    locking_script: make_dstas_frozen_locking(&[0x33; 20], &redemption),
+                    locking_script: make_stas3_frozen_locking(&[0x33; 20], &redemption),
                     signing_key: SigningKey::Single(test_key()),
                 },
             ],
@@ -2594,7 +2594,7 @@ mod tests {
             fee_locking_script: test_p2pkh_script(&fee_key),
             fee_private_key: fee_key,
             destinations: vec![
-                DstasOutputParams {
+                Stas3OutputParams {
                     satoshis: 5000,
                     owner_pkh: [0x44; 20],
                     redemption_pkh: redemption,
@@ -2604,7 +2604,7 @@ mod tests {
                     optional_data: vec![],
                     action_data: None,
                 },
-                DstasOutputParams {
+                Stas3OutputParams {
                     satoshis: 5000,
                     owner_pkh: [0x55; 20],
                     redemption_pkh: redemption,
@@ -2615,11 +2615,11 @@ mod tests {
                     action_data: None,
                 },
             ],
-            spend_type: DstasSpendType::Transfer,
+            spend_type: Stas3SpendType::Transfer,
             fee_rate: 500,
         };
 
-        let result = build_dstas_swap_swap_tx(&mut config);
+        let result = build_stas3_swap_swap_tx(&mut config);
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), TokenError::FrozenToken));
     }
@@ -2630,20 +2630,20 @@ mod tests {
         let swap_data = test_swap_data();
         let redemption = [0x22; 20];
 
-        let mut config = DstasBaseConfig {
+        let mut config = Stas3BaseConfig {
             token_inputs: vec![
                 TokenInput {
                     txid: dummy_hash(),
                     vout: 0,
                     satoshis: 5000,
-                    locking_script: make_dstas_locking(&[0x11; 20], &redemption),
+                    locking_script: make_stas3_locking(&[0x11; 20], &redemption),
                     signing_key: SigningKey::Single(test_key()),
                 },
                 TokenInput {
                     txid: dummy_hash(),
                     vout: 1,
                     satoshis: 5000,
-                    locking_script: make_dstas_swap_locking(&[0x33; 20], &redemption, &swap_data),
+                    locking_script: make_stas3_swap_locking(&[0x33; 20], &redemption, &swap_data),
                     signing_key: SigningKey::Single(test_key()),
                 },
             ],
@@ -2653,7 +2653,7 @@ mod tests {
             fee_locking_script: test_p2pkh_script(&fee_key),
             fee_private_key: fee_key,
             destinations: vec![
-                DstasOutputParams {
+                Stas3OutputParams {
                     satoshis: 5000,
                     owner_pkh: [0x44; 20],
                     redemption_pkh: redemption,
@@ -2663,7 +2663,7 @@ mod tests {
                     optional_data: vec![],
                     action_data: None,
                 },
-                DstasOutputParams {
+                Stas3OutputParams {
                     satoshis: 5000,
                     owner_pkh: [0x55; 20],
                     redemption_pkh: redemption,
@@ -2674,12 +2674,12 @@ mod tests {
                     action_data: None,
                 },
             ],
-            spend_type: DstasSpendType::SwapCancellation, // should be overridden
+            spend_type: Stas3SpendType::SwapCancellation, // should be overridden
             fee_rate: 500,
         };
 
         // Auto-detect: one has swap data → TransferSwap → spending type Transfer
-        let tx = build_dstas_swap_flow_tx(&mut config).unwrap();
+        let tx = build_stas3_swap_flow_tx(&mut config).unwrap();
         assert_eq!(tx.input_count(), 3);
     }
 
@@ -2689,20 +2689,20 @@ mod tests {
         let swap_data = test_swap_data();
         let redemption = [0x22; 20];
 
-        let mut config = DstasBaseConfig {
+        let mut config = Stas3BaseConfig {
             token_inputs: vec![
                 TokenInput {
                     txid: dummy_hash(),
                     vout: 0,
                     satoshis: 5000,
-                    locking_script: make_dstas_swap_locking(&[0x11; 20], &redemption, &swap_data),
+                    locking_script: make_stas3_swap_locking(&[0x11; 20], &redemption, &swap_data),
                     signing_key: SigningKey::Single(test_key()),
                 },
                 TokenInput {
                     txid: dummy_hash(),
                     vout: 1,
                     satoshis: 5000,
-                    locking_script: make_dstas_swap_locking(&[0x33; 20], &redemption, &swap_data),
+                    locking_script: make_stas3_swap_locking(&[0x33; 20], &redemption, &swap_data),
                     signing_key: SigningKey::Single(test_key()),
                 },
             ],
@@ -2712,7 +2712,7 @@ mod tests {
             fee_locking_script: test_p2pkh_script(&fee_key),
             fee_private_key: fee_key,
             destinations: vec![
-                DstasOutputParams {
+                Stas3OutputParams {
                     satoshis: 5000,
                     owner_pkh: [0x44; 20],
                     redemption_pkh: redemption,
@@ -2722,7 +2722,7 @@ mod tests {
                     optional_data: vec![],
                     action_data: None,
                 },
-                DstasOutputParams {
+                Stas3OutputParams {
                     satoshis: 5000,
                     owner_pkh: [0x55; 20],
                     redemption_pkh: redemption,
@@ -2733,12 +2733,12 @@ mod tests {
                     action_data: None,
                 },
             ],
-            spend_type: DstasSpendType::Transfer, // should be overridden to SwapCancellation
+            spend_type: Stas3SpendType::Transfer, // should be overridden to SwapCancellation
             fee_rate: 500,
         };
 
         // Auto-detect: both have swap data → SwapSwap → spending type SwapCancellation
-        let tx = build_dstas_swap_flow_tx(&mut config).unwrap();
+        let tx = build_stas3_swap_flow_tx(&mut config).unwrap();
         assert_eq!(tx.input_count(), 3);
     }
 
@@ -2753,16 +2753,16 @@ mod tests {
             rate_denominator: 7,
         };
 
-        let script = build_dstas_locking_script(
+        let script = build_stas3_locking_script(
             &owner, &redemption, Some(&swap_data), false, true, &[], &[],
         )
         .unwrap();
 
         let parsed = read_locking_script(script.to_bytes());
-        assert_eq!(parsed.script_type, ScriptType::Dstas);
-        let dstas = parsed.dstas.unwrap();
+        assert_eq!(parsed.script_type, ScriptType::Stas3);
+        let stas3 = parsed.stas3.unwrap();
 
-        match dstas.action_data_parsed {
+        match stas3.action_data_parsed {
             Some(ActionData::Swap {
                 requested_script_hash,
                 requested_pkh,

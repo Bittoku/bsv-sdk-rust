@@ -1,13 +1,13 @@
-//! DSTAS swap utilities: script hash computation and swap mode detection.
+//! STAS3 swap utilities: script hash computation and swap mode detection.
 
 use bsv_primitives::hash::sha256;
 
 use crate::error::TokenError;
 use crate::script::reader::read_locking_script;
-use crate::types::{ActionData, DstasSwapMode};
+use crate::types::{ActionData, Stas3SwapMode};
 use crate::ScriptType;
 
-/// Compute the SHA-256 hash of a DSTAS locking script's "tail".
+/// Compute the SHA-256 hash of a STAS3 locking script's "tail".
 ///
 /// The tail is everything after the owner pushdata and the action data
 /// pushdata — i.e. the base template + OP_RETURN data section. This hash
@@ -20,10 +20,10 @@ use crate::ScriptType;
 /// ```
 ///
 /// Returns the 32-byte SHA-256 hash of the tail bytes.
-pub fn compute_dstas_requested_script_hash(locking_script: &[u8]) -> Result<[u8; 32], TokenError> {
+pub fn compute_stas3_requested_script_hash(locking_script: &[u8]) -> Result<[u8; 32], TokenError> {
     if locking_script.is_empty() || locking_script[0] != 0x14 {
         return Err(TokenError::InvalidScript(
-            "not a DSTAS locking script (expected OP_DATA_20 prefix)".into(),
+            "not a STAS3 locking script (expected OP_DATA_20 prefix)".into(),
         ));
     }
 
@@ -103,50 +103,50 @@ fn skip_push_data(script: &[u8], offset: usize) -> Result<usize, TokenError> {
 
 /// Detect swap mode by inspecting the locking scripts of both inputs.
 ///
-/// Reads each input's locking script via the DSTAS reader. If both inputs
+/// Reads each input's locking script via the STAS3 reader. If both inputs
 /// have swap action data (kind == 0x01 / `ActionData::Swap`), returns
 /// `SwapSwap`. Otherwise returns `TransferSwap`.
-pub fn resolve_dstas_swap_mode(
+pub fn resolve_stas3_swap_mode(
     locking_script_a: &[u8],
     locking_script_b: &[u8],
-) -> DstasSwapMode {
-    let has_swap_a = extract_dstas_swap_flag(locking_script_a);
-    let has_swap_b = extract_dstas_swap_flag(locking_script_b);
+) -> Stas3SwapMode {
+    let has_swap_a = extract_stas3_swap_flag(locking_script_a);
+    let has_swap_b = extract_stas3_swap_flag(locking_script_b);
 
     if has_swap_a && has_swap_b {
-        DstasSwapMode::SwapSwap
+        Stas3SwapMode::SwapSwap
     } else {
-        DstasSwapMode::TransferSwap
+        Stas3SwapMode::TransferSwap
     }
 }
 
-/// Check whether a DSTAS locking script contains swap action data.
-fn extract_dstas_swap_flag(script: &[u8]) -> bool {
+/// Check whether a STAS3 locking script contains swap action data.
+fn extract_stas3_swap_flag(script: &[u8]) -> bool {
     let parsed = read_locking_script(script);
-    if parsed.script_type != ScriptType::Dstas {
+    if parsed.script_type != ScriptType::Stas3 {
         return false;
     }
     matches!(
-        parsed.dstas.as_ref().and_then(|d| d.action_data_parsed.as_ref()),
+        parsed.stas3.as_ref().and_then(|d| d.action_data_parsed.as_ref()),
         Some(ActionData::Swap { .. })
     )
 }
 
-/// Check whether a DSTAS locking script indicates a frozen token.
+/// Check whether a STAS3 locking script indicates a frozen token.
 ///
-/// Returns `true` if the script parses as DSTAS and the frozen flag is set.
-pub fn is_dstas_frozen(script: &[u8]) -> bool {
+/// Returns `true` if the script parses as STAS3 and the frozen flag is set.
+pub fn is_stas3_frozen(script: &[u8]) -> bool {
     let parsed = read_locking_script(script);
-    if parsed.script_type != ScriptType::Dstas {
+    if parsed.script_type != ScriptType::Stas3 {
         return false;
     }
-    parsed.dstas.map_or(false, |d| d.frozen)
+    parsed.stas3.map_or(false, |d| d.frozen)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::script::dstas_builder::build_dstas_locking_script;
+    use crate::script::stas3_builder::build_stas3_locking_script;
     use crate::types::ActionData;
 
     fn make_swap_action_data() -> ActionData {
@@ -163,17 +163,17 @@ mod tests {
         let owner = [0x11; 20];
         let redemption = [0x22; 20];
 
-        let script_a = build_dstas_locking_script(
+        let script_a = build_stas3_locking_script(
             &owner, &redemption, None, false, true, &[], &[],
         )
         .unwrap();
-        let script_b = build_dstas_locking_script(
+        let script_b = build_stas3_locking_script(
             &[0x33; 20], &redemption, None, false, true, &[], &[],
         )
         .unwrap();
 
-        let hash_a = compute_dstas_requested_script_hash(script_a.to_bytes()).unwrap();
-        let hash_b = compute_dstas_requested_script_hash(script_b.to_bytes()).unwrap();
+        let hash_a = compute_stas3_requested_script_hash(script_a.to_bytes()).unwrap();
+        let hash_b = compute_stas3_requested_script_hash(script_b.to_bytes()).unwrap();
 
         // Same tail (same redemption, flags, template) → same hash
         assert_eq!(hash_a, hash_b);
@@ -183,17 +183,17 @@ mod tests {
     fn script_hash_differs_for_different_redemption() {
         let owner = [0x11; 20];
 
-        let script_a = build_dstas_locking_script(
+        let script_a = build_stas3_locking_script(
             &owner, &[0x22; 20], None, false, true, &[], &[],
         )
         .unwrap();
-        let script_b = build_dstas_locking_script(
+        let script_b = build_stas3_locking_script(
             &owner, &[0x33; 20], None, false, true, &[], &[],
         )
         .unwrap();
 
-        let hash_a = compute_dstas_requested_script_hash(script_a.to_bytes()).unwrap();
-        let hash_b = compute_dstas_requested_script_hash(script_b.to_bytes()).unwrap();
+        let hash_a = compute_stas3_requested_script_hash(script_a.to_bytes()).unwrap();
+        let hash_b = compute_stas3_requested_script_hash(script_b.to_bytes()).unwrap();
 
         assert_ne!(hash_a, hash_b);
     }
@@ -205,17 +205,17 @@ mod tests {
         let redemption = [0x22; 20];
         let swap_data = make_swap_action_data();
 
-        let script_a = build_dstas_locking_script(
+        let script_a = build_stas3_locking_script(
             &owner_a, &redemption, Some(&swap_data), false, true, &[], &[],
         )
         .unwrap();
-        let script_b = build_dstas_locking_script(
+        let script_b = build_stas3_locking_script(
             &owner_b, &redemption, Some(&swap_data), false, true, &[], &[],
         )
         .unwrap();
 
-        let mode = resolve_dstas_swap_mode(script_a.to_bytes(), script_b.to_bytes());
-        assert_eq!(mode, DstasSwapMode::SwapSwap);
+        let mode = resolve_stas3_swap_mode(script_a.to_bytes(), script_b.to_bytes());
+        assert_eq!(mode, Stas3SwapMode::SwapSwap);
     }
 
     #[test]
@@ -225,17 +225,17 @@ mod tests {
         let redemption = [0x22; 20];
         let swap_data = make_swap_action_data();
 
-        let script_a = build_dstas_locking_script(
+        let script_a = build_stas3_locking_script(
             &owner_a, &redemption, None, false, true, &[], &[],
         )
         .unwrap();
-        let script_b = build_dstas_locking_script(
+        let script_b = build_stas3_locking_script(
             &owner_b, &redemption, Some(&swap_data), false, true, &[], &[],
         )
         .unwrap();
 
-        let mode = resolve_dstas_swap_mode(script_a.to_bytes(), script_b.to_bytes());
-        assert_eq!(mode, DstasSwapMode::TransferSwap);
+        let mode = resolve_stas3_swap_mode(script_a.to_bytes(), script_b.to_bytes());
+        assert_eq!(mode, Stas3SwapMode::TransferSwap);
     }
 
     #[test]
@@ -244,17 +244,17 @@ mod tests {
         let owner_b = [0x33; 20];
         let redemption = [0x22; 20];
 
-        let script_a = build_dstas_locking_script(
+        let script_a = build_stas3_locking_script(
             &owner_a, &redemption, None, false, true, &[], &[],
         )
         .unwrap();
-        let script_b = build_dstas_locking_script(
+        let script_b = build_stas3_locking_script(
             &owner_b, &redemption, None, false, true, &[], &[],
         )
         .unwrap();
 
-        let mode = resolve_dstas_swap_mode(script_a.to_bytes(), script_b.to_bytes());
-        assert_eq!(mode, DstasSwapMode::TransferSwap);
+        let mode = resolve_stas3_swap_mode(script_a.to_bytes(), script_b.to_bytes());
+        assert_eq!(mode, Stas3SwapMode::TransferSwap);
     }
 
     #[test]
@@ -262,22 +262,22 @@ mod tests {
         let owner = [0x11; 20];
         let redemption = [0x22; 20];
 
-        let unfrozen = build_dstas_locking_script(
+        let unfrozen = build_stas3_locking_script(
             &owner, &redemption, None, false, true, &[], &[],
         )
         .unwrap();
-        let frozen = build_dstas_locking_script(
+        let frozen = build_stas3_locking_script(
             &owner, &redemption, None, true, true, &[], &[],
         )
         .unwrap();
 
-        assert!(!is_dstas_frozen(unfrozen.to_bytes()));
-        assert!(is_dstas_frozen(frozen.to_bytes()));
+        assert!(!is_stas3_frozen(unfrozen.to_bytes()));
+        assert!(is_stas3_frozen(frozen.to_bytes()));
     }
 
     #[test]
-    fn script_hash_not_dstas_rejected() {
+    fn script_hash_not_stas3_rejected() {
         let p2pkh = hex::decode("76a91489abcdefabbaabbaabbaabbaabbaabbaabbaabba88ac").unwrap();
-        assert!(compute_dstas_requested_script_hash(&p2pkh).is_err());
+        assert!(compute_stas3_requested_script_hash(&p2pkh).is_err());
     }
 }

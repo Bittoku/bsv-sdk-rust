@@ -139,7 +139,7 @@ pub struct Destination {
 /// STAS 3.0 spending operation type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[repr(u8)]
-pub enum DstasSpendType {
+pub enum Stas3SpendType {
     /// Standard token transfer.
     Transfer = 1,
     /// Freeze or unfreeze operation.
@@ -171,9 +171,9 @@ pub enum ActionData {
     Custom(Vec<u8>),
 }
 
-/// The detected swap mode for a two-input DSTAS transaction.
+/// The detected swap mode for a two-input STAS3 transaction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DstasSwapMode {
+pub enum Stas3SwapMode {
     /// One input is a regular transfer, the other is consumed via swap matching.
     TransferSwap,
     /// Both inputs have swap action data — atomic counter-swap.
@@ -182,24 +182,24 @@ pub enum DstasSwapMode {
 
 /// Parameters for constructing a STAS 3.0 locking script.
 #[derive(Debug, Clone)]
-pub struct DstasLockingParams {
+pub struct Stas3LockingParams {
     /// The recipient address.
     pub address: Address,
     /// The spend type for this locking script.
-    pub spend_type: DstasSpendType,
+    pub spend_type: Stas3SpendType,
     /// Optional action data.
     pub action_data: Option<ActionData>,
 }
 
 /// A destination specific to STAS 3.0 token operations.
 #[derive(Debug, Clone)]
-pub struct DstasDestination {
+pub struct Stas3Destination {
     /// The recipient address.
     pub address: Address,
     /// Satoshi amount.
     pub satoshis: u64,
     /// The STAS 3.0 spend type.
-    pub spend_type: DstasSpendType,
+    pub spend_type: Stas3SpendType,
     /// Optional action data.
     pub action_data: Option<ActionData>,
 }

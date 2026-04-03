@@ -11,7 +11,7 @@ use bsv_transaction::template::UnlockingScriptTemplate;
 use bsv_transaction::transaction::Transaction;
 use bsv_transaction::TransactionError;
 
-use crate::types::{DstasSpendType, SigningKey};
+use crate::types::{Stas3SpendType, SigningKey};
 
 // ---------------------------------------------------------------------------
 // P2PKH STAS 3.0 unlocker (existing)
@@ -21,12 +21,12 @@ use crate::types::{DstasSpendType, SigningKey};
 ///
 /// Produces `<DER_signature + sighash_byte> <compressed_pubkey>`, identical
 /// to P2PKH / STAS.  The `spend_type` is stored for future preimage encoding.
-pub struct DstasUnlockingTemplate {
+pub struct Stas3UnlockingTemplate {
     private_key: PrivateKey,
     sighash_flag: u32,
     /// The spend type for this unlock (stored, not yet encoded in script).
     #[allow(dead_code)]
-    spend_type: DstasSpendType,
+    spend_type: Stas3SpendType,
 }
 
 /// Create a STAS 3.0 unlocker.
@@ -37,17 +37,17 @@ pub struct DstasUnlockingTemplate {
 /// * `sighash_flag` – Optional sighash flag (defaults to `SIGHASH_ALL_FORKID`).
 pub fn unlock(
     private_key: PrivateKey,
-    spend_type: DstasSpendType,
+    spend_type: Stas3SpendType,
     sighash_flag: Option<u32>,
-) -> DstasUnlockingTemplate {
-    DstasUnlockingTemplate {
+) -> Stas3UnlockingTemplate {
+    Stas3UnlockingTemplate {
         private_key,
         sighash_flag: sighash_flag.unwrap_or(SIGHASH_ALL_FORKID),
         spend_type,
     }
 }
 
-impl UnlockingScriptTemplate for DstasUnlockingTemplate {
+impl UnlockingScriptTemplate for Stas3UnlockingTemplate {
     /// Sign the specified input and produce the unlocking script.
     fn sign(&self, tx: &Transaction, input_index: u32) -> Result<Script, TransactionError> {
         let idx = input_index as usize;
@@ -97,8 +97,8 @@ impl UnlockingScriptTemplate for DstasUnlockingTemplate {
 ///
 /// Produces: `<sig1> <sig2> … <sigM> <serialized_multisig_script>`
 ///
-/// Identical to `StasMpkhUnlockingTemplate` but carries the `DstasSpendType`.
-pub struct DstasMpkhUnlockingTemplate {
+/// Identical to `StasMpkhUnlockingTemplate` but carries the `Stas3SpendType`.
+pub struct Stas3MpkhUnlockingTemplate {
     /// The m private keys for threshold signing.
     private_keys: Vec<PrivateKey>,
     /// The full multisig script.
@@ -107,7 +107,7 @@ pub struct DstasMpkhUnlockingTemplate {
     sighash_flag: u32,
     /// The spend type (stored for future preimage encoding).
     #[allow(dead_code)]
-    spend_type: DstasSpendType,
+    spend_type: Stas3SpendType,
 }
 
 /// Create a STAS 3.0 P2MPKH unlocker.
@@ -123,9 +123,9 @@ pub struct DstasMpkhUnlockingTemplate {
 pub fn unlock_mpkh(
     private_keys: Vec<PrivateKey>,
     multisig: MultisigScript,
-    spend_type: DstasSpendType,
+    spend_type: Stas3SpendType,
     sighash_flag: Option<u32>,
-) -> Result<DstasMpkhUnlockingTemplate, TransactionError> {
+) -> Result<Stas3MpkhUnlockingTemplate, TransactionError> {
     if private_keys.len() != multisig.threshold() as usize {
         return Err(TransactionError::SigningError(format!(
             "expected {} private keys for threshold, got {}",
@@ -133,7 +133,7 @@ pub fn unlock_mpkh(
             private_keys.len()
         )));
     }
-    Ok(DstasMpkhUnlockingTemplate {
+    Ok(Stas3MpkhUnlockingTemplate {
         private_keys,
         multisig,
         sighash_flag: sighash_flag.unwrap_or(SIGHASH_ALL_FORKID),
@@ -146,7 +146,7 @@ pub fn unlock_mpkh(
 /// Returns a boxed `UnlockingScriptTemplate` suitable for either signing mode.
 pub fn unlock_from_signing_key(
     key: &SigningKey,
-    spend_type: DstasSpendType,
+    spend_type: Stas3SpendType,
     sighash_flag: Option<u32>,
 ) -> Result<Box<dyn UnlockingScriptTemplate>, TransactionError> {
     match key {
@@ -163,7 +163,7 @@ pub fn unlock_from_signing_key(
     }
 }
 
-impl UnlockingScriptTemplate for DstasMpkhUnlockingTemplate {
+impl UnlockingScriptTemplate for Stas3MpkhUnlockingTemplate {
     /// Sign the specified input and produce the P2MPKH unlocking script.
     ///
     /// Produces: `<sig1> <sig2> … <sigM> <serialized_multisig_script>`
@@ -223,15 +223,15 @@ mod tests {
     use crate::types::SigningKey;
 
     #[test]
-    fn dstas_unlock_from_signing_key_single() {
+    fn stas3_unlock_from_signing_key_single() {
         let key = PrivateKey::new();
         let sk = SigningKey::Single(key);
-        let result = unlock_from_signing_key(&sk, DstasSpendType::Transfer, None);
+        let result = unlock_from_signing_key(&sk, Stas3SpendType::Transfer, None);
         assert!(result.is_ok());
     }
 
     #[test]
-    fn dstas_unlock_from_signing_key_multi() {
+    fn stas3_unlock_from_signing_key_multi() {
         let keys: Vec<PrivateKey> = (0..3).map(|_| PrivateKey::new()).collect();
         let pubs = keys.iter().map(|k| k.pub_key()).collect();
         let ms = MultisigScript::new(2, pubs).unwrap();
@@ -239,28 +239,28 @@ mod tests {
             private_keys: vec![keys[0].clone(), keys[1].clone()],
             multisig: ms,
         };
-        let result = unlock_from_signing_key(&sk, DstasSpendType::Transfer, None);
+        let result = unlock_from_signing_key(&sk, Stas3SpendType::Transfer, None);
         assert!(result.is_ok());
     }
 
     #[test]
-    fn dstas_unlock_mpkh_rejects_wrong_key_count() {
+    fn stas3_unlock_mpkh_rejects_wrong_key_count() {
         let keys: Vec<PrivateKey> = (0..3).map(|_| PrivateKey::new()).collect();
         let pubs = keys.iter().map(|k| k.pub_key()).collect();
         let ms = MultisigScript::new(2, pubs).unwrap();
-        let result = unlock_mpkh(keys, ms, DstasSpendType::Transfer, None);
+        let result = unlock_mpkh(keys, ms, Stas3SpendType::Transfer, None);
         assert!(result.is_err());
     }
 
     #[test]
-    fn dstas_mpkh_estimate_length_2_of_3() {
+    fn stas3_mpkh_estimate_length_2_of_3() {
         let keys: Vec<PrivateKey> = (0..3).map(|_| PrivateKey::new()).collect();
         let pubs = keys.iter().map(|k| k.pub_key()).collect();
         let ms = MultisigScript::new(2, pubs).unwrap();
         let unlocker = unlock_mpkh(
             vec![keys[0].clone(), keys[1].clone()],
             ms,
-            DstasSpendType::Transfer,
+            Stas3SpendType::Transfer,
             None,
         ).unwrap();
         let tx = bsv_transaction::transaction::Transaction::default();
@@ -269,7 +269,7 @@ mod tests {
     }
 
     // -------------------------------------------------------------------
-    // Gap 2: DstasMpkhUnlockingTemplate::sign() tests
+    // Gap 2: Stas3MpkhUnlockingTemplate::sign() tests
     // -------------------------------------------------------------------
 
     /// Build a mock transaction with a source output for signing tests.
@@ -305,7 +305,7 @@ mod tests {
     }
 
     #[test]
-    fn dstas_mpkh_sign_2_of_3_script_structure() {
+    fn stas3_mpkh_sign_2_of_3_script_structure() {
         let keys: Vec<PrivateKey> = (0..3).map(|_| PrivateKey::new()).collect();
         let pubs: Vec<_> = keys.iter().map(|k| k.pub_key()).collect();
         let ms = MultisigScript::new(2, pubs).unwrap();
@@ -314,7 +314,7 @@ mod tests {
         let unlocker = unlock_mpkh(
             vec![keys[0].clone(), keys[1].clone()],
             ms,
-            DstasSpendType::Transfer,
+            Stas3SpendType::Transfer,
             None,
         )
         .unwrap();
@@ -349,14 +349,14 @@ mod tests {
     }
 
     #[test]
-    fn dstas_mpkh_sign_missing_source_output_returns_error() {
+    fn stas3_mpkh_sign_missing_source_output_returns_error() {
         let keys: Vec<PrivateKey> = (0..3).map(|_| PrivateKey::new()).collect();
         let pubs: Vec<_> = keys.iter().map(|k| k.pub_key()).collect();
         let ms = MultisigScript::new(2, pubs).unwrap();
         let unlocker = unlock_mpkh(
             vec![keys[0].clone(), keys[1].clone()],
             ms,
-            DstasSpendType::Transfer,
+            Stas3SpendType::Transfer,
             None,
         )
         .unwrap();
@@ -375,7 +375,7 @@ mod tests {
     }
 
     #[test]
-    fn dstas_mpkh_sign_carries_spend_type() {
+    fn stas3_mpkh_sign_carries_spend_type() {
         // Verify the template stores spend_type by constructing with different types
         let keys: Vec<PrivateKey> = (0..2).map(|_| PrivateKey::new()).collect();
         let pubs: Vec<_> = keys.iter().map(|k| k.pub_key()).collect();
@@ -386,7 +386,7 @@ mod tests {
         let t1 = unlock_mpkh(
             vec![keys[0].clone()],
             ms.clone(),
-            DstasSpendType::Transfer,
+            Stas3SpendType::Transfer,
             None,
         );
         assert!(t1.is_ok());
@@ -394,7 +394,7 @@ mod tests {
         let t2 = unlock_mpkh(
             vec![keys[0].clone()],
             ms.clone(),
-            DstasSpendType::Confiscation,
+            Stas3SpendType::Confiscation,
             None,
         );
         assert!(t2.is_ok());
@@ -412,25 +412,25 @@ mod tests {
     // -------------------------------------------------------------------
 
     #[test]
-    fn dstas_mpkh_estimate_length_1_of_1() {
+    fn stas3_mpkh_estimate_length_1_of_1() {
         let keys: Vec<PrivateKey> = (0..1).map(|_| PrivateKey::new()).collect();
         let pubs = keys.iter().map(|k| k.pub_key()).collect();
         let ms = MultisigScript::new(1, pubs).unwrap();
-        let unlocker = unlock_mpkh(vec![keys[0].clone()], ms, DstasSpendType::Transfer, None).unwrap();
+        let unlocker = unlock_mpkh(vec![keys[0].clone()], ms, Stas3SpendType::Transfer, None).unwrap();
         let tx = bsv_transaction::transaction::Transaction::default();
         let est = unlocker.estimate_length(&tx, 0);
         assert_eq!(est, 1 * 73 + 3 + 1 * 34 + 3);
     }
 
     #[test]
-    fn dstas_mpkh_estimate_length_3_of_5() {
+    fn stas3_mpkh_estimate_length_3_of_5() {
         let keys: Vec<PrivateKey> = (0..5).map(|_| PrivateKey::new()).collect();
         let pubs = keys.iter().map(|k| k.pub_key()).collect();
         let ms = MultisigScript::new(3, pubs).unwrap();
         let unlocker = unlock_mpkh(
             vec![keys[0].clone(), keys[1].clone(), keys[2].clone()],
             ms,
-            DstasSpendType::Transfer,
+            Stas3SpendType::Transfer,
             None,
         )
         .unwrap();

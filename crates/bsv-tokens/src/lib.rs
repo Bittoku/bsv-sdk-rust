@@ -25,14 +25,14 @@ pub use error::TokenError;
 pub use scheme::{Authority, TokenScheme};
 pub use token_id::TokenId;
 pub use script_type::ScriptType;
-pub use types::{Payment, Destination, DstasSpendType, DstasSwapMode, ActionData, DstasLockingParams, DstasDestination, SigningKey, OwnerAddress};
+pub use types::{Payment, Destination, Stas3SpendType, Stas3SwapMode, ActionData, Stas3LockingParams, Stas3Destination, SigningKey, OwnerAddress};
 pub use script::stas_builder::build_stas_locking_script;
 pub use script::stas_btg_builder::build_stas_btg_locking_script;
-pub use script::dstas_builder::{build_dstas_locking_script, build_dstas_flags};
-pub use script::dstas_swap::{compute_dstas_requested_script_hash, resolve_dstas_swap_mode, is_dstas_frozen};
+pub use script::stas3_builder::{build_stas3_locking_script, build_stas3_flags};
+pub use script::stas3_swap::{compute_stas3_requested_script_hash, resolve_stas3_swap_mode, is_stas3_frozen};
 pub use template::stas::{StasUnlockingTemplate, StasMpkhUnlockingTemplate};
 pub use template::stas_btg::{StasBtgUnlockingTemplate, StasBtgCheckpointUnlockingTemplate};
-pub use template::dstas::{DstasUnlockingTemplate, DstasMpkhUnlockingTemplate};
+pub use template::stas3::{Stas3UnlockingTemplate, Stas3MpkhUnlockingTemplate};
 pub use proof::split_tx_around_output;
 pub use lineage::{LineageValidator, TxFetcher};
 pub use factory::{
@@ -41,8 +41,8 @@ pub use factory::{
     IssueConfig, TransferConfig, SplitConfig, MergeConfig, RedeemConfig,
     build_btg_transfer_tx, build_btg_split_tx, build_btg_merge_tx, build_btg_checkpoint_tx,
     BtgTransferConfig, BtgSplitConfig, BtgMergeConfig, BtgCheckpointConfig, BtgPayment,
-    build_dstas_issue_txs, build_dstas_base_tx, build_dstas_freeze_tx, build_dstas_unfreeze_tx,
-    build_dstas_swap_flow_tx, build_dstas_transfer_swap_tx, build_dstas_swap_swap_tx,
-    DstasIssueConfig, DstasIssueOutput, DstasIssueTxs,
-    DstasBaseConfig, DstasOutputParams, TokenInput,
+    build_stas3_issue_txs, build_stas3_base_tx, build_stas3_freeze_tx, build_stas3_unfreeze_tx,
+    build_stas3_swap_flow_tx, build_stas3_transfer_swap_tx, build_stas3_swap_swap_tx,
+    Stas3IssueConfig, Stas3IssueOutput, Stas3IssueTxs,
+    Stas3BaseConfig, Stas3OutputParams, TokenInput,
 };

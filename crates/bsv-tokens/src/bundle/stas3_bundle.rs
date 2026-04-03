@@ -1,6 +1,6 @@
 //! STAS 3.0 bundle factory for automatic merge/split/transfer planning.
 //!
-//! The [`DstasBundleFactory`] orchestrates multi-transaction sequences to
+//! The [`Stas3BundleFactory`] orchestrates multi-transaction sequences to
 //! fulfill payouts from a pool of STAS UTXOs. It handles:
 //!
 //! - **UTXO selection** — exact-match preferred, then smallest-first accumulation.
@@ -18,11 +18,11 @@ use bsv_script::Script;
 use bsv_transaction::transaction::Transaction;
 
 use crate::error::TokenError;
-use crate::factory::dstas::{
-    build_dstas_base_tx, build_dstas_merge_tx, DstasBaseConfig, DstasMergeConfig,
-    DstasOutputParams, TokenInput,
+use crate::factory::stas3::{
+    build_stas3_base_tx, build_stas3_merge_tx, Stas3BaseConfig, Stas3MergeConfig,
+    Stas3OutputParams, TokenInput,
 };
-use crate::types::DstasSpendType;
+use crate::types::Stas3SpendType;
 
 // -----------------------------------------------------------------------
 // Public types
@@ -87,26 +87,26 @@ pub struct TransferOutput {
 /// types but using names that match the TypeScript reference.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BundleSpendType {
-    /// Standard transfer (DstasSpendType::Transfer).
+    /// Standard transfer (Stas3SpendType::Transfer).
     Transfer,
-    /// Freeze operation (DstasSpendType::FreezeUnfreeze, frozen=true).
+    /// Freeze operation (Stas3SpendType::FreezeUnfreeze, frozen=true).
     Freeze,
-    /// Unfreeze operation (DstasSpendType::FreezeUnfreeze, frozen=false).
+    /// Unfreeze operation (Stas3SpendType::FreezeUnfreeze, frozen=false).
     Unfreeze,
-    /// Swap operation (DstasSpendType::SwapCancellation).
+    /// Swap operation (Stas3SpendType::SwapCancellation).
     Swap,
-    /// Confiscation (DstasSpendType::Confiscation).
+    /// Confiscation (Stas3SpendType::Confiscation).
     Confiscation,
 }
 
 impl BundleSpendType {
     /// Convert to the underlying STAS 3.0 protocol spend type.
-    fn to_dstas_spend_type(self) -> DstasSpendType {
+    fn to_stas3_spend_type(self) -> Stas3SpendType {
         match self {
-            BundleSpendType::Transfer => DstasSpendType::Transfer,
-            BundleSpendType::Freeze | BundleSpendType::Unfreeze => DstasSpendType::FreezeUnfreeze,
-            BundleSpendType::Swap => DstasSpendType::SwapCancellation,
-            BundleSpendType::Confiscation => DstasSpendType::Confiscation,
+            BundleSpendType::Transfer => Stas3SpendType::Transfer,
+            BundleSpendType::Freeze | BundleSpendType::Unfreeze => Stas3SpendType::FreezeUnfreeze,
+            BundleSpendType::Swap => Stas3SpendType::SwapCancellation,
+            BundleSpendType::Confiscation => Stas3SpendType::Confiscation,
         }
     }
 
@@ -184,13 +184,13 @@ pub struct LockingParamsResult {
 }
 
 /// Average fee estimate for a single STAS 3.0 merge transaction (satoshis).
-pub const AVG_FEE_FOR_DSTAS_MERGE: u64 = 500;
+pub const AVG_FEE_FOR_STAS3_MERGE: u64 = 500;
 
 /// Default fee rate (satoshis per KB).
 const DEFAULT_FEE_RATE: u64 = 500;
 
 // -----------------------------------------------------------------------
-// DstasBundleFactory
+// Stas3BundleFactory
 // -----------------------------------------------------------------------
 
 /// Automatic merge/split/transfer planner for STAS 3.0 token bundles.
@@ -202,7 +202,7 @@ const DEFAULT_FEE_RATE: u64 = 500;
 /// 4. Build locking parameters for each output.
 ///
 /// Signing is handled internally using the provided private keys.
-pub struct DstasBundleFactory {
+pub struct Stas3BundleFactory {
     /// Private key for the STAS wallet (signs token inputs).
     stas_private_key: PrivateKey,
     /// Owner PKH of the STAS wallet (for self-directed change outputs).
@@ -220,7 +220,7 @@ pub struct DstasBundleFactory {
     fee_rate: u64,
 }
 
-impl DstasBundleFactory {
+impl Stas3BundleFactory {
     /// Create a new bundle factory.
     ///
     /// # Arguments
@@ -606,7 +606,7 @@ impl DstasBundleFactory {
                         false,
                     )?;
 
-                    let tx = build_dstas_base_tx(&DstasBaseConfig {
+                    let tx = build_stas3_base_tx(&Stas3BaseConfig {
                         token_inputs: vec![outpoint_to_token_input(outpoint, &self.stas_private_key)],
                         fee_txid: fee_outpoint.txid,
                         fee_vout: fee_outpoint.vout,
@@ -614,7 +614,7 @@ impl DstasBundleFactory {
                         fee_locking_script: fee_outpoint.locking_script.clone(),
                         fee_private_key: fee_outpoint.private_key.clone(),
                         destinations: vec![dest],
-                        spend_type: DstasSpendType::Transfer,
+                        spend_type: Stas3SpendType::Transfer,
                         fee_rate: self.fee_rate,
                     })?;
 
@@ -674,7 +674,7 @@ impl DstasBundleFactory {
                         )?]
                     };
 
-                    let tx = build_dstas_merge_tx(DstasMergeConfig {
+                    let tx = build_stas3_merge_tx(Stas3MergeConfig {
                         token_inputs: [
                             outpoint_to_token_input(outpoint1, &self.stas_private_key),
                             outpoint_to_token_input(outpoint2, &self.stas_private_key),
@@ -779,7 +779,7 @@ impl DstasBundleFactory {
             }
 
             // Build the transaction
-            let config = DstasBaseConfig {
+            let config = Stas3BaseConfig {
                 token_inputs: vec![outpoint_to_token_input(&current_stas, &self.stas_private_key)],
                 fee_txid: current_fee.txid,
                 fee_vout: current_fee.vout,
@@ -787,15 +787,15 @@ impl DstasBundleFactory {
                 fee_locking_script: current_fee.locking_script.clone(),
                 fee_private_key: current_fee.private_key.clone(),
                 destinations,
-                spend_type: spend_type.to_dstas_spend_type(),
+                spend_type: spend_type.to_stas3_spend_type(),
                 fee_rate: self.fee_rate,
             };
 
             // Add note to final transaction only
             let tx = if is_final && note.is_some() {
-                build_dstas_base_tx_with_note(&config, note.unwrap())?
+                build_stas3_base_tx_with_note(&config, note.unwrap())?
             } else {
-                build_dstas_base_tx(&config)?
+                build_stas3_base_tx(&config)?
             };
 
             // Update fee outpoint from tx change
@@ -830,7 +830,7 @@ impl DstasBundleFactory {
         satoshis: u64,
         spend_type: BundleSpendType,
         is_change: bool,
-    ) -> Result<DstasOutputParams, TokenError> {
+    ) -> Result<Stas3OutputParams, TokenError> {
         let self_recipient = Recipient {
             owner_pkh: self.stas_owner_pkh,
         };
@@ -857,7 +857,7 @@ impl DstasBundleFactory {
         output_index: usize,
         output_count: usize,
         is_change: bool,
-    ) -> Result<DstasOutputParams, TokenError> {
+    ) -> Result<Stas3OutputParams, TokenError> {
         let params = (self.build_locking_params)(LockingParamsArgs {
             from_txid,
             from_vout,
@@ -969,9 +969,9 @@ fn fee_outpoint_from_tx(tx: &Transaction, fee_private_key: &PrivateKey) -> Fundi
     }
 }
 
-/// Convert locking params result to DstasOutputParams.
-fn locking_result_to_output_params(satoshis: u64, params: &LockingParamsResult) -> DstasOutputParams {
-    DstasOutputParams {
+/// Convert locking params result to Stas3OutputParams.
+fn locking_result_to_output_params(satoshis: u64, params: &LockingParamsResult) -> Stas3OutputParams {
+    Stas3OutputParams {
         satoshis,
         owner_pkh: params.owner_pkh,
         redemption_pkh: params.redemption_pkh,
@@ -983,16 +983,16 @@ fn locking_result_to_output_params(satoshis: u64, params: &LockingParamsResult) 
     }
 }
 
-/// Build a DSTAS base transaction with an OP_RETURN note appended.
+/// Build a STAS3 base transaction with an OP_RETURN note appended.
 ///
-/// This wraps `build_dstas_base_tx` and appends an OP_RETURN output containing
+/// This wraps `build_stas3_base_tx` and appends an OP_RETURN output containing
 /// the note data to the resulting transaction.
-fn build_dstas_base_tx_with_note(
-    config: &DstasBaseConfig,
+fn build_stas3_base_tx_with_note(
+    config: &Stas3BaseConfig,
     note: &[Vec<u8>],
 ) -> Result<Transaction, TokenError> {
     // We need to build the tx manually to include the note before fee change.
-    // Unfortunately build_dstas_base_tx adds fee change internally, so we
+    // Unfortunately build_stas3_base_tx adds fee change internally, so we
     // replicate the pattern but insert the note output before signing.
     //
     // For simplicity, build the tx normally then splice in the note.
@@ -1000,7 +1000,7 @@ fn build_dstas_base_tx_with_note(
     // fee change calculation significantly.
     use bsv_script::opcodes::{OP_FALSE, OP_RETURN};
 
-    let mut tx = build_dstas_base_tx(config)?;
+    let mut tx = build_stas3_base_tx(config)?;
 
     // Build OP_RETURN note script
     let mut note_script = Script::new();
@@ -1071,9 +1071,9 @@ mod tests {
         }
     }
 
-    /// Build a minimal DSTAS locking script for testing.
-    fn test_dstas_locking_script(owner_pkh: &[u8; 20]) -> Script {
-        crate::script::dstas_builder::build_dstas_locking_script(
+    /// Build a minimal STAS3 locking script for testing.
+    fn test_stas3_locking_script(owner_pkh: &[u8; 20]) -> Script {
+        crate::script::stas3_builder::build_stas3_locking_script(
             owner_pkh,
             &[0u8; 20], // redemption_pkh
             None,        // action_data
@@ -1089,7 +1089,7 @@ mod tests {
     fn make_test_factory(
         stas_utxos: Vec<StasOutPoint>,
         fee_satoshis: u64,
-    ) -> DstasBundleFactory {
+    ) -> Stas3BundleFactory {
         let stas_key = test_private_key(1);
         let fee_key = test_private_key(2);
         let owner_pkh = bsv_primitives::hash::hash160(&stas_key.pub_key().to_compressed());
@@ -1097,7 +1097,7 @@ mod tests {
         let fee_key_clone = fee_key.clone();
         let utxos = stas_utxos.clone();
 
-        DstasBundleFactory::new(
+        Stas3BundleFactory::new(
             stas_key.clone(),
             owner_pkh,
             move |_amount| Ok(utxos.clone()),
@@ -1123,7 +1123,7 @@ mod tests {
 
     #[test]
     fn select_exact_match() {
-        let script = test_dstas_locking_script(&[1u8; 20]);
+        let script = test_stas3_locking_script(&[1u8; 20]);
         let utxos = vec![
             make_stas_outpoint(1, 100, &script),
             make_stas_outpoint(2, 500, &script),
@@ -1136,7 +1136,7 @@ mod tests {
 
     #[test]
     fn select_accumulate_smallest_first() {
-        let script = test_dstas_locking_script(&[1u8; 20]);
+        let script = test_stas3_locking_script(&[1u8; 20]);
         let utxos = vec![
             make_stas_outpoint(1, 100, &script),
             make_stas_outpoint(2, 200, &script),
@@ -1150,7 +1150,7 @@ mod tests {
 
     #[test]
     fn select_single_greater_fallback() {
-        let script = test_dstas_locking_script(&[1u8; 20]);
+        let script = test_stas3_locking_script(&[1u8; 20]);
         let utxos = vec![make_stas_outpoint(1, 1000, &script)];
         let selected = select_stas_utxos(&utxos, 500);
         assert_eq!(selected.len(), 1);
@@ -1212,7 +1212,7 @@ mod tests {
     fn test_single_utxo_single_recipient() {
         let stas_key = test_private_key(1);
         let owner_pkh = bsv_primitives::hash::hash160(&stas_key.pub_key().to_compressed());
-        let script = test_dstas_locking_script(&owner_pkh);
+        let script = test_stas3_locking_script(&owner_pkh);
         let utxo = make_stas_outpoint(1, 1000, &script);
 
         let mut factory = make_test_factory(vec![utxo], 100_000);
@@ -1236,7 +1236,7 @@ mod tests {
     fn test_single_utxo_four_recipients() {
         let stas_key = test_private_key(1);
         let owner_pkh = bsv_primitives::hash::hash160(&stas_key.pub_key().to_compressed());
-        let script = test_dstas_locking_script(&owner_pkh);
+        let script = test_stas3_locking_script(&owner_pkh);
         let utxo = make_stas_outpoint(1, 1000, &script);
 
         let mut factory = make_test_factory(vec![utxo], 100_000);
@@ -1263,7 +1263,7 @@ mod tests {
     fn test_single_utxo_five_recipients() {
         let stas_key = test_private_key(1);
         let owner_pkh = bsv_primitives::hash::hash160(&stas_key.pub_key().to_compressed());
-        let script = test_dstas_locking_script(&owner_pkh);
+        let script = test_stas3_locking_script(&owner_pkh);
         let utxo = make_stas_outpoint(1, 1000, &script);
 
         let mut factory = make_test_factory(vec![utxo], 100_000);
@@ -1290,7 +1290,7 @@ mod tests {
     fn test_many_recipients_tx_count() {
         let stas_key = test_private_key(1);
         let owner_pkh = bsv_primitives::hash::hash160(&stas_key.pub_key().to_compressed());
-        let script = test_dstas_locking_script(&owner_pkh);
+        let script = test_stas3_locking_script(&owner_pkh);
         let recipient_count = 301;
         let utxo = make_stas_outpoint(1, recipient_count as u64, &script);
 
@@ -1319,7 +1319,7 @@ mod tests {
     fn test_note_only_on_final_tx() {
         let stas_key = test_private_key(1);
         let owner_pkh = bsv_primitives::hash::hash160(&stas_key.pub_key().to_compressed());
-        let script = test_dstas_locking_script(&owner_pkh);
+        let script = test_stas3_locking_script(&owner_pkh);
         let utxo = make_stas_outpoint(1, 1000, &script);
 
         let mut factory = make_test_factory(vec![utxo], 100_000);
@@ -1361,7 +1361,7 @@ mod tests {
     fn test_freeze_bundle_uses_freeze_spend_type() {
         let stas_key = test_private_key(1);
         let owner_pkh = bsv_primitives::hash::hash160(&stas_key.pub_key().to_compressed());
-        let script = test_dstas_locking_script(&owner_pkh);
+        let script = test_stas3_locking_script(&owner_pkh);
         let utxo = make_stas_outpoint(1, 1000, &script);
 
         // Track which spend type was used
@@ -1372,7 +1372,7 @@ mod tests {
         let spend_type_used = std::sync::Arc::new(std::sync::Mutex::new(None));
         let spend_type_clone = spend_type_used.clone();
 
-        let mut factory = DstasBundleFactory::new(
+        let mut factory = Stas3BundleFactory::new(
             stas_key.clone(),
             owner_pkh,
             move |_| Ok(utxos_clone.clone()),
@@ -1405,7 +1405,7 @@ mod tests {
     fn test_unfreeze_bundle() {
         let stas_key = test_private_key(1);
         let owner_pkh = bsv_primitives::hash::hash160(&stas_key.pub_key().to_compressed());
-        let script = test_dstas_locking_script(&owner_pkh);
+        let script = test_stas3_locking_script(&owner_pkh);
         let utxo = make_stas_outpoint(1, 1000, &script);
 
         let mut factory = make_test_factory(vec![utxo], 100_000);
@@ -1420,7 +1420,7 @@ mod tests {
     fn test_fee_chaining() {
         let stas_key = test_private_key(1);
         let owner_pkh = bsv_primitives::hash::hash160(&stas_key.pub_key().to_compressed());
-        let script = test_dstas_locking_script(&owner_pkh);
+        let script = test_stas3_locking_script(&owner_pkh);
         let utxo = make_stas_outpoint(1, 1000, &script);
 
         let mut factory = make_test_factory(vec![utxo], 100_000);
@@ -1469,7 +1469,7 @@ mod tests {
         let stas_key = test_private_key(1);
         let fee_key = test_private_key(2);
         let owner_pkh = bsv_primitives::hash::hash160(&stas_key.pub_key().to_compressed());
-        let script = test_dstas_locking_script(&owner_pkh);
+        let script = test_stas3_locking_script(&owner_pkh);
 
         let utxo1 = make_stas_outpoint(1, 600, &script);
         let utxo2 = make_stas_outpoint(2, 400, &script);
@@ -1478,7 +1478,7 @@ mod tests {
         let utxos_clone = utxos.clone();
         let fee_key_clone = fee_key.clone();
 
-        let mut factory = DstasBundleFactory::new(
+        let mut factory = Stas3BundleFactory::new(
             stas_key.clone(),
             owner_pkh,
             move |_| Ok(utxos_clone.clone()),
@@ -1516,7 +1516,7 @@ mod tests {
         let stas_key = test_private_key(1);
         let fee_key = test_private_key(2);
         let owner_pkh = bsv_primitives::hash::hash160(&stas_key.pub_key().to_compressed());
-        let script = test_dstas_locking_script(&owner_pkh);
+        let script = test_stas3_locking_script(&owner_pkh);
 
         // Two UTXOs totaling 1200, but we only need 1000
         let utxo1 = make_stas_outpoint(1, 700, &script);
@@ -1526,7 +1526,7 @@ mod tests {
         let utxos_clone = utxos.clone();
         let fee_key_clone = fee_key.clone();
 
-        let mut factory = DstasBundleFactory::new(
+        let mut factory = Stas3BundleFactory::new(
             stas_key.clone(),
             owner_pkh,
             move |_| Ok(utxos_clone.clone()),
@@ -1604,7 +1604,7 @@ mod tests {
     fn test_insufficient_balance_returns_message() {
         let stas_key = test_private_key(1);
         let owner_pkh = bsv_primitives::hash::hash160(&stas_key.pub_key().to_compressed());
-        let script = test_dstas_locking_script(&owner_pkh);
+        let script = test_stas3_locking_script(&owner_pkh);
         let utxo = make_stas_outpoint(1, 100, &script);
 
         let mut factory = make_test_factory(vec![utxo], 100_000);
@@ -1636,7 +1636,7 @@ mod tests {
         let fee_key = test_private_key(2);
         let fee_key_clone = fee_key.clone();
 
-        let mut factory = DstasBundleFactory::new(
+        let mut factory = Stas3BundleFactory::new(
             stas_key.clone(),
             owner_pkh,
             |_| Ok(vec![]),

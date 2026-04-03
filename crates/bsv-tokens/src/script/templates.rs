@@ -33,12 +33,12 @@ pub const STAS_V2_REDEMPTION_OFFSET: usize = 1411;
 /// Minimum length for a valid STAS v2 script (template + at least 1 byte of OP_RETURN data).
 pub const STAS_V2_MIN_LEN: usize = STAS_V2_TEMPLATE_LEN + 1;
 
-/// DSTAS (stas3-freeze-multisig) base template prefix opcodes.
+/// STAS3 (stas3-freeze-multisig) base template prefix opcodes.
 /// OP_2MUL OP_SIZE OP_OVER OP_IF.
-pub const DSTAS_BASE_PREFIX: [u8; 4] = [0x6d, 0x82, 0x73, 0x63];
+pub const STAS3_BASE_PREFIX: [u8; 4] = [0x6d, 0x82, 0x73, 0x63];
 
-/// Length of the compiled DSTAS base template in bytes.
-pub const DSTAS_BASE_TEMPLATE_LEN: usize = 2812;
+/// Length of the compiled STAS3 base template in bytes.
+pub const STAS3_BASE_TEMPLATE_LEN: usize = 2812;
 
 /// Standard P2PKH locking script length (25 bytes).
 pub const P2PKH_LEN: usize = 25;

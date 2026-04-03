@@ -12,7 +12,7 @@ pub struct ParsedScript {
     /// STAS-specific fields, if applicable.
     pub stas: Option<StasFields>,
     /// STAS 3.0-specific fields, if applicable.
-    pub dstas: Option<DstasFields>,
+    pub stas3: Option<Stas3Fields>,
 }
 
 /// Fields extracted from a STAS v2 locking script.
@@ -30,7 +30,7 @@ pub struct StasFields {
 
 /// Fields extracted from a STAS 3.0 locking script.
 #[derive(Debug, Clone)]
-pub struct DstasFields {
+pub struct Stas3Fields {
     /// The 20-byte owner public key hash.
     pub owner: [u8; 20],
     /// The 20-byte redemption public key hash.
@@ -56,16 +56,16 @@ pub fn read_locking_script(script: &[u8]) -> ParsedScript {
         return ParsedScript {
             script_type: ScriptType::Stas,
             stas: Some(stas),
-            dstas: None,
+            stas3: None,
         };
     }
 
     // Try STAS 3.0
-    if let Some(dstas) = try_parse_dstas(script) {
+    if let Some(stas3) = try_parse_stas3(script) {
         return ParsedScript {
-            script_type: ScriptType::Dstas,
+            script_type: ScriptType::Stas3,
             stas: None,
-            dstas: Some(dstas),
+            stas3: Some(stas3),
         };
     }
 
@@ -80,7 +80,7 @@ pub fn read_locking_script(script: &[u8]) -> ParsedScript {
         return ParsedScript {
             script_type: ScriptType::P2pkh,
             stas: None,
-            dstas: None,
+            stas3: None,
         };
     }
 
@@ -89,7 +89,7 @@ pub fn read_locking_script(script: &[u8]) -> ParsedScript {
         return ParsedScript {
             script_type: ScriptType::OpReturn,
             stas: None,
-            dstas: None,
+            stas3: None,
         };
     }
 
@@ -98,14 +98,14 @@ pub fn read_locking_script(script: &[u8]) -> ParsedScript {
         return ParsedScript {
             script_type: ScriptType::OpReturn,
             stas: None,
-            dstas: None,
+            stas3: None,
         };
     }
 
     ParsedScript {
         script_type: ScriptType::Unknown,
         stas: None,
-        dstas: None,
+        stas3: None,
     }
 }
 
@@ -153,7 +153,7 @@ fn try_parse_stas_v2(script: &[u8]) -> Option<StasFields> {
 }
 
 /// Attempt to parse a STAS 3.0 script.
-fn try_parse_dstas(script: &[u8]) -> Option<DstasFields> {
+fn try_parse_stas3(script: &[u8]) -> Option<Stas3Fields> {
     // STAS 3.0 starts with OP_DATA_20 (0x14) + 20 bytes owner
     if script.len() < 26 || script[0] != 0x14 {
         return None;
@@ -166,15 +166,15 @@ fn try_parse_dstas(script: &[u8]) -> Option<DstasFields> {
     let (action_data_raw, action_offset) = read_push_data(script, 21)?;
 
     // After action data, check for STAS 3.0 base template prefix
-    if script.len() < action_offset + DSTAS_BASE_PREFIX.len() {
+    if script.len() < action_offset + STAS3_BASE_PREFIX.len() {
         return None;
     }
-    if script[action_offset..action_offset + DSTAS_BASE_PREFIX.len()] != DSTAS_BASE_PREFIX {
+    if script[action_offset..action_offset + STAS3_BASE_PREFIX.len()] != STAS3_BASE_PREFIX {
         return None;
     }
 
     // OP_RETURN (0x6a) is the last byte of the base template
-    let op_return_pos = action_offset + DSTAS_BASE_TEMPLATE_LEN - 1;
+    let op_return_pos = action_offset + STAS3_BASE_TEMPLATE_LEN - 1;
     if op_return_pos >= script.len() || script[op_return_pos] != 0x6a {
         return None;
     }
@@ -238,7 +238,7 @@ fn try_parse_dstas(script: &[u8]) -> Option<DstasFields> {
         vec![]
     };
 
-    Some(DstasFields {
+    Some(Stas3Fields {
         owner,
         redemption,
         flags,
