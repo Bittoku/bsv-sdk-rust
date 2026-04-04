@@ -14,7 +14,7 @@ Two implementation plans were produced for adding STAS token support to `bsv-sdk
 |---|---|---|
 | **Author** | HAL9000 | Claude |
 | **File** | `docs/stas-prd.md` | `docs/stas-prd-claude.md` |
-| **Scope** | Full STAS + DSTAS + Bundle Factory | STAS-20 only |
+| **Scope** | Full STAS + STAS3 + Bundle Factory | STAS-20 only |
 | **Timeline** | 4–5 weeks (phased with estimates) | 8 steps (no estimates) |
 
 ---
@@ -40,7 +40,7 @@ Both plans share the same fundamental design:
 | Capability | Plan 1 | Plan 2 |
 |-----------|--------|--------|
 | STAS-20 (fungible) | Yes | Yes |
-| DSTAS (divisible, freeze, swap) | Full coverage | Deferred to "Phase 3" |
+| STAS3 (divisible, freeze, swap) | Full coverage | Deferred to "Phase 3" |
 | Merge transaction | Included (Phase T4) | Deferred to "Phase 2" |
 | Swap flow | Full (auto-detect swap-swap vs transfer-swap) | Not covered |
 | Freeze / Unfreeze | Full with flags byte encoding | Not covered |
@@ -110,7 +110,7 @@ STAS factory functions require 4–8 parameters (funding UTXO, token inputs, des
 
 **Plan 1 demonstrates significantly more architectural maturity:**
 
-1. **Completeness** — tackles the full protocol surface including the hardest parts (DSTAS, freeze governance, swap detection, bundle planning) rather than deferring them
+1. **Completeness** — tackles the full protocol surface including the hardest parts (STAS3, freeze governance, swap detection, bundle planning) rather than deferring them
 2. **Architectural rigor** — `no_std`/WASM boundaries, async strategy, feature gating show production deployment awareness
 3. **Testing depth** — fuzz, property-based, golden vectors, and layered strategy vs. standard unit tests only
 4. **Risk awareness** — identifies undocumented script templates, potential TS SDK bugs, and high-severity planner edge cases
@@ -127,14 +127,14 @@ Plan 2 is a competent implementation guide for STAS-20 specifically, with good a
 ### Adopt from Plan 2
 
 1. **`*Config` structs** for all factory function signatures — idiomatic Rust, better ergonomics than raw parameter lists
-2. **Standalone `build_contract_tx()`** as additional public API alongside the DSTAS 2-tx issue flow
+2. **Standalone `build_contract_tx()`** as additional public API alongside the STAS3 2-tx issue flow
 3. **`#![deny(missing_docs)]`** at crate root
 4. **`serde` / `serde_json`** for `TokenScheme` JSON serialization
 5. **"Critical Existing Files to Reference"** section as implementor guide
 
 ### Keep from Plan 1
 
-Everything else — the full STAS + DSTAS + Bundle scope, `no_std` design, async strategy, v1/v2/v3 script handling, fuzz + property testing, golden vectors, risk register, and `bsv-tokens` crate naming.
+Everything else — the full STAS + STAS3 + Bundle scope, `no_std` design, async strategy, v1/v2/v3 script handling, fuzz + property testing, golden vectors, risk register, and `bsv-tokens` crate naming.
 
 ### Implementation Order
 

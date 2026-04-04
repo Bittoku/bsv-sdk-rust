@@ -11,7 +11,7 @@
 
 ## 1. Goal
 
-Add a `bsv-tokens` crate to the BSV Rust SDK that enables creation, transfer, and management of STAS and DSTAS tokens on the BSV blockchain. The crate builds on top of the existing SDK primitives (keys, scripts, transactions, wallets) and provides both low-level script construction and high-level transaction orchestration.
+Add a `bsv-tokens` crate to the BSV Rust SDK that enables creation, transfer, and management of STAS and STAS3 tokens on the BSV blockchain. The crate builds on top of the existing SDK primitives (keys, scripts, transactions, wallets) and provides both low-level script construction and high-level transaction orchestration.
 
 ## 2. Non-Goals
 
@@ -25,7 +25,7 @@ Add a `bsv-tokens` crate to the BSV Rust SDK that enables creation, transfer, an
 | # | Question | Decision | Rationale |
 |---|----------|----------|-----------|
 | 1 | Async strategy for bundle factory | Generic `Fn` bounds returning `impl Future` | Avoids `async-trait` dep; consistent with existing transport traits in SDK |
-| 2 | Signing abstraction | Use existing `UnlockingScriptTemplate` trait from `bsv-transaction` | Already defined and implemented for P2PKH; extend with STAS/DSTAS template impls |
+| 2 | Signing abstraction | Use existing `UnlockingScriptTemplate` trait from `bsv-transaction` | Already defined and implemented for P2PKH; extend with STAS/STAS3 template impls |
 | 3 | Script template versions | Build STAS 3.0 only, read v1/v2/STAS 3.0 | STAS 3.0 (stas3-freeze-multisig) is current; reader should classify legacy outputs found on-chain |
 | 4 | WASM compatibility | Core crate is `no_std + alloc`; bundle factory behind `feature = "bundle"` requiring `std` | Clean boundary; bundle is the only module needing async I/O |
 | 5 | Factory function signatures | `*Config` structs for 4+ parameter functions; direct params for simple functions | Idiomatic Rust; enables `#[derive(Default)]` and `..Default::default()` struct update syntax; prevents argument-order bugs; consistent with existing `interpreter::Config` pattern in SDK |
@@ -38,7 +38,7 @@ These files in the existing SDK define the traits, types, and patterns that `bsv
 
 | File | Relevance |
 |------|-----------|
-| `crates/bsv-transaction/src/template/mod.rs` | `UnlockingScriptTemplate` trait — implement for STAS/DSTAS |
+| `crates/bsv-transaction/src/template/mod.rs` | `UnlockingScriptTemplate` trait — implement for STAS/STAS3 |
 | `crates/bsv-transaction/src/template/p2pkh.rs` | Pattern to follow: `lock()`, `unlock()`, struct impl |
 | `crates/bsv-transaction/src/transaction.rs` | `Transaction` struct, `add_input()`, `add_output()`, `calc_input_signature_hash()` |
 | `crates/bsv-script/src/script.rs` | `Script::new()`, `append_push_data()`, `append_opcodes()` |
@@ -65,24 +65,24 @@ crates/bsv-tokens/
     │   ├── templates.rs        # Byte-pattern constants for v1/v2/v3 classification
     │   ├── reader.rs           # read_locking_script() → ParsedScript
     │   ├── stas_builder.rs     # build_stas_locking_script()
-    │   └── dstas_builder.rs    # build_dstas_locking_script(), flags, service fields
+    │   └── stas3_builder.rs    # build_stas3_locking_script(), flags, service fields
     │
     ├── template/
     │   ├── mod.rs
     │   ├── stas.rs             # UnlockingScriptTemplate impl for STAS spends
-    │   └── dstas.rs            # UnlockingScriptTemplate impl for DSTAS spends (with spend_type)
+    │   └── stas3.rs            # UnlockingScriptTemplate impl for STAS3 spends (with spend_type)
     │
     ├── factory/
     │   ├── mod.rs
     │   ├── contract.rs         # build_contract_tx() — standalone contract TX builder
     │   ├── stas.rs             # STAS tx builders: issue, transfer, split, merge, redeem
-    │   └── dstas.rs            # DSTAS tx builders: issue, base, freeze, unfreeze, swap flow
+    │   └── stas3.rs            # STAS3 tx builders: issue, base, freeze, unfreeze, swap flow
     │
     └── bundle/                 # Behind feature = "bundle"
         ├── mod.rs
         ├── planner.rs          # UTXO merge/split planning algorithm
         ├── stas_bundle.rs      # StasBundleFactory
-        └── dstas_bundle.rs     # DstasBundleFactory
+        └── stas3_bundle.rs     # DstasBundleFactory
 ```
 
 ## 6. Dependencies
@@ -191,7 +191,7 @@ pub enum TokenError {
 - `read_locking_script(script: &[u8]) -> ParsedScript`:
   - Match against known templates to determine `ScriptType`
   - For STAS: extract owner hash, token ID
-  - For DSTAS: extract owner, redemption PKH, flags, frozen bit, action data (raw + parsed), service fields, optional data
+  - For STAS3: extract owner, redemption PKH, flags, frozen bit, action data (raw + parsed), service fields, optional data
   - For P2PKH/OpReturn: basic classification
   - Unknown scripts → `ScriptType::Unknown`
 - `is_stas(script: &[u8]) -> bool` — quick classifier without full parse
@@ -202,7 +202,7 @@ pub enum TokenError {
 pub struct ParsedScript {
     pub script_type: ScriptType,
     pub stas: Option<StasFields>,
-    pub dstas: Option<DstasFields>,
+    pub stas3: Option<DstasFields>,
 }
 
 /// Fields extracted from a STAS locking script.
@@ -211,7 +211,7 @@ pub struct StasFields {
     pub token_id: TokenId,
 }
 
-/// Fields extracted from a DSTAS locking script.
+/// Fields extracted from a STAS3 locking script.
 pub struct DstasFields {
     pub owner: [u8; 20],
     pub redemption: [u8; 20],
@@ -226,7 +226,7 @@ pub struct DstasFields {
 
 **Tests:**
 - Classify known STAS v1/v2/v3 script hex samples → correct ScriptType
-- Parse DSTAS script → extract all fields correctly
+- Parse STAS3 script → extract all fields correctly
 - `is_stas()` returns true for STAS scripts, false for P2PKH/OpReturn/Unknown
 - Unknown scripts → `ScriptType::Unknown` (no panic)
 - Fuzz: arbitrary bytes → no panic, always returns a valid ParsedScript
@@ -237,22 +237,22 @@ pub struct DstasFields {
 
 ### Phase T3: Script Builders
 
-**Scope:** `script/stas_builder.rs`, `script/dstas_builder.rs`
+**Scope:** `script/stas_builder.rs`, `script/stas3_builder.rs`
 **Effort:** 2–3 days
 **Dependencies:** T1, T2
 
 **Deliverables:**
 - `build_stas_locking_script(scheme: &TokenScheme, satoshis: u64, owner: &Address) -> Script`
   - Constructs a STAS v3 locking script from token parameters
-- `build_dstas_locking_script(params: &DstasLockingParams) -> Script`
-  - Constructs a DSTAS (stas3-freeze-multisig) locking script with all fields
-- `build_dstas_flags(freezable: bool) -> Vec<u8>` — encode flags byte
+- `build_stas3_locking_script(params: &DstasLockingParams) -> Script`
+  - Constructs a STAS3 (stas3-freeze-multisig) locking script with all fields
+- `build_stas3_flags(freezable: bool) -> Vec<u8>` — encode flags byte
 - `derive_service_fields(scheme: &TokenScheme) -> Vec<Vec<u8>>` — authority key hash derivation
 - Multisig owner preimage construction: m + [0x21 || pubkey]... + n → hash160
 
 **Key type:**
 ```rust
-/// Parameters for constructing a DSTAS locking script.
+/// Parameters for constructing a STAS3 locking script.
 pub struct DstasLockingParams {
     /// Owner's public key hash (single key) or multisig preimage hash.
     pub owner: [u8; 20],
@@ -423,9 +423,9 @@ pub struct RedeemConfig {
 
 ---
 
-### Phase T5: DSTAS Transaction Factories
+### Phase T5: STAS3 Transaction Factories
 
-**Scope:** `template/dstas.rs`, `factory/dstas.rs`
+**Scope:** `template/stas3.rs`, `factory/stas3.rs`
 **Effort:** 4–5 days
 **Dependencies:** T1–T4
 
@@ -437,7 +437,7 @@ pub struct RedeemConfig {
 **Config structs and factory functions:**
 
 ```rust
-/// Configuration for issuing DSTAS tokens (two-transaction flow).
+/// Configuration for issuing STAS3 tokens (two-transaction flow).
 pub struct DstasIssueConfig {
     /// The token scheme defining this token.
     pub scheme: TokenScheme,
@@ -449,21 +449,21 @@ pub struct DstasIssueConfig {
     pub fee_rate: u64,
 }
 
-/// Result of a DSTAS issuance (two chained transactions).
+/// Result of a STAS3 issuance (two chained transactions).
 pub struct DstasIssueTxs {
     /// Contract TX: funding → P2PKH (with scheme data) + fee change.
     pub contract_tx: Transaction,
-    /// Issue TX: contract output → N DSTAS outputs + fee change.
+    /// Issue TX: contract output → N STAS3 outputs + fee change.
     pub issue_tx: Transaction,
 }
 
-/// Configuration for a generic DSTAS spend transaction.
+/// Configuration for a generic STAS3 spend transaction.
 pub struct DstasBaseConfig {
     /// STAS token inputs (1–2). If 2, merge mode is used.
     pub token_inputs: Vec<Payment>,
     /// Funding UTXO for transaction fees.
     pub fee_input: Payment,
-    /// Destination outputs with DSTAS locking params.
+    /// Destination outputs with STAS3 locking params.
     pub destinations: Vec<DstasDestination>,
     /// Spend type for unlocking script encoding.
     pub spend_type: DstasSpendType,
@@ -471,7 +471,7 @@ pub struct DstasBaseConfig {
     pub fee_rate: u64,
 }
 
-/// Configuration for a DSTAS swap flow transaction.
+/// Configuration for a STAS3 swap flow transaction.
 pub struct DstasSwapConfig {
     /// Exactly 2 STAS inputs for the swap.
     pub token_inputs: [Payment; 2],
@@ -487,22 +487,22 @@ pub struct DstasSwapConfig {
 ```
 
 **Transaction factories:**
-- `build_dstas_issue_txs(config: &DstasIssueConfig) -> Result<DstasIssueTxs, TokenError>`
+- `build_stas3_issue_txs(config: &DstasIssueConfig) -> Result<DstasIssueTxs, TokenError>`
   - **Two-transaction flow:**
     1. Contract TX: funding → P2PKH (with scheme bytes in data push) + fee change
-    2. Issue TX: contract output + fee change → N DSTAS outputs + fee change
+    2. Issue TX: contract output + fee change → N STAS3 outputs + fee change
   - Returns both transactions
   - Validates: funding > total token satoshis, issuer hash160 == scheme.token_id
 
-- `build_dstas_base_tx(config: &DstasBaseConfig) -> Result<Transaction, TokenError>`
-  - Generic DSTAS spend: 1–2 STAS inputs + 1 fee input → N DSTAS outputs + fee change
+- `build_stas3_base_tx(config: &DstasBaseConfig) -> Result<Transaction, TokenError>`
+  - Generic STAS3 spend: 1–2 STAS inputs + 1 fee input → N STAS3 outputs + fee change
   - Supports configurable spend_type
   - If 2 inputs → merge mode (both marked as merge inputs)
   - Validates: ≤ 2 STAS inputs, ≥ 1 destination, input sats == output sats
 
-- `build_dstas_freeze_tx(config: &DstasBaseConfig) -> Result<Transaction, TokenError>` — wrapper around base_tx with spend_type=2
-- `build_dstas_unfreeze_tx(config: &DstasBaseConfig) -> Result<Transaction, TokenError>` — wrapper around base_tx with spend_type=2
-- `build_dstas_swap_flow_tx(config: &DstasSwapConfig) -> Result<Transaction, TokenError>`
+- `build_stas3_freeze_tx(config: &DstasBaseConfig) -> Result<Transaction, TokenError>` — wrapper around base_tx with spend_type=2
+- `build_stas3_unfreeze_tx(config: &DstasBaseConfig) -> Result<Transaction, TokenError>` — wrapper around base_tx with spend_type=2
+- `build_stas3_swap_flow_tx(config: &DstasSwapConfig) -> Result<Transaction, TokenError>`
   - Exactly 2 STAS inputs
   - Auto-detect mode: if both inputs have swap action_data → swap-swap (type=4), else transfer-swap (type=1)
   - Manual mode override available via `mode_override`
@@ -514,7 +514,7 @@ pub struct DstasSwapConfig {
 - Spend type encoding: verify unlocking script carries correct type byte
 - Golden vectors against TS SDK where available
 
-**Acceptance:** All DSTAS operations produce valid transactions with correct spend types and script fields.
+**Acceptance:** All STAS3 operations produce valid transactions with correct spend types and script fields.
 
 ---
 
@@ -538,7 +538,7 @@ pub struct DstasSwapConfig {
 
 **Bundle factories:**
 ```rust
-/// Factory for constructing multi-transaction DSTAS token operations.
+/// Factory for constructing multi-transaction STAS3 token operations.
 ///
 /// Generic over async callbacks for UTXO fetching and transaction lookup,
 /// allowing consumers to plug in their own indexer/backend.
@@ -619,7 +619,7 @@ bsv-tokens = { path = "crates/bsv-tokens" }
 | T2: Script reader | 2–3 days | 3–5 days |
 | T3: Script builders | 2–3 days | 5–8 days |
 | T4: Contract + STAS factories | 3–4 days | 8–12 days |
-| T5: DSTAS factories | 4–5 days | 12–17 days |
+| T5: STAS3 factories | 4–5 days | 12–17 days |
 | T6: Bundle factory | 5–7 days | 17–24 days |
 | Integration + polish | 2–3 days | 19–27 days |
 | **Total** | | **~4–5 weeks** |

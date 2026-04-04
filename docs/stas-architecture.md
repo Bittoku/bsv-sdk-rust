@@ -2,7 +2,7 @@
 
 ## Overview
 
-A new `bsv-tokens` crate providing STAS and DSTAS (Divisible STAS) token support,
+A new `bsv-tokens` crate providing STAS and STAS3 (Divisible STAS) token support,
 built on top of the existing `bsv-primitives`, `bsv-script`, and `bsv-transaction` crates.
 
 Source reference: [dxs-stas-sdk](https://github.com/dxsapp/dxs-stas-sdk) (TypeScript)
@@ -15,19 +15,19 @@ crates/bsv-tokens/
 └── src/
     ├── lib.rs                  # Public API re-exports
     ├── scheme.rs               # TokenScheme definition
-    ├── script_type.rs          # ScriptType enum (P2PKH, STAS, DSTAS, OpReturn, Unknown)
+    ├── script_type.rs          # ScriptType enum (P2PKH, STAS, STAS3, OpReturn, Unknown)
     │
     ├── script/
     │   ├── mod.rs
     │   ├── stas_builder.rs     # Build STAS locking scripts from token params
-    │   ├── dstas_builder.rs    # Build DSTAS (stas3-freeze-multisig) locking scripts
+    │   ├── stas3_builder.rs    # Build STAS3 (stas3-freeze-multisig) locking scripts
     │   ├── reader.rs           # Parse/classify locking scripts → ScriptType + parsed fields
-    │   └── templates.rs        # Known STAS/DSTAS script template byte patterns
+    │   └── templates.rs        # Known STAS/STAS3 script template byte patterns
     │
     ├── factory/
     │   ├── mod.rs
     │   ├── stas.rs             # STAS tx factories: issue, transfer, split, merge, redeem
-    │   ├── dstas.rs            # DSTAS tx factories: issue, transfer, freeze, unfreeze, swap
+    │   ├── stas3.rs            # STAS3 tx factories: issue, transfer, freeze, unfreeze, swap
     │   └── bundle.rs           # Bundle factory: automatic merge/split/transfer planning
     │
     └── types.rs                # Shared types: OutPoint wrapper, Payment, Destination, SpendType
@@ -43,7 +43,7 @@ pub struct TokenScheme {
     pub token_id: [u8; 20],     // issuer's Hash160
     pub symbol: String,
     pub version: u8,
-    pub divisible: bool,        // STAS vs DSTAS
+    pub divisible: bool,        // STAS vs STAS3
     pub freeze: bool,           // freeze/unfreeze capability
     pub authority: Option<Authority>,
 }
@@ -79,7 +79,7 @@ Maps to TS: `ScriptType` enum in `src/bitcoin/script-type.ts`
 
 **`stas_builder.rs`** — Constructs STAS locking scripts from a `TokenScheme` + owner address.
 
-**`dstas_builder.rs`** — Constructs DSTAS (stas3-freeze-multisig) locking scripts with:
+**`stas3_builder.rs`** — Constructs STAS3 (stas3-freeze-multisig) locking scripts with:
 - Owner hash (single or multisig preimage → hash160)
 - Action data (swap offers, etc.)
 - Redemption PKH (issuer's hash160 = token_id)
@@ -99,7 +99,7 @@ pub struct DstasLockingParams {
     pub optional_data: Vec<Vec<u8>>,
 }
 
-pub fn build_dstas_locking_script(params: &DstasLockingParams) -> Script;
+pub fn build_stas3_locking_script(params: &DstasLockingParams) -> Script;
 ```
 
 Maps to TS: `src/script/build/stas3-freeze-multisig-builder.ts`, `src/script/build/script-builder.ts`
@@ -110,7 +110,7 @@ Maps to TS: `src/script/build/stas3-freeze-multisig-builder.ts`, `src/script/bui
 pub struct ParsedScript {
     pub script_type: ScriptType,
     pub stas: Option<StasFields>,
-    pub dstas: Option<DstasFields>,
+    pub stas3: Option<DstasFields>,
 }
 
 pub struct DstasFields {
@@ -129,7 +129,7 @@ pub fn read_locking_script(script: &[u8]) -> ParsedScript;
 
 Maps to TS: `src/script/read/locking-script-reader.ts`
 
-**`templates.rs`** — Known STAS/DSTAS script template byte prefixes for classification.
+**`templates.rs`** — Known STAS/STAS3 script template byte prefixes for classification.
 
 Maps to TS: `src/script/script-samples.ts`
 
@@ -152,7 +152,7 @@ pub fn build_redeem_tx(req: &RedeemRequest) -> Result<Vec<u8>, TokenError>;
 
 Maps to TS: `src/transaction-factory.ts`
 
-### 5. `factory/dstas.rs` — DSTAS Transaction Factories
+### 5. `factory/stas3.rs` — STAS3 Transaction Factories
 
 More complex than STAS — supports spend types and multisig:
 
@@ -163,23 +163,23 @@ pub enum DstasSpendType {
     Swap = 4,
 }
 
-pub fn build_dstas_base_tx(req: &DstasBaseRequest) -> Result<Vec<u8>, TokenError>;
-pub fn build_dstas_issue_txs(req: &DstasIssueRequest) -> Result<DstasIssueTxs, TokenError>;
-pub fn build_dstas_freeze_tx(req: &DstasBaseRequest) -> Result<Vec<u8>, TokenError>;
-pub fn build_dstas_unfreeze_tx(req: &DstasBaseRequest) -> Result<Vec<u8>, TokenError>;
-pub fn build_dstas_swap_flow_tx(req: &DstasSwapFlowRequest) -> Result<Vec<u8>, TokenError>;
+pub fn build_stas3_base_tx(req: &DstasBaseRequest) -> Result<Vec<u8>, TokenError>;
+pub fn build_stas3_issue_txs(req: &DstasIssueRequest) -> Result<DstasIssueTxs, TokenError>;
+pub fn build_stas3_freeze_tx(req: &DstasBaseRequest) -> Result<Vec<u8>, TokenError>;
+pub fn build_stas3_unfreeze_tx(req: &DstasBaseRequest) -> Result<Vec<u8>, TokenError>;
+pub fn build_stas3_swap_flow_tx(req: &DstasSwapFlowRequest) -> Result<Vec<u8>, TokenError>;
 ```
 
-**DSTAS issue is a two-tx flow:**
+**STAS3 issue is a two-tx flow:**
 1. **Contract TX**: funding UTXO → P2PKH output (with scheme metadata in OP_RETURN) + fee change
-2. **Issue TX**: contract output + fee change → DSTAS token outputs + fee change
+2. **Issue TX**: contract output + fee change → STAS3 token outputs + fee change
 
 **Swap modes:**
 - `transfer-swap`: one side uses spend_type=1, other consumed via swap matching
 - `swap-swap`: both sides use spend_type=4
 - Auto-detection based on action_data in locking scripts
 
-Maps to TS: `src/dstas-factory.ts`
+Maps to TS: `src/stas3-factory.ts`
 
 ### 6. `factory/bundle.rs` — Bundle Factory (Batch Planning)
 
@@ -205,7 +205,7 @@ impl BundleFactory {
 }
 ```
 
-**Planning algorithm (from TS `dstas-bundle-factory.ts`):**
+**Planning algorithm (from TS `stas3-bundle-factory.ts`):**
 1. Gather available STAS UTXOs from wallet
 2. If total available < total needed → error
 3. If UTXOs need consolidation → plan merge transactions (max 2 inputs per merge)
@@ -215,7 +215,7 @@ impl BundleFactory {
 
 This is generic over the UTXO provider — users supply async callbacks for fetching UTXOs and transactions from their indexer/backend.
 
-Maps to TS: `src/dstas-bundle-factory.ts` (~600 lines), `src/stas-bundle-factory.ts` (~300 lines)
+Maps to TS: `src/stas3-bundle-factory.ts` (~600 lines), `src/stas-bundle-factory.ts` (~300 lines)
 
 ### 7. `types.rs` — Shared Types
 
@@ -276,13 +276,13 @@ pub use bsv_tokens as tokens;
 |-------|-------|-------------|
 | T1 | `scheme.rs`, `script_type.rs`, `types.rs` — core data types | Small |
 | T2 | `script/templates.rs`, `script/reader.rs` — classify scripts | Medium |
-| T3 | `script/stas_builder.rs`, `script/dstas_builder.rs` — build scripts | Medium |
+| T3 | `script/stas_builder.rs`, `script/stas3_builder.rs` — build scripts | Medium |
 | T4 | `factory/stas.rs` — STAS issue/transfer/split/merge/redeem | Medium |
-| T5 | `factory/dstas.rs` — DSTAS issue/transfer/freeze/swap | Large |
+| T5 | `factory/stas3.rs` — STAS3 issue/transfer/freeze/swap | Large |
 | T6 | `factory/bundle.rs` — automatic batch planning (async) | Large |
 
 T1–T4 are self-contained and testable in isolation.
-T5 builds on T3 (DSTAS scripts).
+T5 builds on T3 (STAS3 scripts).
 T6 is the capstone — requires async runtime and external UTXO provider callbacks.
 
 ## Test Strategy

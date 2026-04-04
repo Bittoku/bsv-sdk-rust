@@ -18,10 +18,10 @@ However, no test ever calls `sign()` on a P2MPKH template. The entire signing co
 
 - `crates/bsv-transaction/src/template/p2mpkh.rs` — standalone P2MPKH template
 - `crates/bsv-tokens/src/template/stas.rs` — `StasMpkhUnlockingTemplate`
-- `crates/bsv-tokens/src/template/dstas.rs` — `DstasMpkhUnlockingTemplate`
+- `crates/bsv-tokens/src/template/stas3.rs` — `DstasMpkhUnlockingTemplate`
 - `crates/bsv-tokens/src/types.rs` — `SigningKey`, `OwnerAddress`, `Payment`, `TokenInput`
 - `crates/bsv-tokens/src/factory/stas.rs` — STAS factories (issue, transfer, split, merge, redeem)
-- `crates/bsv-tokens/src/factory/dstas.rs` — DSTAS factories
+- `crates/bsv-tokens/src/factory/stas3.rs` — STAS3 factories
 
 ## 2. Gaps to Fill
 
@@ -86,7 +86,7 @@ Adapt field names to match the actual struct definitions — check `bsv-transact
 
 ### Gap 2: `DstasMpkhUnlockingTemplate::sign()` — mirror of Gap 1
 
-**File:** `crates/bsv-tokens/src/template/dstas.rs`
+**File:** `crates/bsv-tokens/src/template/stas3.rs`
 
 Identical structure to STAS. Test at minimum:
 
@@ -150,7 +150,7 @@ The commit message claims "BTG factories reject P2MPKH with clear error (not yet
 The existing tests only check 2-of-3. Add:
 - 1-of-1: Verify formula produces correct value
 - 3-of-5: Verify formula produces correct value
-- For STAS/DSTAS: `m * 73 + 3 + n * 34 + 3`
+- For STAS/STAS3: `m * 73 + 3 + n * 34 + 3`
 - For standalone P2MPKH: `1 + m * 73` (OP_0 + sigs)
 
 ## 3. Implementation Notes
@@ -163,7 +163,7 @@ A practical approach: convert the script to bytes, then verify:
 - Total byte length is in expected range
 - For STAS P2MPKH: no OP_0 prefix; starts with a push-data (signature)
 - For standalone P2MPKH: starts with `OP_0` (0x00 or empty push)
-- The last N bytes match `multisig.to_bytes()` (for STAS/DSTAS only)
+- The last N bytes match `multisig.to_bytes()` (for STAS/STAS3 only)
 
 ### Signature byte verification
 

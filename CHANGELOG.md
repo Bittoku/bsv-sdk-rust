@@ -4,17 +4,17 @@
 
 ### New Features
 
-- **P2MPKH (Pay-to-Multiple-Public-Key-Hash)** — m-of-n multisig ownership for STAS/DSTAS tokens
+- **P2MPKH (Pay-to-Multiple-Public-Key-Hash)** — m-of-n multisig ownership for STAS/STAS3 tokens
   - `MultisigScript`: construct, serialize, parse, mpkh (HASH160), lock/unlock
   - `SigningKey` enum: `Single(PrivateKey)` | `Multi { private_keys, multisig }`
   - `OwnerAddress` enum: `Address(Address)` | `Mpkh([u8;20])`
   - `StasMpkhUnlockingTemplate`: produces `<sig1>…<sigM> <multisig_script>`
   - `DstasMpkhUnlockingTemplate`: same pattern with `DstasSpendType`
   - `unlock_from_signing_key()`: single dispatch for factories
-  - All STAS/DSTAS factories auto-dispatch P2PKH vs P2MPKH
+  - All STAS/STAS3 factories auto-dispatch P2PKH vs P2MPKH
   - BTG factories reject P2MPKH with clear error (not yet supported)
 
-- **DSTAS Full Operations**
+- **STAS3 Full Operations**
   - Split, merge, confiscation, and redeem operations
   - Transfer-swap, swap-swap modes with remainder legs and frozen rejection
   - `DstasBundleFactory`: automatic merge/split/transfer planning
@@ -35,4 +35,4 @@
 
 ## v0.1.0
 
-- Initial release — BSV SDK with primitives, script, transaction, wallet, message, auth, SPV, tokens (STAS/DSTAS/BTG), transports (ARC, JungleBus)
+- Initial release — BSV SDK with primitives, script, transaction, wallet, message, auth, SPV, tokens (STAS/STAS3/BTG), transports (ARC, JungleBus)
