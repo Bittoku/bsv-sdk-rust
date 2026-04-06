@@ -677,4 +677,288 @@ mod tests {
             let _ = is_stas(&script);
         }
     }
+
+    // ---------------------------------------------------------------
+    // read_push_data unit tests — one per opcode variant in the spec
+    // ---------------------------------------------------------------
+
+    /// OP_0 (0x00) returns (None, offset + 1) — empty push.
+    #[test]
+    fn read_push_data_op_0() {
+        let script = [0x00u8];
+        let (data, next) = read_push_data(&script, 0).unwrap();
+        assert!(data.is_none(), "OP_0 should return None (empty push)");
+        assert_eq!(next, 1);
+    }
+
+    /// Bare push 1 byte (0x01) returns (Some([0xAB]), offset + 2).
+    #[test]
+    fn read_push_data_bare_1_byte() {
+        let script = [0x01, 0xAB];
+        let (data, next) = read_push_data(&script, 0).unwrap();
+        assert_eq!(data.unwrap(), vec![0xAB]);
+        assert_eq!(next, 2);
+    }
+
+    /// Bare push 20 bytes (0x14) returns (Some([20 bytes]), offset + 21).
+    #[test]
+    fn read_push_data_bare_20_bytes() {
+        let mut script = vec![0x14];
+        let payload: Vec<u8> = (0..20).collect();
+        script.extend_from_slice(&payload);
+        let (data, next) = read_push_data(&script, 0).unwrap();
+        assert_eq!(data.unwrap(), payload);
+        assert_eq!(next, 21);
+    }
+
+    /// Bare push 75 bytes (0x4B) — max bare push — returns all 75 bytes.
+    #[test]
+    fn read_push_data_bare_75_bytes() {
+        let mut script = vec![0x4B];
+        let payload: Vec<u8> = (0..75).map(|i| (i * 3) as u8).collect();
+        script.extend_from_slice(&payload);
+        let (data, next) = read_push_data(&script, 0).unwrap();
+        assert_eq!(data.unwrap(), payload);
+        assert_eq!(next, 76);
+    }
+
+    /// OP_PUSHDATA1 (0x4C) with 3-byte payload.
+    #[test]
+    fn read_push_data_pushdata1() {
+        let script = [0x4C, 0x03, 0xAA, 0xBB, 0xCC];
+        let (data, next) = read_push_data(&script, 0).unwrap();
+        assert_eq!(data.unwrap(), vec![0xAA, 0xBB, 0xCC]);
+        assert_eq!(next, 5);
+    }
+
+    /// OP_PUSHDATA2 (0x4D) with 3-byte payload (LE length 0x0003).
+    #[test]
+    fn read_push_data_pushdata2() {
+        let script = [0x4D, 0x03, 0x00, 0xAA, 0xBB, 0xCC];
+        let (data, next) = read_push_data(&script, 0).unwrap();
+        assert_eq!(data.unwrap(), vec![0xAA, 0xBB, 0xCC]);
+        assert_eq!(next, 6);
+    }
+
+    /// OP_PUSHDATA4 (0x4E) with 2-byte payload (LE length 0x00000002).
+    #[test]
+    fn read_push_data_pushdata4() {
+        let script = [0x4E, 0x02, 0x00, 0x00, 0x00, 0xDD, 0xEE];
+        let (data, next) = read_push_data(&script, 0).unwrap();
+        assert_eq!(data.unwrap(), vec![0xDD, 0xEE]);
+        assert_eq!(next, 7);
+    }
+
+    /// OP_1NEGATE (0x4F) returns (Some([0x4F]), offset + 1).
+    #[test]
+    fn read_push_data_op_1negate() {
+        let script = [0x4F];
+        let (data, next) = read_push_data(&script, 0).unwrap();
+        assert_eq!(data.unwrap(), vec![0x4F]);
+        assert_eq!(next, 1);
+    }
+
+    /// OP_1 (0x51) returns (Some([0x51]), offset + 1).
+    #[test]
+    fn read_push_data_op_1() {
+        let script = [0x51];
+        let (data, next) = read_push_data(&script, 0).unwrap();
+        assert_eq!(data.unwrap(), vec![0x51]);
+        assert_eq!(next, 1);
+    }
+
+    /// OP_2 (0x52) returns (Some([0x52]), offset + 1) — frozen flag.
+    #[test]
+    fn read_push_data_op_2() {
+        let script = [0x52];
+        let (data, next) = read_push_data(&script, 0).unwrap();
+        assert_eq!(data.unwrap(), vec![0x52]);
+        assert_eq!(next, 1);
+    }
+
+    /// OP_16 (0x60) returns (Some([0x60]), offset + 1).
+    #[test]
+    fn read_push_data_op_16() {
+        let script = [0x60];
+        let (data, next) = read_push_data(&script, 0).unwrap();
+        assert_eq!(data.unwrap(), vec![0x60]);
+        assert_eq!(next, 1);
+    }
+
+    /// OP_3 (0x53) returns (Some([0x53]), offset + 1) — mid-range check.
+    #[test]
+    fn read_push_data_op_3() {
+        let script = [0x53];
+        let (data, next) = read_push_data(&script, 0).unwrap();
+        assert_eq!(data.unwrap(), vec![0x53]);
+        assert_eq!(next, 1);
+    }
+
+    /// Verify read_push_data respects a non-zero starting offset.
+    #[test]
+    fn read_push_data_with_nonzero_offset() {
+        let script = [0xFF, 0xFF, 0x01, 0xBE];
+        let (data, next) = read_push_data(&script, 2).unwrap();
+        assert_eq!(data.unwrap(), vec![0xBE]);
+        assert_eq!(next, 4);
+    }
+
+    /// read_push_data returns None when offset is past end of script.
+    #[test]
+    fn read_push_data_offset_past_end() {
+        let script = [0x01, 0xAA];
+        assert!(read_push_data(&script, 5).is_none());
+    }
+
+    /// read_push_data returns None when bare push length exceeds script.
+    #[test]
+    fn read_push_data_bare_truncated() {
+        let script = [0x05, 0xAA, 0xBB]; // claims 5 bytes but only 2 follow
+        assert!(read_push_data(&script, 0).is_none());
+    }
+
+    // ---------------------------------------------------------------
+    // Integration tests: STAS3 script with each opcode variant at
+    // the 2nd variable field position (byte 21), verified through
+    // read_stas3_fields (try_parse_stas3).
+    // ---------------------------------------------------------------
+
+    /// Build a minimal valid STAS3 script with the given action-data opcode
+    /// sequence starting at byte 21 (after OP_DATA_20 + 20 owner bytes).
+    ///
+    /// Layout:
+    ///   [0x14][20 owner bytes][action_data_bytes...][STAS3_BASE_PREFIX][padding to 2812 bytes, last byte 0x6a][OP_RETURN data: redemption + flags]
+    fn build_stas3_script(action_data_bytes: &[u8]) -> Vec<u8> {
+        let owner = [0xAA; 20];
+        let redemption = [0xBB; 20];
+        let flags: u8 = 0x01;
+
+        // Header: OP_DATA_20 + owner
+        let mut script = vec![0x14];
+        script.extend_from_slice(&owner);
+
+        // Action data opcode(s)
+        script.extend_from_slice(action_data_bytes);
+
+        // STAS3 base template: prefix bytes + filler + OP_RETURN at end
+        let prefix_and_action_len = script.len(); // bytes consumed so far
+        let template_body_len = STAS3_BASE_TEMPLATE_LEN; // 2812 bytes for the base template
+
+        // Start with the 4-byte prefix
+        script.extend_from_slice(&STAS3_BASE_PREFIX);
+
+        // Fill the remaining template bytes (template_body_len - 4 prefix - 1 OP_RETURN) with 0x00
+        let filler_len = template_body_len - 4 - 1;
+        script.extend(std::iter::repeat(0x00).take(filler_len));
+
+        // Last byte of template is OP_RETURN
+        script.push(0x6a);
+
+        // After OP_RETURN: redemption PKH (push 20 bytes) + flags (push 1 byte)
+        script.push(0x14); // OP_DATA_20
+        script.extend_from_slice(&redemption);
+        script.push(0x01); // OP_DATA_1
+        script.push(flags);
+
+        let _ = prefix_and_action_len; // suppress unused warning
+        script
+    }
+
+    /// Verify that try_parse_stas3 correctly extracts action_data_raw for
+    /// each opcode variant placed in the 2nd variable field.
+    #[test]
+    fn stas3_action_data_op_0() {
+        let script = build_stas3_script(&[0x00]); // OP_0
+        let fields = try_parse_stas3(&script).expect("should parse STAS3 with OP_0 action data");
+        assert_eq!(fields.owner, [0xAA; 20]);
+        assert!(
+            fields.action_data_raw.is_none(),
+            "OP_0 action data should be None"
+        );
+        assert_eq!(fields.redemption, [0xBB; 20]);
+    }
+
+    #[test]
+    fn stas3_action_data_bare_1_byte() {
+        let script = build_stas3_script(&[0x01, 0xDE]); // bare push 1 byte
+        let fields = try_parse_stas3(&script)
+            .expect("should parse STAS3 with bare 1-byte action data");
+        assert_eq!(fields.action_data_raw.as_deref(), Some(&[0xDE][..]));
+    }
+
+    #[test]
+    fn stas3_action_data_bare_20_bytes() {
+        let mut action = vec![0x14]; // bare push 20 bytes
+        action.extend_from_slice(&[0xEE; 20]);
+        let script = build_stas3_script(&action);
+        let fields = try_parse_stas3(&script)
+            .expect("should parse STAS3 with bare 20-byte action data");
+        assert_eq!(fields.action_data_raw.as_deref(), Some(&[0xEE; 20][..]));
+    }
+
+    #[test]
+    fn stas3_action_data_pushdata1() {
+        let script = build_stas3_script(&[0x4C, 0x02, 0xCA, 0xFE]); // OP_PUSHDATA1, len=2
+        let fields = try_parse_stas3(&script)
+            .expect("should parse STAS3 with OP_PUSHDATA1 action data");
+        assert_eq!(fields.action_data_raw.as_deref(), Some(&[0xCA, 0xFE][..]));
+    }
+
+    #[test]
+    fn stas3_action_data_pushdata2() {
+        let script = build_stas3_script(&[0x4D, 0x02, 0x00, 0xCA, 0xFE]); // OP_PUSHDATA2, len=2
+        let fields = try_parse_stas3(&script)
+            .expect("should parse STAS3 with OP_PUSHDATA2 action data");
+        assert_eq!(fields.action_data_raw.as_deref(), Some(&[0xCA, 0xFE][..]));
+    }
+
+    #[test]
+    fn stas3_action_data_pushdata4() {
+        let script =
+            build_stas3_script(&[0x4E, 0x02, 0x00, 0x00, 0x00, 0xCA, 0xFE]); // OP_PUSHDATA4, len=2
+        let fields = try_parse_stas3(&script)
+            .expect("should parse STAS3 with OP_PUSHDATA4 action data");
+        assert_eq!(fields.action_data_raw.as_deref(), Some(&[0xCA, 0xFE][..]));
+    }
+
+    #[test]
+    fn stas3_action_data_op_1negate() {
+        let script = build_stas3_script(&[0x4F]); // OP_1NEGATE
+        let fields = try_parse_stas3(&script)
+            .expect("should parse STAS3 with OP_1NEGATE action data");
+        assert_eq!(fields.action_data_raw.as_deref(), Some(&[0x4F][..]));
+    }
+
+    #[test]
+    fn stas3_action_data_op_1() {
+        let script = build_stas3_script(&[0x51]); // OP_1
+        let fields =
+            try_parse_stas3(&script).expect("should parse STAS3 with OP_1 action data");
+        assert_eq!(fields.action_data_raw.as_deref(), Some(&[0x51][..]));
+    }
+
+    #[test]
+    fn stas3_action_data_op_2_frozen() {
+        let script = build_stas3_script(&[0x52]); // OP_2 — frozen flag
+        let fields =
+            try_parse_stas3(&script).expect("should parse STAS3 with OP_2 action data");
+        assert_eq!(fields.action_data_raw.as_deref(), Some(&[0x52][..]));
+        assert!(fields.frozen, "OP_2 action data should set frozen = true");
+    }
+
+    #[test]
+    fn stas3_action_data_op_3() {
+        let script = build_stas3_script(&[0x53]); // OP_3
+        let fields =
+            try_parse_stas3(&script).expect("should parse STAS3 with OP_3 action data");
+        assert_eq!(fields.action_data_raw.as_deref(), Some(&[0x53][..]));
+    }
+
+    #[test]
+    fn stas3_action_data_op_16() {
+        let script = build_stas3_script(&[0x60]); // OP_16
+        let fields =
+            try_parse_stas3(&script).expect("should parse STAS3 with OP_16 action data");
+        assert_eq!(fields.action_data_raw.as_deref(), Some(&[0x60][..]));
+    }
 }
