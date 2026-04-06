@@ -251,6 +251,16 @@ fn try_parse_stas3(script: &[u8]) -> Option<Stas3Fields> {
 }
 
 /// Read a single push data item from script at the given offset.
+///
+/// Handles all Bitcoin push opcodes per the STAS 3.0 specification:
+/// - OP_0 (0x00): returns None (empty push)
+/// - Bare push (0x01-0x4b): opcode is the byte length of following data
+/// - OP_PUSHDATA1 (0x4c): 1-byte length prefix
+/// - OP_PUSHDATA2 (0x4d): 2-byte LE length prefix
+/// - OP_PUSHDATA4 (0x4e): 4-byte LE length prefix
+/// - OP_1NEGATE (0x4f): returns the opcode byte (push value -1)
+/// - OP_1-OP_16 (0x51-0x60): returns the opcode byte (push values 1-16)
+///
 /// Returns (data_or_none, next_offset).
 fn read_push_data(script: &[u8], offset: usize) -> Option<(Option<Vec<u8>>, usize)> {
     if offset >= script.len() {
@@ -259,11 +269,10 @@ fn read_push_data(script: &[u8], offset: usize) -> Option<(Option<Vec<u8>>, usiz
 
     let opcode = script[offset];
     match opcode {
-        // OP_0
+        // OP_0: pushes empty byte string
         0x00 => Some((None, offset + 1)),
-        // OP_2 (used for frozen flag)
-        0x52 => Some((Some(vec![0x52]), offset + 1)),
-        // Direct push: 1-75 bytes
+
+        // Direct push: 1-75 bytes (opcode IS the length)
         0x01..=0x4b => {
             let len = opcode as usize;
             let end = offset + 1 + len;
@@ -272,7 +281,8 @@ fn read_push_data(script: &[u8], offset: usize) -> Option<(Option<Vec<u8>>, usiz
             }
             Some((Some(script[offset + 1..end].to_vec()), end))
         }
-        // OP_PUSHDATA1
+
+        // OP_PUSHDATA1: next 1 byte is length
         0x4c => {
             if offset + 1 >= script.len() {
                 return None;
@@ -284,7 +294,8 @@ fn read_push_data(script: &[u8], offset: usize) -> Option<(Option<Vec<u8>>, usiz
             }
             Some((Some(script[offset + 2..end].to_vec()), end))
         }
-        // OP_PUSHDATA2
+
+        // OP_PUSHDATA2: next 2 bytes (LE) are length
         0x4d => {
             if offset + 2 >= script.len() {
                 return None;
@@ -296,11 +307,49 @@ fn read_push_data(script: &[u8], offset: usize) -> Option<(Option<Vec<u8>>, usiz
             }
             Some((Some(script[offset + 3..end].to_vec()), end))
         }
+
+        // OP_PUSHDATA4: next 4 bytes (LE) are length
+        0x4e => {
+            if offset + 4 >= script.len() {
+                return None;
+            }
+            let len = u32::from_le_bytes([
+                script[offset + 1],
+                script[offset + 2],
+                script[offset + 3],
+                script[offset + 4],
+            ]) as usize;
+            let end = offset + 5 + len;
+            if end > script.len() {
+                return None;
+            }
+            Some((Some(script[offset + 5..end].to_vec()), end))
+        }
+
+        // OP_1NEGATE (0x4f): pushes -1, single byte opcode, no following data
+        0x4f => Some((Some(vec![0x4f]), offset + 1)),
+
+        // OP_1 through OP_16 (0x51-0x60): push respective values 1-16.
+        // Single byte opcodes, no following data. Return the opcode byte
+        // so downstream code can identify the push value.
+        0x51..=0x60 => Some((Some(vec![opcode]), offset + 1)),
+
+        // Unknown opcode: skip 1 byte, return None
         _ => Some((None, offset + 1)),
     }
 }
 
 /// Parse consecutive push data items from a byte slice.
+///
+/// Handles all Bitcoin push opcodes per the STAS 3.0 specification:
+/// - OP_0 (0x00): pushes `[0x00]`
+/// - Bare push (0x01-0x4b): opcode is the byte length of following data
+/// - OP_PUSHDATA1 (0x4c): 1-byte length prefix
+/// - OP_PUSHDATA2 (0x4d): 2-byte LE length prefix
+/// - OP_PUSHDATA4 (0x4e): 4-byte LE length prefix
+/// - OP_1NEGATE (0x4f), OP_1-OP_16 (0x51-0x60): single-byte value opcodes
+///
+/// Returns a vector of extracted data items.
 fn parse_push_data_items(data: &[u8]) -> Vec<Vec<u8>> {
     let mut items = Vec::new();
     let mut offset = 0;
@@ -308,10 +357,12 @@ fn parse_push_data_items(data: &[u8]) -> Vec<Vec<u8>> {
     while offset < data.len() {
         let opcode = data[offset];
         match opcode {
+            // OP_0: pushes empty/zero marker
             0x00 => {
                 items.push(vec![0x00]);
                 offset += 1;
             }
+            // Bare push: 1-75 bytes (opcode IS the length)
             0x01..=0x4b => {
                 let len = opcode as usize;
                 let end = offset + 1 + len;
@@ -321,6 +372,7 @@ fn parse_push_data_items(data: &[u8]) -> Vec<Vec<u8>> {
                 items.push(data[offset + 1..end].to_vec());
                 offset = end;
             }
+            // OP_PUSHDATA1: next 1 byte is length
             0x4c => {
                 if offset + 1 >= data.len() {
                     break;
@@ -333,6 +385,7 @@ fn parse_push_data_items(data: &[u8]) -> Vec<Vec<u8>> {
                 items.push(data[offset + 2..end].to_vec());
                 offset = end;
             }
+            // OP_PUSHDATA2: next 2 bytes (LE) are length
             0x4d => {
                 if offset + 2 >= data.len() {
                     break;
@@ -345,8 +398,27 @@ fn parse_push_data_items(data: &[u8]) -> Vec<Vec<u8>> {
                 items.push(data[offset + 3..end].to_vec());
                 offset = end;
             }
+            // OP_PUSHDATA4: next 4 bytes (LE) are length
+            0x4e => {
+                if offset + 4 >= data.len() {
+                    break;
+                }
+                let len = u32::from_le_bytes([
+                    data[offset + 1],
+                    data[offset + 2],
+                    data[offset + 3],
+                    data[offset + 4],
+                ]) as usize;
+                let end = offset + 5 + len;
+                if end > data.len() {
+                    break;
+                }
+                items.push(data[offset + 5..end].to_vec());
+                offset = end;
+            }
             _ => {
-                // Non-push opcode or OP_1-OP_16
+                // OP_1NEGATE (0x4f), OP_1-OP_16 (0x51-0x60), or other
+                // single-byte opcodes: push the opcode byte as the value
                 items.push(vec![opcode]);
                 offset += 1;
             }
