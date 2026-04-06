@@ -84,6 +84,15 @@ pub fn read_locking_script(script: &[u8]) -> ParsedScript {
         };
     }
 
+    // P2MPKH (bare multisig): OP_m <pk1>...<pkN> OP_n OP_CHECKMULTISIG
+    if is_p2mpkh(script) {
+        return ParsedScript {
+            script_type: ScriptType::P2Mpkh,
+            stas: None,
+            stas3: None,
+        };
+    }
+
     // OP_RETURN
     if !script.is_empty() && script[0] == 0x6a {
         return ParsedScript {
@@ -112,6 +121,62 @@ pub fn read_locking_script(script: &[u8]) -> ParsedScript {
 /// Check if a script is a STAS v2 token script.
 pub fn is_stas(script: &[u8]) -> bool {
     is_stas_v2(script)
+}
+
+/// Check if a script is a bare multisig (P2MPKH) locking script.
+///
+/// Matches the canonical pattern:
+/// `OP_m <pk1_33bytes> ... <pkN_33bytes> OP_n OP_CHECKMULTISIG`
+///
+/// where OP_m and OP_n are small-integer opcodes (OP_1=0x51 through
+/// OP_16=0x60), each public key push is OP_DATA_33 (0x21) followed by
+/// 33 bytes, and the last byte is OP_CHECKMULTISIG (0xae).
+pub fn is_p2mpkh(script: &[u8]) -> bool {
+    // Minimum: OP_m + (OP_DATA_33 + 33 bytes) + OP_n + OP_CHECKMULTISIG = 37
+    if script.len() < 37 {
+        return false;
+    }
+
+    // Last byte: OP_CHECKMULTISIG (0xae)
+    if *script.last().unwrap() != 0xae {
+        return false;
+    }
+
+    // First byte: OP_m (must be OP_1..OP_16 = 0x51..0x60)
+    let m_op = script[0];
+    if !(0x51..=0x60).contains(&m_op) {
+        return false;
+    }
+    let m = (m_op - 0x50) as usize;
+
+    // Second-to-last byte: OP_n (must be OP_1..OP_16)
+    let n_op = script[script.len() - 2];
+    if !(0x51..=0x60).contains(&n_op) {
+        return false;
+    }
+    let n = (n_op - 0x50) as usize;
+
+    // m must be <= n
+    if m > n {
+        return false;
+    }
+
+    // Key section: between OP_m and OP_n, should be exactly n * 34 bytes
+    // (each key = OP_DATA_33 + 33 bytes).
+    let key_section_len = script.len() - 3; // subtract OP_m, OP_n, OP_CHECKMULTISIG
+    if key_section_len != n * 34 {
+        return false;
+    }
+
+    // Verify each key slot starts with OP_DATA_33 (0x21).
+    for i in 0..n {
+        let offset = 1 + i * 34;
+        if script[offset] != 0x21 {
+            return false;
+        }
+    }
+
+    true
 }
 
 /// Check STAS v2 identification bytes.
@@ -499,6 +564,52 @@ mod tests {
         let parsed = read_locking_script(&script);
         assert_eq!(parsed.script_type, ScriptType::P2pkh);
         assert!(parsed.stas.is_none());
+    }
+
+    #[test]
+    fn classify_p2mpkh_2_of_3() {
+        // Build a 2-of-3 bare multisig script:
+        // OP_2 <pk1_33> <pk2_33> <pk3_33> OP_3 OP_CHECKMULTISIG
+        let mut script = vec![0x52]; // OP_2
+        for _ in 0..3 {
+            script.push(0x21); // OP_DATA_33
+            // Dummy 33-byte compressed pubkey (02 prefix + 32 bytes)
+            script.push(0x02);
+            script.extend_from_slice(&[0xab; 32]);
+        }
+        script.push(0x53); // OP_3
+        script.push(0xae); // OP_CHECKMULTISIG
+
+        let parsed = read_locking_script(&script);
+        assert_eq!(parsed.script_type, ScriptType::P2Mpkh);
+        assert!(parsed.stas.is_none());
+        assert!(parsed.stas3.is_none());
+    }
+
+    #[test]
+    fn classify_p2mpkh_1_of_1() {
+        // OP_1 <pk_33> OP_1 OP_CHECKMULTISIG = 37 bytes
+        let mut script = vec![0x51]; // OP_1
+        script.push(0x21);
+        script.push(0x02);
+        script.extend_from_slice(&[0xcd; 32]);
+        script.push(0x51); // OP_1
+        script.push(0xae); // OP_CHECKMULTISIG
+
+        let parsed = read_locking_script(&script);
+        assert_eq!(parsed.script_type, ScriptType::P2Mpkh);
+    }
+
+    #[test]
+    fn is_p2mpkh_false_for_p2pkh() {
+        let script = hex::decode("76a91489abcdefabbaabbaabbaabbaabbaabbaabbaabba88ac").unwrap();
+        assert!(!is_p2mpkh(&script));
+    }
+
+    #[test]
+    fn is_p2mpkh_false_for_short_script() {
+        assert!(!is_p2mpkh(&[0x51, 0xae]));
+        assert!(!is_p2mpkh(&[]));
     }
 
     #[test]

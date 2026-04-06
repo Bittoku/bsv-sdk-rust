@@ -7,6 +7,12 @@ use std::fmt;
 pub enum ScriptType {
     /// Standard Pay-to-Public-Key-Hash script.
     P2pkh,
+    /// Pay-to-Multiple-Public-Key-Hash (bare multisig) script.
+    ///
+    /// Detected by the pattern: `OP_m <pk1> ... <pkN> OP_n OP_CHECKMULTISIG`
+    /// where m and n are small-integer opcodes (OP_1 through OP_16) and each
+    /// public key is a 33-byte compressed SEC1 push.
+    P2Mpkh,
     /// STAS token script.
     Stas,
     /// STAS-BTG (Back-to-Genesis) token script with on-chain prev-TX verification.
@@ -23,6 +29,7 @@ impl fmt::Display for ScriptType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             ScriptType::P2pkh => write!(f, "P2PKH"),
+            ScriptType::P2Mpkh => write!(f, "P2MPKH"),
             ScriptType::Stas => write!(f, "STAS"),
             ScriptType::StasBtg => write!(f, "STAS-BTG"),
             ScriptType::Stas3 => write!(f, "STAS 3.0"),

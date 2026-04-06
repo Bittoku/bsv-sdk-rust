@@ -10,7 +10,7 @@ use bsv_script::opcodes::{OP_FALSE, OP_RETURN};
 use bsv_script::Script;
 use bsv_transaction::input::TransactionInput;
 use bsv_transaction::output::TransactionOutput;
-use bsv_transaction::template::p2pkh;
+use bsv_transaction::template::{p2pkh, p2mpkh};
 use bsv_transaction::template::UnlockingScriptTemplate;
 use bsv_transaction::transaction::Transaction;
 
@@ -36,6 +36,12 @@ pub struct Stas3IssueOutput {
 }
 
 /// Configuration for STAS3 issuance (two-transaction flow).
+///
+/// Accepts a `SigningKey` for the funding input so that issuance can be
+/// performed from either a P2PKH or P2MPKH funding UTXO. The contract
+/// output locking script is dispatched accordingly:
+/// - `SigningKey::Single` produces a P2PKH contract output.
+/// - `SigningKey::Multi` produces a bare multisig (P2MPKH) contract output.
 pub struct Stas3IssueConfig {
     /// The token scheme to embed.
     pub scheme: TokenScheme,
@@ -47,8 +53,9 @@ pub struct Stas3IssueConfig {
     pub funding_satoshis: u64,
     /// Funding UTXO locking script.
     pub funding_locking_script: Script,
-    /// Private key to sign funding input.
-    pub funding_private_key: PrivateKey,
+    /// Signing key for the funding input. Use `SigningKey::Single` for P2PKH
+    /// or `SigningKey::Multi` for P2MPKH funding UTXOs.
+    pub funding_key: SigningKey,
     /// Token outputs to create.
     pub outputs: Vec<Stas3IssueOutput>,
     /// Fee rate in satoshis per kilobyte.
@@ -193,11 +200,25 @@ pub struct Stas3ConfiscateConfig {
     pub fee_rate: u64,
 }
 
+/// Classification of redeem output address type.
+///
+/// Controls whether the redeem output uses a P2PKH or P2MPKH (bare multisig)
+/// locking script.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RedeemAddressType {
+    /// Standard Pay-to-Public-Key-Hash redeem output (default).
+    #[default]
+    P2pkh,
+    /// Pay-to-Multiple-Public-Key-Hash (bare multisig) redeem output.
+    P2mpkh,
+}
+
 /// Configuration for a STAS3 redeem transaction.
 ///
-/// Redeems a single STAS token by returning its satoshis to a P2PKH output.
-/// Only the token issuer (owner_pkh == redemption_pkh) may redeem. Frozen
-/// tokens cannot be redeemed. Uses spending type 1 (regular transfer).
+/// Redeems a single STAS token by returning its satoshis to a P2PKH or
+/// P2MPKH output. Only the token issuer (owner_pkh == redemption_pkh) may
+/// redeem. Frozen tokens cannot be redeemed. Uses spending type 1 (regular
+/// transfer).
 ///
 /// Conservation: `stas_input_sats == redeem_sats + sum(remaining STAS outputs)`.
 pub struct Stas3RedeemConfig {
@@ -213,7 +234,7 @@ pub struct Stas3RedeemConfig {
     pub fee_locking_script: Script,
     /// Fee UTXO private key.
     pub fee_private_key: PrivateKey,
-    /// Satoshis to redeem to P2PKH output.
+    /// Satoshis to redeem to the redeem output.
     pub redeem_satoshis: u64,
     /// Public key hash of the redemption address (must match the token's
     /// `redemption_pkh`, which must also match the token input `owner_pkh`).
@@ -225,6 +246,11 @@ pub struct Stas3RedeemConfig {
     pub remaining_outputs: Vec<Stas3OutputParams>,
     /// Fee rate in satoshis per kilobyte.
     pub fee_rate: u64,
+    /// Address type for the redeem output. Defaults to P2PKH. Set to
+    /// `RedeemAddressType::P2mpkh` for multisig-owned redemptions — requires
+    /// the token input `signing_key` to be `SigningKey::Multi` so the
+    /// multisig script can be extracted.
+    pub redeem_address_type: RedeemAddressType,
 }
 
 // -----------------------------------------------------------------------
@@ -239,6 +265,84 @@ fn estimate_size(num_inputs: usize, outputs: &[TransactionOutput]) -> usize {
         size += 8 + 1 + output.locking_script.len();
     }
     size
+}
+
+/// Produce a locking script appropriate for the given signing key.
+///
+/// Dispatches to P2PKH for `SigningKey::Single` and bare multisig
+/// (P2MPKH) for `SigningKey::Multi`.
+fn lock_from_signing_key(key: &SigningKey) -> Result<Script, TokenError> {
+    match key {
+        SigningKey::Single(pk) => {
+            let pkh = bsv_primitives::hash::hash160(&pk.pub_key().to_compressed());
+            let addr = bsv_script::Address::from_public_key_hash(
+                &pkh,
+                bsv_script::Network::Mainnet,
+            );
+            Ok(p2pkh::lock(&addr)?)
+        }
+        SigningKey::Multi { multisig, .. } => Ok(p2mpkh::lock(multisig)?),
+    }
+}
+
+/// Sign a transaction input using the appropriate template for the key.
+///
+/// Dispatches to P2PKH unlocking for `SigningKey::Single` and P2MPKH
+/// unlocking for `SigningKey::Multi`.
+fn sign_with_key(
+    key: &SigningKey,
+    tx: &mut Transaction,
+    input_index: usize,
+) -> Result<(), TokenError> {
+    match key {
+        SigningKey::Single(pk) => {
+            let unlocker = p2pkh::unlock(pk.clone(), None);
+            let sig = unlocker.sign(tx, input_index as u32)?;
+            tx.inputs[input_index].unlocking_script = Some(sig);
+        }
+        SigningKey::Multi {
+            private_keys,
+            multisig,
+        } => {
+            let unlocker = p2mpkh::unlock(private_keys.clone(), multisig.clone(), None)?;
+            let sig = unlocker.sign(tx, input_index as u32)?;
+            tx.inputs[input_index].unlocking_script = Some(sig);
+        }
+    }
+    Ok(())
+}
+
+/// Add a change output using the signing key to derive the change address.
+///
+/// Works like [`add_fee_change`] but dispatches locking script type based
+/// on the `SigningKey` variant (P2PKH or P2MPKH).
+fn add_fee_change_from_key(
+    tx: &mut Transaction,
+    fee_satoshis: u64,
+    key: &SigningKey,
+    fee_rate: u64,
+) -> Result<(), TokenError> {
+    let est_size = estimate_size(tx.inputs.len(), &tx.outputs) + 34;
+    let fee = (est_size as u64 * fee_rate).div_ceil(1000);
+
+    if fee_satoshis < fee {
+        return Err(TokenError::InsufficientFunds {
+            needed: fee,
+            available: fee_satoshis,
+        });
+    }
+
+    let change = fee_satoshis - fee;
+    if change > 0 {
+        let change_script = lock_from_signing_key(key)?;
+        tx.add_output(TransactionOutput {
+            satoshis: change,
+            locking_script: change_script,
+            change: true,
+        });
+    }
+
+    Ok(())
 }
 
 /// Add a change output for the fee payer. Returns error if insufficient funds.
@@ -306,11 +410,8 @@ pub fn build_stas3_issue_txs(config: &Stas3IssueConfig) -> Result<Stas3IssueTxs,
         ));
     }
 
-    // Derive issuer address from funding key
-    let issuer_pkh =
-        bsv_primitives::hash::hash160(&config.funding_private_key.pub_key().to_compressed());
-    let issuer_address =
-        bsv_script::Address::from_public_key_hash(&issuer_pkh, bsv_script::Network::Mainnet);
+    // Derive issuer hash from funding key (PKH for Single, MPKH for Multi).
+    let issuer_pkh = config.funding_key.hash160();
 
     // --- Contract TX ---
     let mut contract_tx = Transaction::new();
@@ -326,8 +427,10 @@ pub fn build_stas3_issue_txs(config: &Stas3IssueConfig) -> Result<Stas3IssueTxs,
     }));
     contract_tx.add_input(fund_input);
 
-    // Output 0: contract P2PKH
-    let contract_script = p2pkh::lock(&issuer_address)?;
+    // Output 0: contract locking script — P2PKH for single key, bare
+    // multisig for multi key. The contract output holds the total token
+    // satoshis and is spent by the issue TX.
+    let contract_script = lock_from_signing_key(&config.funding_key)?;
     contract_tx.add_output(TransactionOutput {
         satoshis: total_tokens,
         locking_script: contract_script,
@@ -359,7 +462,7 @@ pub fn build_stas3_issue_txs(config: &Stas3IssueConfig) -> Result<Stas3IssueTxs,
 
     let contract_change = config.funding_satoshis - total_tokens - contract_fee;
     if contract_change > 0 {
-        let change_script = p2pkh::lock(&issuer_address)?;
+        let change_script = lock_from_signing_key(&config.funding_key)?;
         contract_tx.add_output(TransactionOutput {
             satoshis: contract_change,
             locking_script: change_script,
@@ -367,10 +470,8 @@ pub fn build_stas3_issue_txs(config: &Stas3IssueConfig) -> Result<Stas3IssueTxs,
         });
     }
 
-    // Sign contract TX
-    let contract_unlocker = p2pkh::unlock(config.funding_private_key.clone(), None);
-    let contract_sig = contract_unlocker.sign(&contract_tx, 0)?;
-    contract_tx.inputs[0].unlocking_script = Some(contract_sig);
+    // Sign contract TX — dispatch based on signing key variant.
+    sign_with_key(&config.funding_key, &mut contract_tx, 0)?;
 
     // --- Issue TX ---
     let contract_txid = Hash::from_bytes(&contract_tx.tx_id())
@@ -379,7 +480,7 @@ pub fn build_stas3_issue_txs(config: &Stas3IssueConfig) -> Result<Stas3IssueTxs,
     let mut issue_tx = Transaction::new();
 
     // Input 0: contract output
-    let contract_output_script = p2pkh::lock(&issuer_address)?;
+    let contract_output_script = lock_from_signing_key(&config.funding_key)?;
     let mut contract_input = TransactionInput::new();
     contract_input.source_txid = *contract_txid.as_bytes();
     contract_input.source_tx_out_index = 0;
@@ -392,7 +493,7 @@ pub fn build_stas3_issue_txs(config: &Stas3IssueConfig) -> Result<Stas3IssueTxs,
 
     // Input 1: change from contract TX (for fees) — only if there was change
     let fee_available = if contract_change > 0 {
-        let change_script = p2pkh::lock(&issuer_address)?;
+        let change_script = lock_from_signing_key(&config.funding_key)?;
         let mut change_input = TransactionInput::new();
         change_input.source_txid = *contract_txid.as_bytes();
         change_input.source_tx_out_index = 2; // change is output index 2
@@ -430,19 +531,17 @@ pub fn build_stas3_issue_txs(config: &Stas3IssueConfig) -> Result<Stas3IssueTxs,
 
     // Issue TX fee change
     if fee_available > 0 {
-        add_fee_change(
+        add_fee_change_from_key(
             &mut issue_tx,
             fee_available,
-            &config.funding_private_key,
+            &config.funding_key,
             config.fee_rate,
         )?;
     }
 
-    // Sign issue TX — all inputs are P2PKH (issuer key)
+    // Sign issue TX — all inputs use the same funding key (P2PKH or P2MPKH).
     for i in 0..issue_tx.inputs.len() {
-        let unlocker = p2pkh::unlock(config.funding_private_key.clone(), None);
-        let sig = unlocker.sign(&issue_tx, i as u32)?;
-        issue_tx.inputs[i].unlocking_script = Some(sig);
+        sign_with_key(&config.funding_key, &mut issue_tx, i)?;
     }
 
     Ok(Stas3IssueTxs {
@@ -825,12 +924,29 @@ pub fn build_stas3_redeem_tx(config: Stas3RedeemConfig) -> Result<Transaction, T
     }));
     tx.add_input(fee_input);
 
-    // Output 0: P2PKH redeem
-    let redeem_address = bsv_script::Address::from_public_key_hash(
-        &config.redemption_pkh,
-        bsv_script::Network::Mainnet,
-    );
-    let redeem_script = p2pkh::lock(&redeem_address)?;
+    // Output 0: redeem output — dispatched by address type.
+    let redeem_script = match config.redeem_address_type {
+        RedeemAddressType::P2pkh => {
+            let redeem_address = bsv_script::Address::from_public_key_hash(
+                &config.redemption_pkh,
+                bsv_script::Network::Mainnet,
+            );
+            p2pkh::lock(&redeem_address)?
+        }
+        RedeemAddressType::P2mpkh => {
+            // Extract the multisig script from the token input's signing key.
+            // P2MPKH redeem requires the signing key to carry the multisig
+            // configuration so we can produce the bare multisig locking script.
+            match &config.token_input.signing_key {
+                SigningKey::Multi { multisig, .. } => p2mpkh::lock(multisig)?,
+                SigningKey::Single(_) => {
+                    return Err(TokenError::InvalidScript(
+                        "P2MPKH redeem requires a Multi signing key".into(),
+                    ));
+                }
+            }
+        }
+    };
     tx.add_output(TransactionOutput {
         satoshis: config.redeem_satoshis,
         locking_script: redeem_script,
@@ -937,7 +1053,7 @@ mod tests {
             funding_vout: 0,
             funding_satoshis: 100_000,
             funding_locking_script: test_p2pkh_script(&key),
-            funding_private_key: key,
+            funding_key: SigningKey::Single(key),
             outputs: vec![
                 Stas3IssueOutput {
                     satoshis: 5000,
@@ -985,7 +1101,7 @@ mod tests {
             funding_vout: 0,
             funding_satoshis: 100_000,
             funding_locking_script: test_p2pkh_script(&key),
-            funding_private_key: key,
+            funding_key: SigningKey::Single(key),
             outputs: vec![Stas3IssueOutput {
                 satoshis: 10000,
                 owner_pkh: [0x11; 20],
@@ -1010,7 +1126,7 @@ mod tests {
             funding_vout: 0,
             funding_satoshis: 100_000,
             funding_locking_script: test_p2pkh_script(&key),
-            funding_private_key: key,
+            funding_key: SigningKey::Single(key),
             outputs: vec![],
             fee_rate: 500,
         };
@@ -1027,7 +1143,7 @@ mod tests {
             funding_vout: 0,
             funding_satoshis: 100, // too low
             funding_locking_script: test_p2pkh_script(&key),
-            funding_private_key: key,
+            funding_key: SigningKey::Single(key),
             outputs: vec![Stas3IssueOutput {
                 satoshis: 10000,
                 owner_pkh: [0x11; 20],
@@ -1894,6 +2010,7 @@ mod tests {
             input_frozen: frozen,
             remaining_outputs: remaining,
             fee_rate: 500,
+            redeem_address_type: RedeemAddressType::P2pkh,
         }
     }
 
@@ -1985,6 +2102,7 @@ mod tests {
             input_frozen: false,
             remaining_outputs: vec![],
             fee_rate: 500,
+            redeem_address_type: RedeemAddressType::P2pkh,
         };
 
         let result = build_stas3_redeem_tx(config);
