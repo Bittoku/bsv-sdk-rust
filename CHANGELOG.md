@@ -9,7 +9,7 @@
   - `SigningKey` enum: `Single(PrivateKey)` | `Multi { private_keys, multisig }`
   - `OwnerAddress` enum: `Address(Address)` | `Mpkh([u8;20])`
   - `StasMpkhUnlockingTemplate`: produces `<sig1>…<sigM> <multisig_script>`
-  - `DstasMpkhUnlockingTemplate`: same pattern with `DstasSpendType`
+  - `Stas3MpkhUnlockingTemplate`: same pattern with `Stas3SpendType`
   - `unlock_from_signing_key()`: single dispatch for factories
   - All STAS/STAS3 factories auto-dispatch P2PKH vs P2MPKH
   - BTG factories reject P2MPKH with clear error (not yet supported)
@@ -17,7 +17,7 @@
 - **STAS3 Full Operations**
   - Split, merge, confiscation, and redeem operations
   - Transfer-swap, swap-swap modes with remainder legs and frozen rejection
-  - `DstasBundleFactory`: automatic merge/split/transfer planning
+  - `Stas3BundleFactory`: automatic merge/split/transfer planning
 
 ### Security
 

@@ -82,7 +82,7 @@ crates/bsv-tokens/
         ├── mod.rs
         ├── planner.rs          # UTXO merge/split planning algorithm
         ├── stas_bundle.rs      # StasBundleFactory
-        └── stas3_bundle.rs     # DstasBundleFactory
+        └── stas3_bundle.rs     # Stas3BundleFactory
 ```
 
 ## 6. Dependencies
@@ -157,11 +157,11 @@ pub enum TokenError {
 - `TokenId` newtype wrapping address string + 20-byte PKH
   - Methods: `from_address()`, `from_string()`, `as_str()`, `public_key_hash() -> &[u8; 20]`
 - `Authority` struct for multisig freeze governance (m-of-n threshold + compressed pubkeys)
-- `ScriptType` enum: `P2pkh`, `Stas`, `StasV2`, `Dstas`, `OpReturn`, `Unknown`
+- `ScriptType` enum: `P2pkh`, `Stas`, `StasV2`, `Stas3`, `OpReturn`, `Unknown`
 - `Payment` struct wrapping an `OutPoint` + signing key reference
 - `Destination` struct: satoshis + address
-- `DstasDestination`: satoshis + `DstasLockingParams`
-- `DstasSpendType` enum: `Transfer = 1`, `FreezeUnfreeze = 2`, `Swap = 4`
+- `Stas3Destination`: satoshis + `Stas3LockingParams`
+- `Stas3SpendType` enum: `Transfer = 1`, `FreezeUnfreeze = 2`, `Swap = 4`
 - `ActionData` enum: `Swap { ... }`, `Custom(Vec<u8>)`
 
 **Tests:**
@@ -202,7 +202,7 @@ pub enum TokenError {
 pub struct ParsedScript {
     pub script_type: ScriptType,
     pub stas: Option<StasFields>,
-    pub stas3: Option<DstasFields>,
+    pub stas3: Option<Stas3Fields>,
 }
 
 /// Fields extracted from a STAS locking script.
@@ -212,7 +212,7 @@ pub struct StasFields {
 }
 
 /// Fields extracted from a STAS3 locking script.
-pub struct DstasFields {
+pub struct Stas3Fields {
     pub owner: [u8; 20],
     pub redemption: [u8; 20],
     pub flags: Vec<u8>,
@@ -244,7 +244,7 @@ pub struct DstasFields {
 **Deliverables:**
 - `build_stas_locking_script(scheme: &TokenScheme, satoshis: u64, owner: &Address) -> Script`
   - Constructs a STAS v3 locking script from token parameters
-- `build_stas3_locking_script(params: &DstasLockingParams) -> Script`
+- `build_stas3_locking_script(params: &Stas3LockingParams) -> Script`
   - Constructs a STAS3 (stas3-freeze-multisig) locking script with all fields
 - `build_stas3_flags(freezable: bool) -> Vec<u8>` — encode flags byte
 - `derive_service_fields(scheme: &TokenScheme) -> Vec<Vec<u8>>` — authority key hash derivation
@@ -253,7 +253,7 @@ pub struct DstasFields {
 **Key type:**
 ```rust
 /// Parameters for constructing a STAS3 locking script.
-pub struct DstasLockingParams {
+pub struct Stas3LockingParams {
     /// Owner's public key hash (single key) or multisig preimage hash.
     pub owner: [u8; 20],
     /// Optional action data (swap offers, custom payloads).
@@ -275,7 +275,7 @@ pub struct DstasLockingParams {
 - Build → Read roundtrip: construct a locking script, parse it back, verify all fields match
 - Multisig owner: 2-of-3 keys → deterministic hash160
 - Frozen flag: build with frozen=true → reader detects frozen=true
-- Property test: arbitrary valid DstasLockingParams → build → read roundtrip preserves all fields
+- Property test: arbitrary valid Stas3LockingParams → build → read roundtrip preserves all fields
 
 **Acceptance:** 100% roundtrip fidelity between builder and reader.
 
@@ -432,25 +432,25 @@ pub struct RedeemConfig {
 **Deliverables:**
 
 **Unlocking script template:**
-- `DstasUnlockingTemplate` implementing `UnlockingScriptTemplate` with configurable `DstasSpendType`
+- `Stas3UnlockingTemplate` implementing `UnlockingScriptTemplate` with configurable `Stas3SpendType`
 
 **Config structs and factory functions:**
 
 ```rust
 /// Configuration for issuing STAS3 tokens (two-transaction flow).
-pub struct DstasIssueConfig {
+pub struct Stas3IssueConfig {
     /// The token scheme defining this token.
     pub scheme: TokenScheme,
     /// Funding UTXO (must cover total token satoshis + fees).
     pub funding: Payment,
     /// Per-output token amounts and locking params.
-    pub outputs: Vec<DstasDestination>,
+    pub outputs: Vec<Stas3Destination>,
     /// Fee rate in satoshis per byte.
     pub fee_rate: u64,
 }
 
 /// Result of a STAS3 issuance (two chained transactions).
-pub struct DstasIssueTxs {
+pub struct Stas3IssueTxs {
     /// Contract TX: funding → P2PKH (with scheme data) + fee change.
     pub contract_tx: Transaction,
     /// Issue TX: contract output → N STAS3 outputs + fee change.
@@ -458,51 +458,51 @@ pub struct DstasIssueTxs {
 }
 
 /// Configuration for a generic STAS3 spend transaction.
-pub struct DstasBaseConfig {
+pub struct Stas3BaseConfig {
     /// STAS token inputs (1–2). If 2, merge mode is used.
     pub token_inputs: Vec<Payment>,
     /// Funding UTXO for transaction fees.
     pub fee_input: Payment,
     /// Destination outputs with STAS3 locking params.
-    pub destinations: Vec<DstasDestination>,
+    pub destinations: Vec<Stas3Destination>,
     /// Spend type for unlocking script encoding.
-    pub spend_type: DstasSpendType,
+    pub spend_type: Stas3SpendType,
     /// Fee rate in satoshis per byte.
     pub fee_rate: u64,
 }
 
 /// Configuration for a STAS3 swap flow transaction.
-pub struct DstasSwapConfig {
+pub struct Stas3SwapConfig {
     /// Exactly 2 STAS inputs for the swap.
     pub token_inputs: [Payment; 2],
     /// Funding UTXO for transaction fees.
     pub fee_input: Payment,
     /// Destination outputs.
-    pub destinations: Vec<DstasDestination>,
+    pub destinations: Vec<Stas3Destination>,
     /// Optional manual mode override. If None, auto-detect from action_data.
-    pub mode_override: Option<DstasSpendType>,
+    pub mode_override: Option<Stas3SpendType>,
     /// Fee rate in satoshis per byte.
     pub fee_rate: u64,
 }
 ```
 
 **Transaction factories:**
-- `build_stas3_issue_txs(config: &DstasIssueConfig) -> Result<DstasIssueTxs, TokenError>`
+- `build_stas3_issue_txs(config: &Stas3IssueConfig) -> Result<Stas3IssueTxs, TokenError>`
   - **Two-transaction flow:**
     1. Contract TX: funding → P2PKH (with scheme bytes in data push) + fee change
     2. Issue TX: contract output + fee change → N STAS3 outputs + fee change
   - Returns both transactions
   - Validates: funding > total token satoshis, issuer hash160 == scheme.token_id
 
-- `build_stas3_base_tx(config: &DstasBaseConfig) -> Result<Transaction, TokenError>`
+- `build_stas3_base_tx(config: &Stas3BaseConfig) -> Result<Transaction, TokenError>`
   - Generic STAS3 spend: 1–2 STAS inputs + 1 fee input → N STAS3 outputs + fee change
   - Supports configurable spend_type
   - If 2 inputs → merge mode (both marked as merge inputs)
   - Validates: ≤ 2 STAS inputs, ≥ 1 destination, input sats == output sats
 
-- `build_stas3_freeze_tx(config: &DstasBaseConfig) -> Result<Transaction, TokenError>` — wrapper around base_tx with spend_type=2
-- `build_stas3_unfreeze_tx(config: &DstasBaseConfig) -> Result<Transaction, TokenError>` — wrapper around base_tx with spend_type=2
-- `build_stas3_swap_flow_tx(config: &DstasSwapConfig) -> Result<Transaction, TokenError>`
+- `build_stas3_freeze_tx(config: &Stas3BaseConfig) -> Result<Transaction, TokenError>` — wrapper around base_tx with spend_type=2
+- `build_stas3_unfreeze_tx(config: &Stas3BaseConfig) -> Result<Transaction, TokenError>` — wrapper around base_tx with spend_type=2
+- `build_stas3_swap_flow_tx(config: &Stas3SwapConfig) -> Result<Transaction, TokenError>`
   - Exactly 2 STAS inputs
   - Auto-detect mode: if both inputs have swap action_data → swap-swap (type=4), else transfer-swap (type=1)
   - Manual mode override available via `mode_override`
@@ -542,18 +542,18 @@ pub struct DstasSwapConfig {
 ///
 /// Generic over async callbacks for UTXO fetching and transaction lookup,
 /// allowing consumers to plug in their own indexer/backend.
-pub struct DstasBundleFactory<F, G, H, L, U>
+pub struct Stas3BundleFactory<F, G, H, L, U>
 where
     F: Fn(FundingRequest) -> impl Future<Output = Result<OutPoint, TokenError>>,
     G: Fn(u64) -> impl Future<Output = Result<Vec<OutPoint>, TokenError>>,
     H: Fn(&[String]) -> impl Future<Output = Result<HashMap<String, Transaction>, TokenError>>,
-    L: Fn(LockingParamsRequest) -> DstasLockingParams,
+    L: Fn(LockingParamsRequest) -> Stas3LockingParams,
     U: Fn(UnlockingRequest) -> Result<Script, TokenError>,
 { ... }
 ```
 
 - `StasBundleFactory` — simpler variant for non-divisible STAS
-- `DstasBundleFactory` — full variant with freeze/swap support
+- `Stas3BundleFactory` — full variant with freeze/swap support
 - Both expose:
   - `async fn transfer(&self, req) -> Result<PayoutBundle, TokenError>`
   - `PayoutBundle { transactions: Vec<Transaction>, fee_satoshis: u64 }`

@@ -18,7 +18,7 @@ However, no test ever calls `sign()` on a P2MPKH template. The entire signing co
 
 - `crates/bsv-transaction/src/template/p2mpkh.rs` — standalone P2MPKH template
 - `crates/bsv-tokens/src/template/stas.rs` — `StasMpkhUnlockingTemplate`
-- `crates/bsv-tokens/src/template/stas3.rs` — `DstasMpkhUnlockingTemplate`
+- `crates/bsv-tokens/src/template/stas3.rs` — `Stas3MpkhUnlockingTemplate`
 - `crates/bsv-tokens/src/types.rs` — `SigningKey`, `OwnerAddress`, `Payment`, `TokenInput`
 - `crates/bsv-tokens/src/factory/stas.rs` — STAS factories (issue, transfer, split, merge, redeem)
 - `crates/bsv-tokens/src/factory/stas3.rs` — STAS3 factories
@@ -84,7 +84,7 @@ fn mock_tx_with_source(satoshis: u64) -> Transaction {
 
 Adapt field names to match the actual struct definitions — check `bsv-transaction/src/transaction.rs` for exact field names. The key requirement is that `input.source_tx_output()` returns `Some(...)`.
 
-### Gap 2: `DstasMpkhUnlockingTemplate::sign()` — mirror of Gap 1
+### Gap 2: `Stas3MpkhUnlockingTemplate::sign()` — mirror of Gap 1
 
 **File:** `crates/bsv-tokens/src/template/stas3.rs`
 
@@ -181,7 +181,7 @@ All 497 existing tests must still pass.
 ## 4. Acceptance Criteria
 
 - [ ] `StasMpkhUnlockingTemplate::sign()` tested with 2-of-3, 1-of-1, 3-of-5 — verifies script structure (chunk count, signature bytes, multisig script)
-- [ ] `DstasMpkhUnlockingTemplate::sign()` tested with at least 2-of-3 — verifies script structure
+- [ ] `Stas3MpkhUnlockingTemplate::sign()` tested with at least 2-of-3 — verifies script structure
 - [ ] `P2MPKH::sign()` (standalone) tested with 2-of-3 — verifies OP_0 prefix + signatures
 - [ ] Missing source output error tested for all three template types
 - [ ] At least one STAS factory operation tested end-to-end with `SigningKey::Multi`

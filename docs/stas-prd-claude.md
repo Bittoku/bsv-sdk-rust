@@ -132,7 +132,7 @@ This will be done as part of Step 4 implementation.
 ## Future Phases (not in this plan)
 
 - **Phase 2**: `merge.rs`, `swap.rs`, `redeem_split.rs`
-- **Phase 3**: STAS-50, STAS-789, STAS3 variants, `DstasBundleFactory`
+- **Phase 3**: STAS-50, STAS-789, STAS3 variants, `Stas3BundleFactory`
 
 ## Verification
 

@@ -67,7 +67,7 @@ Maps to TS: `TokenScheme` class in `src/bitcoin/token-scheme.ts`
 pub enum ScriptType {
     P2pkh,
     Stas,
-    Dstas,
+    Stas3,
     OpReturn,
     Unknown,
 }
@@ -89,7 +89,7 @@ Maps to TS: `ScriptType` enum in `src/bitcoin/script-type.ts`
 - Optional data fields
 
 ```rust
-pub struct DstasLockingParams {
+pub struct Stas3LockingParams {
     pub owner: [u8; 20],
     pub action_data: Option<ActionData>,
     pub redemption_pkh: [u8; 20],
@@ -99,7 +99,7 @@ pub struct DstasLockingParams {
     pub optional_data: Vec<Vec<u8>>,
 }
 
-pub fn build_stas3_locking_script(params: &DstasLockingParams) -> Script;
+pub fn build_stas3_locking_script(params: &Stas3LockingParams) -> Script;
 ```
 
 Maps to TS: `src/script/build/stas3-freeze-multisig-builder.ts`, `src/script/build/script-builder.ts`
@@ -110,10 +110,10 @@ Maps to TS: `src/script/build/stas3-freeze-multisig-builder.ts`, `src/script/bui
 pub struct ParsedScript {
     pub script_type: ScriptType,
     pub stas: Option<StasFields>,
-    pub stas3: Option<DstasFields>,
+    pub stas3: Option<Stas3Fields>,
 }
 
-pub struct DstasFields {
+pub struct Stas3Fields {
     pub owner: [u8; 20],
     pub redemption: [u8; 20],
     pub flags: Vec<u8>,
@@ -157,17 +157,17 @@ Maps to TS: `src/transaction-factory.ts`
 More complex than STAS — supports spend types and multisig:
 
 ```rust
-pub enum DstasSpendType {
+pub enum Stas3SpendType {
     Transfer = 1,
     FreezeUnfreeze = 2,
     Swap = 4,
 }
 
-pub fn build_stas3_base_tx(req: &DstasBaseRequest) -> Result<Vec<u8>, TokenError>;
-pub fn build_stas3_issue_txs(req: &DstasIssueRequest) -> Result<DstasIssueTxs, TokenError>;
-pub fn build_stas3_freeze_tx(req: &DstasBaseRequest) -> Result<Vec<u8>, TokenError>;
-pub fn build_stas3_unfreeze_tx(req: &DstasBaseRequest) -> Result<Vec<u8>, TokenError>;
-pub fn build_stas3_swap_flow_tx(req: &DstasSwapFlowRequest) -> Result<Vec<u8>, TokenError>;
+pub fn build_stas3_base_tx(req: &Stas3BaseRequest) -> Result<Vec<u8>, TokenError>;
+pub fn build_stas3_issue_txs(req: &Stas3IssueRequest) -> Result<Stas3IssueTxs, TokenError>;
+pub fn build_stas3_freeze_tx(req: &Stas3BaseRequest) -> Result<Vec<u8>, TokenError>;
+pub fn build_stas3_unfreeze_tx(req: &Stas3BaseRequest) -> Result<Vec<u8>, TokenError>;
+pub fn build_stas3_swap_flow_tx(req: &Stas3SwapFlowRequest) -> Result<Vec<u8>, TokenError>;
 ```
 
 **STAS3 issue is a two-tx flow:**
@@ -230,9 +230,9 @@ pub struct Destination {
     pub address: Address,
 }
 
-pub struct DstasDestination {
+pub struct Stas3Destination {
     pub satoshis: u64,
-    pub locking_params: DstasLockingParams,
+    pub locking_params: Stas3LockingParams,
 }
 
 pub enum ActionData {
