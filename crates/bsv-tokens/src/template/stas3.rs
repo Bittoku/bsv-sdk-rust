@@ -2,6 +2,11 @@
 //!
 //! Structurally identical to the STAS unlocking scripts but stores the
 //! [`STAS 3.0 spend type for future use when preimage-based validation is added.
+//!
+//! Also exposes a no-auth path for arbitrator-free swap inputs (spec §9.5 /
+//! §10.3): when the owner field equals `HASH160("")`, the engine accepts
+//! `OP_FALSE` in place of both signature and address preimage; this module
+//! produces an unlocking script that pushes only `OP_FALSE`.
 
 use bsv_primitives::ec::PrivateKey;
 use bsv_script::Script;
@@ -11,7 +16,77 @@ use bsv_transaction::template::UnlockingScriptTemplate;
 use bsv_transaction::transaction::Transaction;
 use bsv_transaction::TransactionError;
 
+use crate::script::stas3_swap::is_arbitrator_free_owner;
 use crate::types::{Stas3SpendType, SigningKey};
+
+// ---------------------------------------------------------------------------
+// Fix K: STAS 3.0 unlocking-script amount encoding (spec §7).
+//
+// `out{1..4}_amount` and `change_amount` are "Unsigned LE (up to 8 B) or
+// empty". This means minimal little-endian: zero is an empty push, otherwise
+// emit only as many low-order bytes as needed (no sign-padding, since these
+// are unsigned). Maximum width is 8 bytes (u64).
+// ---------------------------------------------------------------------------
+
+/// Encode an unsigned amount as the body of a minimal little-endian push,
+/// per STAS 3.0 spec §7. Zero produces an empty body (intended to be emitted
+/// as `OP_FALSE`/`OP_0`); non-zero amounts produce 1..=8 bytes — only as
+/// many as the most-significant nonzero byte requires.
+///
+/// This is the body only — callers wrap it with the appropriate push opcode
+/// (`OP_FALSE` for empty, otherwise a bare push).
+pub fn encode_unlock_amount(value: u64) -> Vec<u8> {
+    if value == 0 {
+        return Vec::new();
+    }
+    let raw = value.to_le_bytes();
+    // Strip trailing zero bytes — minimal LE encoding for an unsigned value.
+    let mut len = 8;
+    while len > 1 && raw[len - 1] == 0 {
+        len -= 1;
+    }
+    raw[..len].to_vec()
+}
+
+/// Encode an amount as a complete minimal push (header + body) for inclusion
+/// in a STAS 3.0 unlocking script per spec §7. Zero → `[0x00]` (`OP_FALSE`);
+/// otherwise a bare push of 1..=8 minimal LE bytes.
+pub fn push_unlock_amount(value: u64) -> Vec<u8> {
+    let body = encode_unlock_amount(value);
+    if body.is_empty() {
+        vec![0x00] // OP_FALSE / OP_0 = empty push
+    } else {
+        let mut out = Vec::with_capacity(body.len() + 1);
+        out.push(body.len() as u8); // bare push, len <= 8 always fits
+        out.extend_from_slice(&body);
+        out
+    }
+}
+
+// ---------------------------------------------------------------------------
+// No-auth STAS 3.0 unlocker (arbitrator-free swap)
+// ---------------------------------------------------------------------------
+
+/// STAS 3.0 no-auth unlocking template.
+///
+/// Used for inputs whose owner field is `HASH160("")` (arbitrator-free swap,
+/// spec §9.5 / §10.3). Produces a single `OP_FALSE` push, signalling to the
+/// engine that no signature or preimage is being supplied for this leg.
+pub struct Stas3NoAuthUnlockingTemplate;
+
+impl UnlockingScriptTemplate for Stas3NoAuthUnlockingTemplate {
+    /// Produce the no-auth unlocking script: a single `OP_FALSE`.
+    fn sign(&self, _tx: &Transaction, _input_index: u32) -> Result<Script, TransactionError> {
+        let mut script = Script::new();
+        script.append_push_data(&[])?; // OP_FALSE / OP_0
+        Ok(script)
+    }
+
+    /// Estimated length of the no-auth unlocking script: 1 byte (OP_FALSE).
+    fn estimate_length(&self, _tx: &Transaction, _input_index: u32) -> u32 {
+        1
+    }
+}
 
 // ---------------------------------------------------------------------------
 // P2PKH STAS 3.0 unlocker (existing)
@@ -95,9 +170,13 @@ impl UnlockingScriptTemplate for Stas3UnlockingTemplate {
 
 /// STAS 3.0 P2MPKH unlocking script template.
 ///
-/// Produces: `<sig1> <sig2> … <sigM> <serialized_multisig_script>`
+/// Produces (per STAS 3.0 spec v0.1 § 10.2):
+///   `OP_0 <sig_1> <sig_2> … <sig_m> <redeem_script>`
 ///
-/// Identical to `StasMpkhUnlockingTemplate` but carries the `Stas3SpendType`.
+/// The leading `OP_0` is the `OP_CHECKMULTISIG` dummy stack element. The
+/// final push is the canonical STAS 3.0 redeem buffer
+/// `[m][0x21 pk1] … [0x21 pkN][n]` produced by
+/// [`MultisigScript::to_serialized_bytes`].
 pub struct Stas3MpkhUnlockingTemplate {
     /// The m private keys for threshold signing.
     private_keys: Vec<PrivateKey>,
@@ -163,10 +242,27 @@ pub fn unlock_from_signing_key(
     }
 }
 
+/// Create a STAS 3.0 unlocker, dispatching to the no-auth path when the input
+/// locking script's owner field equals `HASH160("")` (arbitrator-free swap,
+/// spec §9.5 / §10.3). Otherwise behaves identically to
+/// [`unlock_from_signing_key`].
+pub fn unlock_for_input(
+    locking_script: &[u8],
+    key: &SigningKey,
+    spend_type: Stas3SpendType,
+    sighash_flag: Option<u32>,
+) -> Result<Box<dyn UnlockingScriptTemplate>, TransactionError> {
+    if is_arbitrator_free_owner(locking_script) {
+        return Ok(Box::new(Stas3NoAuthUnlockingTemplate));
+    }
+    unlock_from_signing_key(key, spend_type, sighash_flag)
+}
+
 impl UnlockingScriptTemplate for Stas3MpkhUnlockingTemplate {
     /// Sign the specified input and produce the P2MPKH unlocking script.
     ///
-    /// Produces: `<sig1> <sig2> … <sigM> <serialized_multisig_script>`
+    /// Produces (spec v0.1 § 10.2):
+    ///   `OP_0 <sig_1> … <sig_m> <redeem_script>`
     fn sign(&self, tx: &Transaction, input_index: u32) -> Result<Script, TransactionError> {
         let idx = input_index as usize;
 
@@ -189,6 +285,9 @@ impl UnlockingScriptTemplate for Stas3MpkhUnlockingTemplate {
 
         let mut script = Script::new();
 
+        // OP_0 dummy stack element required by OP_CHECKMULTISIG.
+        script.append_push_data(&[])?;
+
         // Push each threshold signature.
         for pk in &self.private_keys {
             let signature = pk.sign(&sig_hash)?;
@@ -199,19 +298,21 @@ impl UnlockingScriptTemplate for Stas3MpkhUnlockingTemplate {
             script.append_push_data(&sig_buf)?;
         }
 
-        // Push the serialized multisig script.
-        script.append_push_data(&self.multisig.to_bytes())?;
+        // Push the canonical STAS 3.0 redeem script.
+        script.append_push_data(&self.multisig.to_serialized_bytes())?;
 
         Ok(script)
     }
 
     /// Estimate the byte length of a STAS 3.0 P2MPKH unlocking script.
+    ///
+    /// Layout: 1 (OP_0) + m * 73 (push + DER + sighash) + 2 (PUSHDATA1
+    /// prefix) + redeem buffer (`2 + 34 * n` bytes).
     fn estimate_length(&self, _tx: &Transaction, _input_index: u32) -> u32 {
         let m = self.multisig.threshold() as u32;
         let n = self.multisig.n() as u32;
-        let sig_bytes = m * 73;
-        let script_bytes = 3 + n * 34 + 3;
-        sig_bytes + script_bytes
+        let redeem_len = 2 + n * 34;
+        1 + m * 73 + 2 + redeem_len
     }
 }
 
@@ -309,7 +410,7 @@ mod tests {
         let keys: Vec<PrivateKey> = (0..3).map(|_| PrivateKey::new()).collect();
         let pubs: Vec<_> = keys.iter().map(|k| k.pub_key()).collect();
         let ms = MultisigScript::new(2, pubs).unwrap();
-        let ms_bytes = ms.to_bytes();
+        let ms_bytes = ms.to_serialized_bytes();
 
         let unlocker = unlock_mpkh(
             vec![keys[0].clone(), keys[1].clone()],
@@ -323,29 +424,40 @@ mod tests {
         let script = unlocker.sign(&tx, 0).unwrap();
         let chunks = script.chunks().unwrap();
 
-        // 2 signatures + 1 multisig script = 3 chunks
-        assert_eq!(chunks.len(), 3, "expected 2 sigs + 1 multisig script push");
+        // OP_0 dummy + 2 signatures + 1 redeem-script push = 4 chunks
+        assert_eq!(
+            chunks.len(),
+            4,
+            "expected OP_0 + 2 sigs + redeem script push"
+        );
 
-        // Verify signature chunks
-        for i in 0..2 {
+        // Chunk 0: OP_0 / empty push.
+        let dummy = &chunks[0];
+        assert!(
+            dummy.data.is_none() || dummy.data.as_ref().is_some_and(|d| d.is_empty()),
+            "first chunk must be OP_0 (empty push)"
+        );
+
+        // Chunks 1..=2: signatures.
+        for i in 1..=2 {
             let sig_data = chunks[i].data.as_ref().expect("signature should be push data");
             assert!(
                 sig_data.len() >= 71 && sig_data.len() <= 73,
                 "signature {} length {} not in 71..=73",
-                i,
+                i - 1,
                 sig_data.len()
             );
             assert_eq!(
                 *sig_data.last().unwrap(),
                 0x41,
                 "signature {} should end with SIGHASH_ALL_FORKID",
-                i
+                i - 1
             );
         }
 
-        // Final chunk is multisig script
-        let ms_chunk = chunks[2].data.as_ref().expect("multisig script should be push data");
-        assert_eq!(ms_chunk, &ms_bytes, "final chunk should be the multisig script bytes");
+        // Chunk 3: redeem script bytes.
+        let ms_chunk = chunks[3].data.as_ref().expect("redeem script should be push data");
+        assert_eq!(ms_chunk, &ms_bytes, "final chunk should be the redeem script bytes");
     }
 
     #[test]
@@ -419,7 +531,177 @@ mod tests {
         let unlocker = unlock_mpkh(vec![keys[0].clone()], ms, Stas3SpendType::Transfer, None).unwrap();
         let tx = bsv_transaction::transaction::Transaction::default();
         let est = unlocker.estimate_length(&tx, 0);
-        assert_eq!(est, 1 * 73 + 3 + 1 * 34 + 3);
+        // 1 (OP_0) + 1*73 (sig) + 2 (PUSHDATA1) + (2 + 1*34) redeem
+        assert_eq!(est, 1 + 73 + 2 + (2 + 34));
+    }
+
+    // -------------------------------------------------------------------
+    // Fix K: minimal-LE unlock amount encoding (spec §7)
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn encode_unlock_amount_zero_is_empty() {
+        assert_eq!(encode_unlock_amount(0), Vec::<u8>::new());
+        assert_eq!(push_unlock_amount(0), vec![0x00]); // OP_FALSE
+    }
+
+    #[test]
+    fn encode_unlock_amount_one_byte() {
+        assert_eq!(encode_unlock_amount(1), vec![0x01]);
+        assert_eq!(encode_unlock_amount(0xFF), vec![0xFF]);
+        assert_eq!(push_unlock_amount(1), vec![0x01, 0x01]);
+        assert_eq!(push_unlock_amount(0xFF), vec![0x01, 0xFF]);
+    }
+
+    #[test]
+    fn encode_unlock_amount_two_bytes() {
+        assert_eq!(encode_unlock_amount(0x100), vec![0x00, 0x01]);
+        assert_eq!(encode_unlock_amount(0xFFFF), vec![0xFF, 0xFF]);
+        assert_eq!(push_unlock_amount(0x100), vec![0x02, 0x00, 0x01]);
+    }
+
+    #[test]
+    fn encode_unlock_amount_three_bytes() {
+        // 0x010000 → [0x00, 0x00, 0x01]
+        assert_eq!(encode_unlock_amount(0x10000), vec![0x00, 0x00, 0x01]);
+    }
+
+    #[test]
+    fn encode_unlock_amount_five_bytes() {
+        // 0x100000000 → 5 bytes minimal LE
+        assert_eq!(
+            encode_unlock_amount(0x100000000),
+            vec![0x00, 0x00, 0x00, 0x00, 0x01]
+        );
+    }
+
+    #[test]
+    fn encode_unlock_amount_seven_bytes() {
+        // 0xFFFFFFFFFFFFFF → 7 bytes
+        assert_eq!(
+            encode_unlock_amount(0x00FF_FFFF_FFFF_FFFF),
+            vec![0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]
+        );
+    }
+
+    #[test]
+    fn encode_unlock_amount_eight_bytes_max() {
+        assert_eq!(
+            encode_unlock_amount(u64::MAX),
+            vec![0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]
+        );
+        // The push form is 1-byte length prefix + 8 bytes body = 9 bytes.
+        assert_eq!(push_unlock_amount(u64::MAX).len(), 9);
+        assert_eq!(push_unlock_amount(u64::MAX)[0], 0x08);
+    }
+
+    #[test]
+    fn encode_unlock_amount_snapshot_table() {
+        // Comprehensive snapshot table covering the spec §7 examples.
+        let cases: &[(u64, &[u8])] = &[
+            (0, &[]),
+            (1, &[0x01]),
+            (0xFF, &[0xFF]),
+            (0x100, &[0x00, 0x01]),
+            (0xFFFF, &[0xFF, 0xFF]),
+            (0x100000000, &[0x00, 0x00, 0x00, 0x00, 0x01]),
+            (0x00FF_FFFF_FFFF_FFFF, &[0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]),
+        ];
+        for (value, expected) in cases {
+            let got = encode_unlock_amount(*value);
+            assert_eq!(
+                got, *expected,
+                "amount {} ({:#x}) → got {} expected {}",
+                value,
+                value,
+                hex::encode(&got),
+                hex::encode(expected)
+            );
+        }
+    }
+
+    // -------------------------------------------------------------------
+    // Fix E: arbitrator-free swap unlock path
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn stas3_no_auth_template_emits_op_false() {
+        use bsv_script::Script;
+        use bsv_transaction::input::TransactionInput;
+        use bsv_transaction::output::TransactionOutput;
+
+        let mut tx = bsv_transaction::transaction::Transaction::new();
+        let mut input = TransactionInput::new();
+        input.set_source_output(Some(TransactionOutput {
+            satoshis: 5000,
+            locking_script: Script::new(),
+            change: false,
+        }));
+        tx.add_input(input);
+
+        let unlocker = Stas3NoAuthUnlockingTemplate;
+        let script = unlocker.sign(&tx, 0).unwrap();
+        // OP_FALSE is encoded as a single 0x00 byte (an empty push).
+        assert_eq!(script.to_bytes(), &[0x00]);
+        assert_eq!(unlocker.estimate_length(&tx, 0), 1);
+    }
+
+    #[test]
+    fn unlock_for_input_routes_arbitrator_free_to_no_auth() {
+        use crate::script::stas3_builder::build_stas3_locking_script;
+        use crate::script::stas3_swap::EMPTY_HASH160;
+
+        // Build a STAS3 locking script whose owner is the EMPTY_HASH160 sentinel.
+        let redemption = [0x22; 20];
+        let locking = build_stas3_locking_script(
+            &EMPTY_HASH160, &redemption, None, false, true, &[], &[],
+        )
+        .unwrap();
+
+        // Any signing key — should be ignored on the no-auth path.
+        let key = PrivateKey::new();
+        let sk = SigningKey::Single(key);
+        let unlocker = unlock_for_input(
+            locking.to_bytes(), &sk, Stas3SpendType::Transfer, None,
+        )
+        .unwrap();
+
+        // Build a minimal tx for sign(); for the no-auth template, the tx
+        // is unused but a value is required by the trait signature.
+        let tx = mock_tx_with_source(5000);
+        let script = unlocker.sign(&tx, 0).unwrap();
+        assert_eq!(
+            script.to_bytes(), &[0x00],
+            "arbitrator-free input should produce a single OP_FALSE push"
+        );
+    }
+
+    #[test]
+    fn unlock_for_input_routes_regular_owner_to_signing() {
+        use crate::script::stas3_builder::build_stas3_locking_script;
+
+        let owner = [0x11; 20]; // not the sentinel
+        let redemption = [0x22; 20];
+        let locking = build_stas3_locking_script(
+            &owner, &redemption, None, false, true, &[], &[],
+        )
+        .unwrap();
+
+        let key = PrivateKey::new();
+        let sk = SigningKey::Single(key);
+        let unlocker = unlock_for_input(
+            locking.to_bytes(), &sk, Stas3SpendType::Transfer, None,
+        )
+        .unwrap();
+
+        let tx = mock_tx_with_source(5000);
+        let script = unlocker.sign(&tx, 0).unwrap();
+        // Regular path should produce sig+pubkey (>= 70 bytes, not a single OP_FALSE).
+        assert!(
+            script.to_bytes().len() > 1,
+            "regular owner should produce sig+pubkey, got {} bytes",
+            script.to_bytes().len()
+        );
     }
 
     #[test]
@@ -436,6 +718,7 @@ mod tests {
         .unwrap();
         let tx = bsv_transaction::transaction::Transaction::default();
         let est = unlocker.estimate_length(&tx, 0);
-        assert_eq!(est, 3 * 73 + 3 + 5 * 34 + 3);
+        // 1 (OP_0) + 3*73 (sigs) + 2 (PUSHDATA1) + (2 + 5*34) redeem
+        assert_eq!(est, 1 + 3 * 73 + 2 + (2 + 5 * 34));
     }
 }

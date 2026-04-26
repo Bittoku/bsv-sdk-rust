@@ -198,6 +198,11 @@ pub struct Stas3ConfiscateConfig {
     pub destinations: Vec<Stas3OutputParams>,
     /// Fee rate in satoshis per kilobyte.
     pub fee_rate: u64,
+    /// Transaction-type byte (spec §8.1).
+    ///
+    /// Per STAS 3.0 spec §4 confiscation row and §9.3, confiscation places
+    /// **no** restriction on `txType`. Any value is accepted. Defaults to `0`.
+    pub tx_type: u8,
 }
 
 /// Classification of redeem output address type.
@@ -631,10 +636,16 @@ pub fn build_stas3_base_tx(config: &Stas3BaseConfig) -> Result<Transaction, Toke
         config.fee_rate,
     )?;
 
-    // Sign token inputs with STAS3 template (dispatches P2PKH vs P2MPKH).
+    // Sign token inputs with STAS3 template. `unlock_for_input` dispatches:
+    //   - arbitrator-free owner (HASH160("")) → no-auth (OP_FALSE) (spec §9.5)
+    //   - SigningKey::Single → P2PKH unlock
+    //   - SigningKey::Multi  → P2MPKH unlock
     for (i, ti) in config.token_inputs.iter().enumerate() {
-        let unlocker = stas3_template::unlock_from_signing_key(
-            &ti.signing_key, config.spend_type, None,
+        let unlocker = stas3_template::unlock_for_input(
+            ti.locking_script.to_bytes(),
+            &ti.signing_key,
+            config.spend_type,
+            None,
         )?;
         let sig = unlocker.sign(&tx, i as u32)?;
         tx.inputs[i].unlocking_script = Some(sig);
@@ -745,6 +756,49 @@ fn validate_swap_inputs(config: &Stas3BaseConfig) -> Result<(), TokenError> {
     }
 
     Ok(())
+}
+
+/// Build a swap remainder/split output that inherits BOTH the source UTXO's
+/// `owner` field and `var2` (action data / swap descriptor) per STAS 3.0 spec
+/// v0.1 §9.5: "Remainder / split outputs inherit the source UTXO's both owner
+/// and var2 fields."
+///
+/// The remainder UTXO continues to be takeable for the unmatched balance with
+/// the same owner/swap-descriptor as the partially-consumed source.
+///
+/// # Arguments
+/// * `source_locking_script` — the source STAS 3.0 locking script being
+///   partially consumed.
+/// * `satoshis`             — satoshi value for the remainder output.
+/// * `redemption_pkh`       — the issuance redemption PKH (same as source).
+/// * `freezable`            — freezable flag (typically inherited from source).
+///
+/// # Errors
+/// Returns [`TokenError::InvalidScript`] if `source_locking_script` is not a
+/// valid STAS 3.0 locking script.
+pub fn build_swap_remainder_output(
+    source_locking_script: &[u8],
+    satoshis: u64,
+    redemption_pkh: [u8; 20],
+    freezable: bool,
+) -> Result<Stas3OutputParams, TokenError> {
+    use crate::script::reader::read_locking_script;
+
+    let parsed = read_locking_script(source_locking_script);
+    let stas3 = parsed.stas3.ok_or_else(|| {
+        TokenError::InvalidScript("source script is not a STAS 3.0 locking script".into())
+    })?;
+
+    Ok(Stas3OutputParams {
+        satoshis,
+        owner_pkh: stas3.owner,                       // inherit owner
+        redemption_pkh,
+        frozen: stas3.frozen,
+        freezable,
+        service_fields: vec![],
+        optional_data: vec![],
+        action_data: stas3.action_data_parsed,        // inherit var2 (swap descriptor)
+    })
 }
 
 /// Build a STAS3 split transaction.
@@ -1892,6 +1946,7 @@ mod tests {
                 action_data: None,
             }],
             fee_rate: 500,
+            tx_type: 0,
         };
 
         let tx = build_stas3_confiscate_tx(config).unwrap();
@@ -1901,6 +1956,62 @@ mod tests {
 
         for input in &tx.inputs {
             assert!(input.unlocking_script.is_some());
+        }
+    }
+
+    /// Fix G: spec §4 / §9.3 — confiscation places NO restriction on txType.
+    /// Any caller-supplied `tx_type` (including non-zero, non-default values)
+    /// MUST build successfully and round-trip through the parser.
+    #[test]
+    fn confiscate_accepts_arbitrary_tx_type() {
+        let token_key = test_key();
+        let fee_key = test_key();
+        let redemption_pkh = [0x22; 20];
+
+        // Try several non-default txType values; all must build and parse.
+        for tx_type in [0u8, 1, 5, 42, 0xFF] {
+            let config = Stas3ConfiscateConfig {
+                token_inputs: vec![TokenInput {
+                    txid: dummy_hash(),
+                    vout: 0,
+                    satoshis: 5000,
+                    locking_script: make_stas3_locking(&[0x11; 20], &redemption_pkh),
+                    signing_key: SigningKey::Single(token_key.clone()),
+                }],
+                fee_txid: dummy_hash(),
+                fee_vout: 1,
+                fee_satoshis: 50_000,
+                fee_locking_script: test_p2pkh_script(&fee_key),
+                fee_private_key: fee_key.clone(),
+                destinations: vec![Stas3OutputParams {
+                    satoshis: 5000,
+                    owner_pkh: redemption_pkh,
+                    redemption_pkh,
+                    frozen: false,
+                    freezable: true,
+                    service_fields: vec![],
+                    optional_data: vec![],
+                    action_data: None,
+                }],
+                fee_rate: 500,
+                tx_type,
+            };
+
+            let tx = build_stas3_confiscate_tx(config)
+                .unwrap_or_else(|e| panic!("tx_type={} should build, got {:?}", tx_type, e));
+            assert_eq!(
+                tx.outputs[0].satoshis, 5000,
+                "tx_type={} must produce a valid tx",
+                tx_type
+            );
+            // Round-trip the locking script through the parser.
+            let parsed = read_locking_script(tx.outputs[0].locking_script.to_bytes());
+            assert_eq!(
+                parsed.script_type,
+                ScriptType::Stas3,
+                "tx_type={} output must parse as STAS3",
+                tx_type
+            );
         }
     }
 
@@ -1939,6 +2050,7 @@ mod tests {
                 action_data: None,
             }],
             fee_rate: 500,
+            tx_type: 0,
         };
 
         // Should succeed — confiscation path is valid for frozen UTXOs
@@ -1968,6 +2080,7 @@ mod tests {
                 action_data: None,
             }],
             fee_rate: 500,
+            tx_type: 0,
         };
 
         assert!(build_stas3_confiscate_tx(config).is_err());
@@ -2858,6 +2971,216 @@ mod tests {
         // Auto-detect: both have swap data → SwapSwap → spending type SwapCancellation
         let tx = build_stas3_swap_flow_tx(&mut config).unwrap();
         assert_eq!(tx.input_count(), 3);
+    }
+
+    // -------------------------------------------------------------------
+    // Fix F: swap remainder inherits both owner and var2 (spec §9.5)
+    // -------------------------------------------------------------------
+
+    /// Build a 2-input swap where input A is partially consumed and a
+    /// remainder output is produced. The remainder MUST inherit BOTH the
+    /// source UTXO's `owner` field and `var2` (the swap descriptor).
+    #[test]
+    fn swap_remainder_inherits_owner_and_var2() {
+        let fee_key = test_key();
+        let owner_a: [u8; 20] = [0xA1; 20];
+        let owner_b: [u8; 20] = [0xB2; 20];
+        let redemption = [0x22; 20];
+
+        // Source A's swap descriptor — must be inherited byte-for-byte by remainder.
+        let swap_data_a = ActionData::Swap {
+            requested_script_hash: [0xab; 32],
+            requested_pkh: [0xcd; 20],
+            rate_numerator: 2,
+            rate_denominator: 3,
+        };
+
+        let source_a_locking = make_stas3_swap_locking(&owner_a, &redemption, &swap_data_a);
+        let source_b_locking = make_stas3_swap_locking(&owner_b, &redemption, &swap_data_a);
+
+        // Build the remainder output via the helper, which inherits owner + var2.
+        let remainder = build_swap_remainder_output(
+            source_a_locking.to_bytes(),
+            2000,
+            redemption,
+            true,
+        )
+        .unwrap();
+
+        assert_eq!(remainder.owner_pkh, owner_a, "remainder must inherit source owner");
+        assert!(
+            matches!(remainder.action_data, Some(ActionData::Swap { .. })),
+            "remainder must inherit source var2 (swap descriptor)"
+        );
+
+        // 2-input swap with a remainder for input A (split path).
+        let mut config = Stas3BaseConfig {
+            token_inputs: vec![
+                TokenInput {
+                    txid: dummy_hash(),
+                    vout: 0,
+                    satoshis: 6000,
+                    locking_script: source_a_locking.clone(),
+                    signing_key: SigningKey::Single(test_key()),
+                },
+                TokenInput {
+                    txid: dummy_hash(),
+                    vout: 1,
+                    satoshis: 4000,
+                    locking_script: source_b_locking,
+                    signing_key: SigningKey::Single(test_key()),
+                },
+            ],
+            fee_txid: dummy_hash(),
+            fee_vout: 2,
+            fee_satoshis: 50_000,
+            fee_locking_script: test_p2pkh_script(&fee_key),
+            fee_private_key: fee_key,
+            destinations: vec![
+                Stas3OutputParams {
+                    satoshis: 4000,
+                    owner_pkh: [0x44; 20],
+                    redemption_pkh: redemption,
+                    frozen: false,
+                    freezable: true,
+                    service_fields: vec![],
+                    optional_data: vec![],
+                    action_data: None,
+                },
+                Stas3OutputParams {
+                    satoshis: 4000,
+                    owner_pkh: [0x55; 20],
+                    redemption_pkh: redemption,
+                    frozen: false,
+                    freezable: true,
+                    service_fields: vec![],
+                    optional_data: vec![],
+                    action_data: None,
+                },
+                remainder, // remainder for source A
+            ],
+            spend_type: Stas3SpendType::SwapCancellation,
+            fee_rate: 500,
+        };
+
+        let tx = build_stas3_swap_swap_tx(&mut config).unwrap();
+
+        // The remainder output is index 2.
+        let parsed = read_locking_script(tx.outputs[2].locking_script.to_bytes());
+        assert_eq!(parsed.script_type, ScriptType::Stas3);
+        let stas3 = parsed.stas3.unwrap();
+
+        // Owner inheritance
+        assert_eq!(
+            stas3.owner, owner_a,
+            "remainder output owner must equal source A owner"
+        );
+
+        // Var2 (swap descriptor) inheritance — byte-identical
+        match (stas3.action_data_parsed, &swap_data_a) {
+            (
+                Some(ActionData::Swap {
+                    requested_script_hash: rh,
+                    requested_pkh: rp,
+                    rate_numerator: rn,
+                    rate_denominator: rd,
+                }),
+                ActionData::Swap {
+                    requested_script_hash: sh,
+                    requested_pkh: sp,
+                    rate_numerator: sn,
+                    rate_denominator: sd,
+                },
+            ) => {
+                assert_eq!(rh, *sh);
+                assert_eq!(rp, *sp);
+                assert_eq!(rn, *sn);
+                assert_eq!(rd, *sd);
+            }
+            (other, _) => panic!("remainder must inherit Swap descriptor, got {:?}", other),
+        }
+    }
+
+    // -------------------------------------------------------------------
+    // Fix E: arbitrator-free swap (owner == HASH160(""))
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn arbitrator_free_input_unlocks_with_op_false() {
+        use crate::script::stas3_swap::EMPTY_HASH160;
+
+        let fee_key = test_key();
+        let swap_data = test_swap_data();
+        let redemption = [0x22; 20];
+
+        // Input 0: regular signed input. Input 1: arbitrator-free (owner = EMPTY_HASH160).
+        let arbfree_locking = make_stas3_swap_locking(&EMPTY_HASH160, &redemption, &swap_data);
+
+        let mut config = Stas3BaseConfig {
+            token_inputs: vec![
+                TokenInput {
+                    txid: dummy_hash(),
+                    vout: 0,
+                    satoshis: 5000,
+                    locking_script: make_stas3_swap_locking(&[0x11; 20], &redemption, &swap_data),
+                    signing_key: SigningKey::Single(test_key()),
+                },
+                TokenInput {
+                    txid: dummy_hash(),
+                    vout: 1,
+                    satoshis: 5000,
+                    locking_script: arbfree_locking,
+                    // Any key — the no-auth path ignores it.
+                    signing_key: SigningKey::Single(test_key()),
+                },
+            ],
+            fee_txid: dummy_hash(),
+            fee_vout: 2,
+            fee_satoshis: 50_000,
+            fee_locking_script: test_p2pkh_script(&fee_key),
+            fee_private_key: fee_key,
+            destinations: vec![
+                Stas3OutputParams {
+                    satoshis: 5000,
+                    owner_pkh: [0x44; 20],
+                    redemption_pkh: redemption,
+                    frozen: false,
+                    freezable: true,
+                    service_fields: vec![],
+                    optional_data: vec![],
+                    action_data: None,
+                },
+                Stas3OutputParams {
+                    satoshis: 5000,
+                    owner_pkh: [0x55; 20],
+                    redemption_pkh: redemption,
+                    frozen: false,
+                    freezable: true,
+                    service_fields: vec![],
+                    optional_data: vec![],
+                    action_data: None,
+                },
+            ],
+            spend_type: Stas3SpendType::Transfer,
+            fee_rate: 500,
+        };
+
+        let tx = build_stas3_swap_swap_tx(&mut config).unwrap();
+
+        // Input 1 (arbitrator-free) unlocking script must be a single OP_FALSE.
+        let unlock = tx.inputs[1].unlocking_script.as_ref().expect("must be signed");
+        assert_eq!(
+            unlock.to_bytes(), &[0x00],
+            "arbitrator-free leg should unlock with single OP_FALSE"
+        );
+
+        // Input 0 (regular) must be sig + pubkey (much longer).
+        let unlock0 = tx.inputs[0].unlocking_script.as_ref().expect("must be signed");
+        assert!(
+            unlock0.to_bytes().len() > 70,
+            "regular leg should be sig + pubkey ({} bytes)",
+            unlock0.to_bytes().len()
+        );
     }
 
     #[test]

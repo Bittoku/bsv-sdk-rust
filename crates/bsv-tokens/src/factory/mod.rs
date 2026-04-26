@@ -11,7 +11,7 @@ pub use stas3::{
     build_stas3_base_tx, build_stas3_freeze_tx, build_stas3_issue_txs, build_stas3_swap_flow_tx,
     build_stas3_transfer_swap_tx, build_stas3_swap_swap_tx,
     build_stas3_unfreeze_tx, build_stas3_split_tx, build_stas3_merge_tx,
-    build_stas3_confiscate_tx, build_stas3_redeem_tx,
+    build_stas3_confiscate_tx, build_stas3_redeem_tx, build_swap_remainder_output,
     Stas3BaseConfig, Stas3IssueConfig, Stas3IssueOutput, Stas3IssueTxs,
     Stas3OutputParams, Stas3SplitConfig, Stas3MergeConfig, Stas3ConfiscateConfig,
     Stas3RedeemConfig, RedeemAddressType, TokenInput,

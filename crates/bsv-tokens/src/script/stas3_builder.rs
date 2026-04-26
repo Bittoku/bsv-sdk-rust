@@ -126,6 +126,153 @@ fn push_data(script: &mut Vec<u8>, data: &[u8]) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Fix J: Frozen marker conversion (STAS 3.0 spec v0.1 §6.2)
+// ---------------------------------------------------------------------------
+
+/// Convert a STAS 3.0 `var2` push (in original form) to its frozen-form
+/// encoding per spec v0.1 §6.2.
+///
+/// The freeze operation rewrites the leading var2 push as follows:
+/// - empty push (`OP_0`)             → `OP_2` (single opcode 0x52)
+/// - direct push, OP_PUSHDATA{1,2,4} → prepend `0x02` to the pushed bytes,
+///   re-emit with minimal pushdata header
+/// - `OP_1`, `OP_3`..`OP_16`, `OP_1NEGATE` → first convert to pushdata form
+///   (i.e. push the value the opcode pushes onto the stack), then prepend
+///   `0x02` to that value.
+///
+/// `var2_push` is the entire push (header + body), exactly as found at the
+/// var2 slot in a STAS 3.0 locking script.
+///
+/// Returns the new push bytes (header + body) ready to be substituted in
+/// place of the original var2 push.
+///
+/// # Errors
+/// Returns [`TokenError::InvalidScript`] if `var2_push` is empty, malformed,
+/// or already in frozen form.
+pub fn freeze_var2_push(var2_push: &[u8]) -> Result<Vec<u8>, TokenError> {
+    if var2_push.is_empty() {
+        return Err(TokenError::InvalidScript("empty var2 push".into()));
+    }
+    let value = decode_push_value(var2_push)?;
+
+    // empty push → OP_2
+    if value.is_empty() {
+        return Ok(vec![0x52]);
+    }
+
+    // pushdata bytelength / OP_PUSHDATA1/2/4 OR a bare-opcode form already
+    // converted to pushdata: prepend 0x02 to the pushed bytes and re-emit.
+    let mut frozen_body = Vec::with_capacity(value.len() + 1);
+    frozen_body.push(0x02);
+    frozen_body.extend_from_slice(&value);
+
+    Ok(encode_minimal_push(&frozen_body))
+}
+
+/// Inverse of [`freeze_var2_push`]: convert a frozen-form var2 push back to
+/// its original form per spec v0.1 §6.2.
+///
+/// # Errors
+/// Returns [`TokenError::InvalidScript`] if the input is not a recognised
+/// frozen-form push.
+pub fn unfreeze_var2_push(frozen_push: &[u8]) -> Result<Vec<u8>, TokenError> {
+    if frozen_push.is_empty() {
+        return Err(TokenError::InvalidScript("empty frozen push".into()));
+    }
+
+    // OP_2 → empty push (OP_0)
+    if frozen_push == [0x52] {
+        return Ok(vec![0x00]);
+    }
+
+    let value = decode_push_value(frozen_push)?;
+    if value.is_empty() || value[0] != 0x02 {
+        return Err(TokenError::InvalidScript(
+            "not a frozen-form var2 push (missing leading 0x02)".into(),
+        ));
+    }
+
+    // Strip the leading 0x02 frozen byte. The remainder is the original
+    // pushed bytes (which for OP_1, OP_3..OP_16, OP_1NEGATE will be the
+    // single-byte stack value rather than the original opcode form).
+    Ok(encode_minimal_push(&value[1..]))
+}
+
+/// Decode a single push at offset 0 of `push` and return the bytes that the
+/// push places on the stack. Handles all push forms in the STAS 3.0 spec:
+///
+/// - `OP_0` (`0x00`) → empty
+/// - bare push `0x01..=0x4b` → following N bytes
+/// - `OP_PUSHDATA1` / `OP_PUSHDATA2` / `OP_PUSHDATA4` → following N bytes
+/// - `OP_1NEGATE` (`0x4f`) → `[0x81]` (the byte value -1 in script-num form)
+/// - `OP_1` (`0x51`)..`OP_16` (`0x60`) → `[N]` (single byte value 1..16)
+fn decode_push_value(push: &[u8]) -> Result<Vec<u8>, TokenError> {
+    if push.is_empty() {
+        return Err(TokenError::InvalidScript("empty push".into()));
+    }
+    let opcode = push[0];
+    match opcode {
+        0x00 => Ok(Vec::new()),
+        0x01..=0x4b => {
+            let len = opcode as usize;
+            if push.len() < 1 + len {
+                return Err(TokenError::InvalidScript(
+                    "bare push truncated".into(),
+                ));
+            }
+            Ok(push[1..1 + len].to_vec())
+        }
+        0x4c => {
+            if push.len() < 2 {
+                return Err(TokenError::InvalidScript("truncated OP_PUSHDATA1".into()));
+            }
+            let len = push[1] as usize;
+            if push.len() < 2 + len {
+                return Err(TokenError::InvalidScript("OP_PUSHDATA1 truncated".into()));
+            }
+            Ok(push[2..2 + len].to_vec())
+        }
+        0x4d => {
+            if push.len() < 3 {
+                return Err(TokenError::InvalidScript("truncated OP_PUSHDATA2".into()));
+            }
+            let len = u16::from_le_bytes([push[1], push[2]]) as usize;
+            if push.len() < 3 + len {
+                return Err(TokenError::InvalidScript("OP_PUSHDATA2 truncated".into()));
+            }
+            Ok(push[3..3 + len].to_vec())
+        }
+        0x4e => {
+            if push.len() < 5 {
+                return Err(TokenError::InvalidScript("truncated OP_PUSHDATA4".into()));
+            }
+            let len =
+                u32::from_le_bytes([push[1], push[2], push[3], push[4]]) as usize;
+            if push.len() < 5 + len {
+                return Err(TokenError::InvalidScript("OP_PUSHDATA4 truncated".into()));
+            }
+            Ok(push[5..5 + len].to_vec())
+        }
+        // OP_1NEGATE pushes the script-num form of -1 (i.e. 0x81).
+        0x4f => Ok(vec![0x81]),
+        // OP_1..=OP_16 push the integer N (single byte 0x01..0x10).
+        0x51..=0x60 => Ok(vec![opcode - 0x50]),
+        _ => Err(TokenError::InvalidScript(format!(
+            "unsupported push opcode 0x{:02x}",
+            opcode
+        ))),
+    }
+}
+
+/// Encode `data` as a minimal push: empty → `OP_0`, 1..=75 → bare push,
+/// 76..=255 → OP_PUSHDATA1, 256..=65535 → OP_PUSHDATA2, larger → OP_PUSHDATA4.
+fn encode_minimal_push(data: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(data.len() + 5);
+    push_data(&mut out, data);
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -190,6 +337,183 @@ mod tests {
     #[test]
     fn build_flags_not_freezable() {
         assert_eq!(build_stas3_flags(false), vec![0x00]);
+    }
+
+    // -----------------------------------------------------------------------
+    // Fix J: Frozen marker conversion (spec §6.2)
+    // -----------------------------------------------------------------------
+
+    /// Helper: build a freeze test case.  Returns (label, original_push,
+    /// expected_frozen_push, value_after_unfreeze_in_minimal_form).
+    ///
+    /// For bare-opcode forms (OP_1, OP_3..OP_16, OP_1NEGATE) the round-trip
+    /// is value-preserving but NOT byte-preserving on the opcode side: per
+    /// spec §6.2 they must first be converted to pushdata form before
+    /// freezing, and unfreeze leaves them in pushdata form.
+    fn freeze_case(label: &str, original: Vec<u8>, expected_frozen: Vec<u8>, expected_unfrozen: Vec<u8>) {
+        let frozen = freeze_var2_push(&original).unwrap_or_else(|e| {
+            panic!("freeze_var2_push({}) failed: {:?}", label, e)
+        });
+        assert_eq!(
+            frozen, expected_frozen,
+            "{}: freeze produced {} but expected {}",
+            label,
+            hex::encode(&frozen),
+            hex::encode(&expected_frozen)
+        );
+        let unfrozen = unfreeze_var2_push(&frozen).unwrap_or_else(|e| {
+            panic!("unfreeze_var2_push({}) failed: {:?}", label, e)
+        });
+        assert_eq!(
+            unfrozen, expected_unfrozen,
+            "{}: unfreeze produced {} but expected {}",
+            label,
+            hex::encode(&unfrozen),
+            hex::encode(&expected_unfrozen)
+        );
+    }
+
+    #[test]
+    fn freeze_var2_op_0_to_op_2() {
+        // empty push (OP_0) → OP_2 (single byte 0x52)
+        // unfreeze: OP_2 → OP_0
+        freeze_case("OP_0", vec![0x00], vec![0x52], vec![0x00]);
+    }
+
+    #[test]
+    fn freeze_var2_pushdata_prepends_02() {
+        // direct push 1 byte: 0x01 0xAB → frozen body [0x02, 0xAB]
+        freeze_case(
+            "push_1_byte",
+            vec![0x01, 0xAB],
+            vec![0x02, 0x02, 0xAB],
+            vec![0x01, 0xAB],
+        );
+        // direct push 5 bytes
+        freeze_case(
+            "push_5_bytes",
+            vec![0x05, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE],
+            vec![0x06, 0x02, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE],
+            vec![0x05, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE],
+        );
+    }
+
+    #[test]
+    fn freeze_var2_op_pushdata1() {
+        // OP_PUSHDATA1 with 80-byte body — minimal-LE re-encoding still uses PUSHDATA1.
+        let body: Vec<u8> = (0..80).map(|i| i as u8).collect();
+        let mut original = vec![0x4cu8, 80];
+        original.extend_from_slice(&body);
+
+        // Frozen body: [0x02] + body, length 81 → still > 75, still PUSHDATA1.
+        let mut frozen_body = vec![0x02u8];
+        frozen_body.extend_from_slice(&body);
+        let mut expected_frozen = vec![0x4cu8, 81];
+        expected_frozen.extend_from_slice(&frozen_body);
+
+        // Unfreeze: original body re-encoded minimal → PUSHDATA1 with 80 bytes.
+        let mut expected_unfrozen = vec![0x4cu8, 80];
+        expected_unfrozen.extend_from_slice(&body);
+
+        freeze_case("PUSHDATA1_80", original, expected_frozen, expected_unfrozen);
+    }
+
+    #[test]
+    fn freeze_var2_op_pushdata2() {
+        // OP_PUSHDATA2 with 300-byte body.
+        let body: Vec<u8> = (0..300).map(|i| (i & 0xFF) as u8).collect();
+        let mut original = vec![0x4du8, 0x2C, 0x01]; // 300 LE = 0x012C
+        original.extend_from_slice(&body);
+
+        let mut frozen_body = vec![0x02u8];
+        frozen_body.extend_from_slice(&body);
+        // 301 = 0x012D LE
+        let mut expected_frozen = vec![0x4du8, 0x2D, 0x01];
+        expected_frozen.extend_from_slice(&frozen_body);
+
+        // unfreeze body length 300 → PUSHDATA2 again.
+        let mut expected_unfrozen = vec![0x4du8, 0x2C, 0x01];
+        expected_unfrozen.extend_from_slice(&body);
+
+        freeze_case("PUSHDATA2_300", original, expected_frozen, expected_unfrozen);
+    }
+
+    #[test]
+    fn freeze_var2_op_1_to_pushdata_form() {
+        // OP_1 (0x51) pushes the integer 1. Freeze MUST first convert to
+        // pushdata form (push the value 0x01 = 1 as a single byte), then
+        // prepend 0x02 → frozen body = [0x02, 0x01].
+        // Unfreeze yields [0x01] re-encoded minimal = bare push [0x01, 0x01].
+        freeze_case(
+            "OP_1",
+            vec![0x51],
+            vec![0x02, 0x02, 0x01],
+            vec![0x01, 0x01],
+        );
+    }
+
+    #[test]
+    fn freeze_var2_op_3_to_pushdata_form() {
+        // OP_3 (0x53) → push value 0x03 → frozen [0x02, 0x03] (2 bytes).
+        freeze_case(
+            "OP_3",
+            vec![0x53],
+            vec![0x02, 0x02, 0x03],
+            vec![0x01, 0x03],
+        );
+    }
+
+    #[test]
+    fn freeze_var2_op_16_to_pushdata_form() {
+        // OP_16 (0x60) → push value 0x10 (16) → frozen body [0x02, 0x10].
+        freeze_case(
+            "OP_16",
+            vec![0x60],
+            vec![0x02, 0x02, 0x10],
+            vec![0x01, 0x10],
+        );
+    }
+
+    #[test]
+    fn freeze_var2_op_1negate_to_pushdata_form() {
+        // OP_1NEGATE (0x4f) pushes -1 in script-num form, encoded as 0x81.
+        // Freeze: prepend 0x02 → frozen body [0x02, 0x81].
+        freeze_case(
+            "OP_1NEGATE",
+            vec![0x4f],
+            vec![0x02, 0x02, 0x81],
+            vec![0x01, 0x81],
+        );
+    }
+
+    #[test]
+    fn freeze_var2_table_driven_round_trip() {
+        // Comprehensive table covering every OP_N in the spec.
+        for n in 1u8..=16 {
+            if n == 2 { continue; } // OP_2 means frozen, not a freezable input
+            let opcode = 0x50 + n;
+            let original = vec![opcode];
+            let frozen = freeze_var2_push(&original).expect("freeze should work");
+            let unfrozen = unfreeze_var2_push(&frozen).expect("unfreeze should work");
+            // After unfreeze we get the value-byte in minimal pushdata form.
+            assert_eq!(unfrozen, vec![0x01, n], "round-trip OP_{}", n);
+        }
+    }
+
+    #[test]
+    fn unfreeze_op_2_yields_op_0() {
+        let unfrozen = unfreeze_var2_push(&[0x52]).unwrap();
+        assert_eq!(unfrozen, vec![0x00]);
+    }
+
+    #[test]
+    fn unfreeze_rejects_non_frozen() {
+        // Plain bare push without 0x02 prefix is not a frozen form.
+        let result = unfreeze_var2_push(&[0x02, 0x03, 0xCA, 0xFE]); // body [0x03, 0xCA, 0xFE]
+        assert!(
+            result.is_err(),
+            "non-frozen body (no leading 0x02) must error"
+        );
     }
 
     #[test]

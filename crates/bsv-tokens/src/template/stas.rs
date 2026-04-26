@@ -213,15 +213,15 @@ impl UnlockingScriptTemplate for StasMpkhUnlockingTemplate {
 
     /// Estimate the byte length of a STAS P2MPKH unlocking script.
     ///
-    /// m signatures: m * (1 push + 72 DER + sighash) = m * 73
-    /// multisig script: 1 (OP_m) + n * 34 (OP_DATA_33 + 33) + 1 (OP_n) + 1 (OP_CHECKMULTISIG)
-    /// Plus push-data prefix for the script (~3 bytes for OP_PUSHDATA1).
+    /// `m` signatures: `m * (1 push + 72 DER + 1 sighash) = m * 73`.
+    /// Redeem script buffer (STAS 3.0 wire format, spec § 10.2):
+    /// `2 + 34 * n` bytes, plus a 2-byte `OP_PUSHDATA1` prefix.
     fn estimate_length(&self, _tx: &Transaction, _input_index: u32) -> u32 {
         let m = self.multisig.threshold() as u32;
         let n = self.multisig.n() as u32;
         let sig_bytes = m * 73;
-        let script_bytes = 3 + n * 34 + 3; // script + pushdata overhead
-        sig_bytes + script_bytes
+        let redeem_len = 2 + n * 34;
+        sig_bytes + 2 + redeem_len
     }
 }
 
@@ -274,9 +274,9 @@ mod tests {
         ).unwrap();
         let tx = bsv_transaction::transaction::Transaction::default();
         let est = unlocker.estimate_length(&tx, 0);
-        // 2 * 73 (sigs) + 3 + 3*34 + 3 (script + overhead) = 146 + 108 = 254
         assert!(est > 106); // must be more than P2PKH
-        assert_eq!(est, 2 * 73 + 3 + 3 * 34 + 3);
+        // 2 * 73 (sigs) + 2 (PUSHDATA1) + (2 + 3*34) redeem = 146 + 2 + 104 = 252
+        assert_eq!(est, 2 * 73 + 2 + (2 + 3 * 34));
     }
 
     // -------------------------------------------------------------------
@@ -463,8 +463,8 @@ mod tests {
         let unlocker = unlock_mpkh(vec![keys[0].clone()], ms, None).unwrap();
         let tx = bsv_transaction::transaction::Transaction::default();
         let est = unlocker.estimate_length(&tx, 0);
-        // 1 * 73 + 3 + 1*34 + 3 = 73 + 40 = 113
-        assert_eq!(est, 1 * 73 + 3 + 1 * 34 + 3);
+        // 1*73 + 2 (PUSHDATA1) + (2 + 1*34) redeem = 73 + 2 + 36 = 111
+        assert_eq!(est, 73 + 2 + (2 + 34));
     }
 
     #[test]
@@ -480,7 +480,7 @@ mod tests {
         .unwrap();
         let tx = bsv_transaction::transaction::Transaction::default();
         let est = unlocker.estimate_length(&tx, 0);
-        // 3 * 73 + 3 + 5*34 + 3 = 219 + 176 = 395
-        assert_eq!(est, 3 * 73 + 3 + 5 * 34 + 3);
+        // 3*73 + 2 (PUSHDATA1) + (2 + 5*34) redeem = 219 + 2 + 172 = 393
+        assert_eq!(est, 3 * 73 + 2 + (2 + 5 * 34));
     }
 }

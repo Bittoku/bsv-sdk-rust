@@ -48,3 +48,50 @@ pub const P2PKH_PREFIX: [u8; 3] = [0x76, 0xa9, 0x14];
 
 /// P2PKH suffix: OP_EQUALVERIFY OP_CHECKSIG.
 pub const P2PKH_SUFFIX: [u8; 2] = [0x88, 0xac];
+
+/// Total length of the STAS 3.0 P2MPKH locking script body, in bytes.
+///
+/// The P2MPKH locking script (spec § 10.2) is a fixed 70-byte template:
+///   `[3-byte prefix][20-byte MPKH][47-byte suffix]`
+pub const P2MPKH_LOCKING_LEN: usize = 70;
+
+/// STAS 3.0 P2MPKH locking-script prefix: OP_DUP OP_HASH160 OP_DATA_20.
+pub const P2MPKH_LOCKING_PREFIX: [u8; 3] = [0x76, 0xa9, 0x14];
+
+/// STAS 3.0 P2MPKH locking-script suffix (the 47 bytes that follow the
+/// 20-byte `MPKH`).  Spec § 10.2 reference assembly:
+/// `OP_EQUALVERIFY OP_SIZE 0x21 OP_EQUAL OP_IF OP_CHECKSIG OP_ELSE
+///  OP_1 OP_SPLIT (OP_1 OP_SPLIT OP_IFDUP OP_IF OP_SWAP OP_SPLIT OP_ENDIF)×5
+///  OP_CHECKMULTISIG OP_ENDIF`
+pub const P2MPKH_LOCKING_SUFFIX: [u8; 47] = [
+    0x88, 0x82, 0x01, 0x21, 0x87, 0x63, 0xac, 0x67,
+    0x51, 0x7f, 0x51, 0x7f, 0x73, 0x63, 0x7c, 0x7f, 0x68,
+    0x51, 0x7f, 0x73, 0x63, 0x7c, 0x7f, 0x68,
+    0x51, 0x7f, 0x73, 0x63, 0x7c, 0x7f, 0x68,
+    0x51, 0x7f, 0x73, 0x63, 0x7c, 0x7f, 0x68,
+    0x51, 0x7f, 0x73, 0x63, 0x7c, 0x7f, 0x68,
+    0xae, 0x68,
+];
+
+/// Build the fixed 70-byte STAS 3.0 P2MPKH locking script for a given `MPKH`.
+///
+/// # Arguments
+/// * `mpkh` – 20-byte HASH160 of a STAS 3.0 redeem script.
+///
+/// # Returns
+/// A 70-byte array containing the locking-script body.
+pub fn build_p2mpkh_locking_script(mpkh: [u8; 20]) -> [u8; P2MPKH_LOCKING_LEN] {
+    let mut out = [0u8; P2MPKH_LOCKING_LEN];
+    out[..3].copy_from_slice(&P2MPKH_LOCKING_PREFIX);
+    out[3..23].copy_from_slice(&mpkh);
+    out[23..].copy_from_slice(&P2MPKH_LOCKING_SUFFIX);
+    out
+}
+
+/// `EMPTY_HASH160 = HASH160("")` — the 20-byte sentinel used by STAS 3.0
+/// to mean "skip authority check" in owner / arbitrator slots
+/// (spec § 10.2).
+pub const EMPTY_HASH160: [u8; 20] = [
+    0xb4, 0x72, 0xa2, 0x66, 0xd0, 0xbd, 0x89, 0xc1, 0x37, 0x06,
+    0xa4, 0x13, 0x2c, 0xcf, 0xb1, 0x6f, 0x7c, 0x3b, 0x9f, 0xcb,
+];

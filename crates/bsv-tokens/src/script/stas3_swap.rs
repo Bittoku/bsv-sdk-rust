@@ -7,6 +7,16 @@ use crate::script::reader::read_locking_script;
 use crate::types::{ActionData, Stas3SwapMode};
 use crate::ScriptType;
 
+/// The `HASH160("")` sentinel used by STAS 3.0 to mark a UTXO as having
+/// no signature requirement (arbitrator-free swap, spec §9.5 / §10.3).
+///
+/// Concretely: `RIPEMD160(SHA256(""))` =
+/// `b472a266d0bd89c13706a4132ccfb16f7c3b9fcb`.
+pub const EMPTY_HASH160: [u8; 20] = [
+    0xb4, 0x72, 0xa2, 0x66, 0xd0, 0xbd, 0x89, 0xc1, 0x37, 0x06, 0xa4, 0x13, 0x2c, 0xcf, 0xb1, 0x6f,
+    0x7c, 0x3b, 0x9f, 0xcb,
+];
+
 /// Compute the SHA-256 hash of a STAS3 locking script's "tail".
 ///
 /// The tail is everything after the owner pushdata and the action data
@@ -141,6 +151,20 @@ pub fn is_stas3_frozen(script: &[u8]) -> bool {
         return false;
     }
     parsed.stas3.map_or(false, |d| d.frozen)
+}
+
+/// Check whether a STAS 3.0 locking script's `owner` field equals the
+/// `HASH160("")` sentinel — i.e. the UTXO is "arbitrator-free" and the engine
+/// will accept `OP_FALSE` in place of both signature and address preimage
+/// (spec §9.5 / §10.3 / §11 EMPTY_HASH160 sentinel).
+///
+/// Returns `false` for non-STAS 3.0 scripts.
+pub fn is_arbitrator_free_owner(locking_script: &[u8]) -> bool {
+    let parsed = read_locking_script(locking_script);
+    if parsed.script_type != ScriptType::Stas3 {
+        return false;
+    }
+    parsed.stas3.is_some_and(|d| d.owner == EMPTY_HASH160)
 }
 
 #[cfg(test)]
@@ -279,5 +303,42 @@ mod tests {
     fn script_hash_not_stas3_rejected() {
         let p2pkh = hex::decode("76a91489abcdefabbaabbaabbaabbaabbaabbaabbaabba88ac").unwrap();
         assert!(compute_stas3_requested_script_hash(&p2pkh).is_err());
+    }
+
+    #[test]
+    fn empty_hash160_constant_matches_spec() {
+        // HASH160("") = RIPEMD160(SHA256("")) per STAS 3.0 spec v0.1 §11.
+        assert_eq!(
+            hex::encode(EMPTY_HASH160),
+            "b472a266d0bd89c13706a4132ccfb16f7c3b9fcb"
+        );
+    }
+
+    #[test]
+    fn is_arbitrator_free_owner_true_for_empty_hash160() {
+        // Build a STAS3 locking script whose owner field is EMPTY_HASH160.
+        let redemption = [0x22; 20];
+        let script = build_stas3_locking_script(
+            &EMPTY_HASH160, &redemption, None, false, true, &[], &[],
+        )
+        .unwrap();
+        assert!(is_arbitrator_free_owner(script.to_bytes()));
+    }
+
+    #[test]
+    fn is_arbitrator_free_owner_false_for_regular_owner() {
+        let owner = [0x11; 20]; // not the sentinel
+        let redemption = [0x22; 20];
+        let script = build_stas3_locking_script(
+            &owner, &redemption, None, false, true, &[], &[],
+        )
+        .unwrap();
+        assert!(!is_arbitrator_free_owner(script.to_bytes()));
+    }
+
+    #[test]
+    fn is_arbitrator_free_owner_false_for_non_stas3() {
+        let p2pkh = hex::decode("76a91489abcdefabbaabbaabbaabbaabbaabbaabbaabba88ac").unwrap();
+        assert!(!is_arbitrator_free_owner(&p2pkh));
     }
 }

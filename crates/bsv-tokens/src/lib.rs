@@ -28,11 +28,11 @@ pub use script_type::ScriptType;
 pub use types::{Payment, Destination, Stas3SpendType, Stas3SwapMode, ActionData, Stas3LockingParams, Stas3Destination, SigningKey, OwnerAddress};
 pub use script::stas_builder::build_stas_locking_script;
 pub use script::stas_btg_builder::build_stas_btg_locking_script;
-pub use script::stas3_builder::{build_stas3_locking_script, build_stas3_flags};
-pub use script::stas3_swap::{compute_stas3_requested_script_hash, resolve_stas3_swap_mode, is_stas3_frozen};
+pub use script::stas3_builder::{build_stas3_locking_script, build_stas3_flags, freeze_var2_push, unfreeze_var2_push};
+pub use script::stas3_swap::{compute_stas3_requested_script_hash, resolve_stas3_swap_mode, is_stas3_frozen, is_arbitrator_free_owner, EMPTY_HASH160};
 pub use template::stas::{StasUnlockingTemplate, StasMpkhUnlockingTemplate};
 pub use template::stas_btg::{StasBtgUnlockingTemplate, StasBtgCheckpointUnlockingTemplate};
-pub use template::stas3::{Stas3UnlockingTemplate, Stas3MpkhUnlockingTemplate};
+pub use template::stas3::{Stas3UnlockingTemplate, Stas3MpkhUnlockingTemplate, Stas3NoAuthUnlockingTemplate, encode_unlock_amount, push_unlock_amount, unlock_for_input};
 pub use proof::split_tx_around_output;
 pub use lineage::{LineageValidator, TxFetcher};
 pub use factory::{
