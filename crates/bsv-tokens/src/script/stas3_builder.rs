@@ -48,20 +48,15 @@ pub fn build_stas3_locking_script(
         }
         (_, Some(data)) => {
             let bytes = match data {
-                ActionData::Swap {
-                    requested_script_hash,
-                    requested_pkh,
-                    rate_numerator,
-                    rate_denominator,
-                } => {
-                    // 61 bytes: 1 (kind 0x01) + 32 (hash) + 20 (pkh) + 4 (num LE) + 4 (den LE)
-                    let mut buf = Vec::with_capacity(61);
-                    buf.push(0x01); // swap action kind
-                    buf.extend_from_slice(requested_script_hash);
-                    buf.extend_from_slice(requested_pkh);
-                    buf.extend_from_slice(&rate_numerator.to_le_bytes());
-                    buf.extend_from_slice(&rate_denominator.to_le_bytes());
-                    buf
+                ActionData::Swap { .. } => {
+                    // Use the canonical SwapDescriptor encoder so that the
+                    // optional recursive `next` field (spec §6.3) is emitted
+                    // correctly. Falls back to the 61-byte non-recursive form
+                    // when `next` is `None`.
+                    let descriptor = data
+                        .as_swap_descriptor()
+                        .expect("ActionData::Swap matched");
+                    descriptor.to_var2_bytes()
                 }
                 ActionData::Custom(b) => b.clone(),
             };

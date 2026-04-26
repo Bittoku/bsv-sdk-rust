@@ -179,6 +179,7 @@ mod tests {
             requested_pkh: [0xcd; 20],
             rate_numerator: 1,
             rate_denominator: 1,
+            next: None,
         }
     }
 

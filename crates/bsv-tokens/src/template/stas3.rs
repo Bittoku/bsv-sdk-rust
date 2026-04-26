@@ -316,6 +316,56 @@ impl UnlockingScriptTemplate for Stas3MpkhUnlockingTemplate {
     }
 }
 
+// ---------------------------------------------------------------------------
+// STAS 3.0 trailing-params wrapper (spec §8.1, §9.5 — atomic-swap & merge)
+// ---------------------------------------------------------------------------
+
+/// Wraps any inner [`UnlockingScriptTemplate`] and appends a raw trailing
+/// parameter block (counterparty script + piece count + piece array, or
+/// piece count + piece array for merge variants) AFTER the standard authz.
+///
+/// The trailing bytes are appended verbatim — they are NOT pushed as a
+/// single push; the spec lays them out as per-parameter pushes that the
+/// caller must encode separately. Use
+/// [`crate::script::stas3_pieces::encode_atomic_swap_trailing_params`] or
+/// [`crate::script::stas3_pieces::encode_merge_trailing_params`] to build
+/// the block.
+pub struct Stas3TrailingParamsTemplate {
+    inner: Box<dyn UnlockingScriptTemplate>,
+    trailing_bytes: Vec<u8>,
+}
+
+impl Stas3TrailingParamsTemplate {
+    /// Create a wrapper that appends `trailing_bytes` verbatim after the
+    /// inner template's produced unlocking script. Pass already-pushdata-
+    /// encoded bytes when the spec requires per-parameter pushes; pass raw
+    /// bytes when the engine expects them concatenated.
+    pub fn new(
+        inner: Box<dyn UnlockingScriptTemplate>,
+        trailing_bytes: Vec<u8>,
+    ) -> Self {
+        Self {
+            inner,
+            trailing_bytes,
+        }
+    }
+}
+
+impl UnlockingScriptTemplate for Stas3TrailingParamsTemplate {
+    fn sign(&self, tx: &Transaction, input_index: u32) -> Result<Script, TransactionError> {
+        let mut inner_script = self.inner.sign(tx, input_index)?;
+        // Append the trailing bytes directly; callers control push framing.
+        let mut bytes = inner_script.to_bytes().to_vec();
+        bytes.extend_from_slice(&self.trailing_bytes);
+        inner_script = Script::from_bytes(&bytes);
+        Ok(inner_script)
+    }
+
+    fn estimate_length(&self, tx: &Transaction, input_index: u32) -> u32 {
+        self.inner.estimate_length(tx, input_index) + self.trailing_bytes.len() as u32
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1,7 +1,7 @@
 //! Script reader for parsing STAS and STAS 3.0 locking scripts.
 
 use crate::script::templates::*;
-use crate::types::ActionData;
+use crate::types::{ActionData, SwapDescriptor};
 use crate::{ScriptType, TokenId};
 
 /// Result of parsing a locking script.
@@ -233,31 +233,29 @@ fn try_parse_stas3(script: &[u8]) -> Option<Stas3Fields> {
 
     // Parse action data
     let action_data_parsed = action_data_raw.as_ref().and_then(|raw| {
-        // Swap action data: 61 bytes starting with kind 0x01
-        if raw.len() == 61 && raw[0] == 0x01 {
-            let mut hash = [0u8; 32];
-            hash.copy_from_slice(&raw[1..33]);
-            let mut pkh = [0u8; 20];
-            pkh.copy_from_slice(&raw[33..53]);
-            let rate_numerator = u32::from_le_bytes([raw[53], raw[54], raw[55], raw[56]]);
-            let rate_denominator = u32::from_le_bytes([raw[57], raw[58], raw[59], raw[60]]);
-            Some(ActionData::Swap {
-                requested_script_hash: hash,
-                requested_pkh: pkh,
-                rate_numerator,
-                rate_denominator,
-            })
-        } else if raw.len() == 32 {
+        // Swap action data: ≥61 bytes starting with kind 0x01 (spec §6.3).
+        // The trailing bytes (if any) form the recursive `next` field —
+        // delegated to `SwapDescriptor::parse` which understands all forms
+        // including chained recursive swaps.
+        if !raw.is_empty() && raw[0] == 0x01 && raw.len() >= 61 {
+            if let Ok(descriptor) = SwapDescriptor::parse(raw) {
+                return Some(ActionData::from(descriptor));
+            }
+            // Malformed swap descriptor — fall through to Custom.
+        }
+        if raw.len() == 32 {
             // Legacy: bare 32-byte hash (no kind byte) — treat as swap with zero rate
             let mut hash = [0u8; 32];
             hash.copy_from_slice(raw);
-            Some(ActionData::Swap {
+            return Some(ActionData::Swap {
                 requested_script_hash: hash,
                 requested_pkh: [0u8; 20],
                 rate_numerator: 0,
                 rate_denominator: 0,
-            })
-        } else if !raw.is_empty() && raw != &[0x52] {
+                next: None,
+            });
+        }
+        if !raw.is_empty() && raw != &[0x52] {
             Some(ActionData::Custom(raw.clone()))
         } else {
             None

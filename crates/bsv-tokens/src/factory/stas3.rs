@@ -2294,6 +2294,7 @@ mod tests {
             requested_pkh: [0xcd; 20],
             rate_numerator: 1,
             rate_denominator: 1,
+            next: None,
         }
     }
 
@@ -2425,6 +2426,7 @@ mod tests {
             requested_pkh: [0xcd; 20],
             rate_numerator: 2,
             rate_denominator: 3,
+            next: None,
         };
         let redemption = [0x22; 20];
 
@@ -2510,6 +2512,7 @@ mod tests {
             requested_pkh: [0xcd; 20],
             rate_numerator: 3,
             rate_denominator: 2,
+            next: None,
         };
         let redemption = [0x22; 20];
 
@@ -2993,6 +2996,7 @@ mod tests {
             requested_pkh: [0xcd; 20],
             rate_numerator: 2,
             rate_denominator: 3,
+            next: None,
         };
 
         let source_a_locking = make_stas3_swap_locking(&owner_a, &redemption, &swap_data_a);
@@ -3084,18 +3088,21 @@ mod tests {
                     requested_pkh: rp,
                     rate_numerator: rn,
                     rate_denominator: rd,
+                    next: rnext,
                 }),
                 ActionData::Swap {
                     requested_script_hash: sh,
                     requested_pkh: sp,
                     rate_numerator: sn,
                     rate_denominator: sd,
+                    next: snext,
                 },
             ) => {
                 assert_eq!(rh, *sh);
                 assert_eq!(rp, *sp);
                 assert_eq!(rn, *sn);
                 assert_eq!(rd, *sd);
+                assert_eq!(&rnext, snext);
             }
             (other, _) => panic!("remainder must inherit Swap descriptor, got {:?}", other),
         }
@@ -3192,6 +3199,7 @@ mod tests {
             requested_pkh: [0xef; 20],
             rate_numerator: 42,
             rate_denominator: 7,
+            next: None,
         };
 
         let script = build_stas3_locking_script(
@@ -3209,11 +3217,13 @@ mod tests {
                 requested_pkh,
                 rate_numerator,
                 rate_denominator,
+                next,
             }) => {
                 assert_eq!(requested_script_hash, [0xab; 32]);
                 assert_eq!(requested_pkh, [0xef; 20]);
                 assert_eq!(rate_numerator, 42);
                 assert_eq!(rate_denominator, 7);
+                assert!(next.is_none(), "non-recursive descriptor should have next = None");
             }
             other => panic!("expected Swap action data, got {:?}", other),
         }
