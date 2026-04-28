@@ -39,6 +39,7 @@ pub use template::stas_btg::{StasBtgUnlockingTemplate, StasBtgCheckpointUnlockin
 pub use template::stas3::{
     Stas3UnlockingTemplate, Stas3MpkhUnlockingTemplate, Stas3NoAuthUnlockingTemplate,
     Stas3TrailingParamsTemplate, encode_unlock_amount, push_unlock_amount, unlock_for_input,
+    unlock_for_input_with_witness,
     Stas3UnlockWitness, Stas3WitnessOutput, Stas3WitnessChange, compute_input_preimage,
     unlock_with_witness, unlock_mpkh_with_witness,
 };

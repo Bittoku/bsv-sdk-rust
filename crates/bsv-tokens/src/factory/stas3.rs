@@ -16,10 +16,17 @@ use bsv_transaction::transaction::Transaction;
 
 use crate::error::TokenError;
 use crate::scheme::TokenScheme;
+use crate::script::reader::read_locking_script;
 use crate::script::stas3_builder::build_stas3_locking_script;
 use crate::script::stas3_swap::{is_stas3_frozen, resolve_stas3_swap_mode};
+use crate::script_type::ScriptType;
 use crate::template::stas3 as stas3_template;
-use crate::types::{Stas3SpendType, Stas3SwapMode, SigningKey};
+use crate::template::stas3::{
+    Stas3UnlockWitness, Stas3WitnessChange, Stas3WitnessOutput, compute_input_preimage,
+};
+use crate::types::{SigningKey, Stas3SpendType, Stas3SwapMode, Stas3TxType};
+
+use bsv_transaction::sighash::SIGHASH_ALL_FORKID;
 
 // -----------------------------------------------------------------------
 // Config structs
@@ -385,6 +392,231 @@ fn add_fee_change(
 }
 
 // -----------------------------------------------------------------------
+// §7 Unlock witness derivation
+// -----------------------------------------------------------------------
+
+/// Derive the spec §7 unlock witness (slots 1..=20) from the structure of
+/// the given spending transaction.
+///
+/// # Arguments
+/// * `tx`                   – The (mostly-built, unsigned) transaction.
+/// * `input_index`          – Index of the input being signed.
+/// * `funding_input_index`  – Optional index of the funding input on `tx`
+///   (used to populate slots 16–17). When `None`, the helper attempts to
+///   auto-detect by scanning `tx.inputs` for the first non-STAS3-shaped
+///   prev locking script.
+/// * `tx_type`              – Spec §7 slot 18 (txType).
+/// * `spend_type`           – Spec §7 slot 20 (spendType).
+/// * `sighash_flag`         – Sighash flag used to compute slot 19's
+///   BIP-143 preimage.
+///
+/// # Witness population (per spec §7)
+/// * Slots 1–12: walks `tx.outputs` in order; for the first up-to-4
+///   outputs whose locking script parses as `ScriptType::Stas3`, emits
+///   `(amount, owner_pkh, var2)` triplets.
+/// * Slots 13–14: scans the remaining (non-STAS3) outputs for the first
+///   `ScriptType::P2pkh` (or `ScriptType::P2Mpkh`) — that's the change.
+/// * Slot 15: looks for a trailing OP_RETURN-style output (`OP_FALSE
+///   OP_RETURN <payload>` or `OP_RETURN <payload>`) and lifts the payload
+///   into `note_data`.
+/// * Slots 16–17: resolved from `funding_input_index` if provided,
+///   otherwise auto-detected.
+/// * Slot 18: caller-supplied `tx_type`.
+/// * Slot 19: BIP-143 preimage of input `input_index`.
+/// * Slot 20: caller-supplied `spend_type`.
+fn derive_witness_for_input(
+    tx: &Transaction,
+    input_index: usize,
+    funding_input_index: Option<usize>,
+    tx_type: Stas3TxType,
+    spend_type: Stas3SpendType,
+    sighash_flag: u32,
+) -> Result<Stas3UnlockWitness, TokenError> {
+    // Slots 1–12: walk outputs in order, take first up-to-4 STAS3.
+    let mut stas_outputs: Vec<Stas3WitnessOutput> = Vec::new();
+    let mut change: Option<Stas3WitnessChange> = None;
+    let mut note_data: Option<Vec<u8>> = None;
+
+    for output in &tx.outputs {
+        let script_bytes = output.locking_script.to_bytes();
+        let parsed = read_locking_script(script_bytes);
+
+        match parsed.script_type {
+            ScriptType::Stas3 => {
+                if stas_outputs.len() < 4 {
+                    let stas3 = parsed
+                        .stas3
+                        .expect("STAS3 classification must yield Stas3Fields");
+                    let var2 = stas3.action_data_raw.unwrap_or_default();
+                    stas_outputs.push(Stas3WitnessOutput {
+                        amount: output.satoshis,
+                        owner_pkh: stas3.owner,
+                        var2,
+                    });
+                }
+            }
+            ScriptType::P2pkh => {
+                if change.is_none() {
+                    // P2PKH layout: 76 a9 14 <20B PKH> 88 ac
+                    let mut pkh = [0u8; 20];
+                    pkh.copy_from_slice(&script_bytes[3..23]);
+                    change = Some(Stas3WitnessChange {
+                        amount: output.satoshis,
+                        addr_pkh: pkh,
+                    });
+                }
+            }
+            ScriptType::P2Mpkh => {
+                if change.is_none() {
+                    // P2MPKH layout: 76 a9 14 <20B MPKH> ... (spec §10.2)
+                    let mut pkh = [0u8; 20];
+                    pkh.copy_from_slice(&script_bytes[3..23]);
+                    change = Some(Stas3WitnessChange {
+                        amount: output.satoshis,
+                        addr_pkh: pkh,
+                    });
+                }
+            }
+            ScriptType::OpReturn => {
+                if note_data.is_none() {
+                    note_data = extract_op_return_payload(script_bytes);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // Slots 16–17: funding pointer.
+    let funding_input = resolve_funding_input(tx, input_index, funding_input_index);
+
+    // Slot 19: BIP-143 preimage.
+    let sighash_preimage = compute_input_preimage(tx, input_index, sighash_flag)
+        .map_err(TokenError::Transaction)?;
+
+    Ok(Stas3UnlockWitness {
+        stas_outputs,
+        change,
+        note_data,
+        funding_input,
+        tx_type,
+        sighash_preimage,
+        spend_type,
+    })
+}
+
+/// Determine the funding-input pointer (slots 16–17) for the witness.
+///
+/// When `funding_input_index` is `Some`, that input is used. Otherwise,
+/// scan the inputs and pick the first one whose previous locking script
+/// is NOT a STAS 3.0 frame (typically the P2PKH fee input). Returns
+/// `None` when no candidate is found.
+fn resolve_funding_input(
+    tx: &Transaction,
+    input_index: usize,
+    funding_input_index: Option<usize>,
+) -> Option<([u8; 32], u32)> {
+    let pick = |idx: usize| -> Option<([u8; 32], u32)> {
+        let input = tx.inputs.get(idx)?;
+        Some((input.source_txid, input.source_tx_out_index))
+    };
+    if let Some(idx) = funding_input_index {
+        return pick(idx);
+    }
+    for (idx, input) in tx.inputs.iter().enumerate() {
+        if idx == input_index {
+            continue;
+        }
+        let prev_script = input
+            .source_tx_output()
+            .map(|o| o.locking_script.to_bytes().to_vec())
+            .unwrap_or_default();
+        let parsed = read_locking_script(&prev_script);
+        if !matches!(parsed.script_type, ScriptType::Stas3) {
+            return pick(idx);
+        }
+    }
+    None
+}
+
+/// If `script` is an `OP_FALSE OP_RETURN <payload>` or `OP_RETURN <payload>`
+/// data carrier (per spec §11 noteData output), return the raw payload
+/// bytes. Otherwise `None`.
+fn extract_op_return_payload(script: &[u8]) -> Option<Vec<u8>> {
+    // Find the OP_RETURN (0x6a) and parse the first push that follows.
+    let after = if script.len() >= 2 && script[0] == 0x00 && script[1] == 0x6a {
+        2
+    } else if !script.is_empty() && script[0] == 0x6a {
+        1
+    } else {
+        return None;
+    };
+    if after >= script.len() {
+        return Some(Vec::new());
+    }
+    let opcode = script[after];
+    match opcode {
+        0x00 => Some(Vec::new()),
+        0x01..=0x4b => {
+            let len = opcode as usize;
+            let end = after + 1 + len;
+            if end > script.len() {
+                return None;
+            }
+            Some(script[after + 1..end].to_vec())
+        }
+        0x4c => {
+            if after + 1 >= script.len() {
+                return None;
+            }
+            let len = script[after + 1] as usize;
+            let end = after + 2 + len;
+            if end > script.len() {
+                return None;
+            }
+            Some(script[after + 2..end].to_vec())
+        }
+        0x4d => {
+            if after + 2 >= script.len() {
+                return None;
+            }
+            let len =
+                u16::from_le_bytes([script[after + 1], script[after + 2]]) as usize;
+            let end = after + 3 + len;
+            if end > script.len() {
+                return None;
+            }
+            Some(script[after + 3..end].to_vec())
+        }
+        0x4e => {
+            if after + 4 >= script.len() {
+                return None;
+            }
+            let len = u32::from_le_bytes([
+                script[after + 1],
+                script[after + 2],
+                script[after + 3],
+                script[after + 4],
+            ]) as usize;
+            let end = after + 5 + len;
+            if end > script.len() {
+                return None;
+            }
+            Some(script[after + 5..end].to_vec())
+        }
+        _ => None,
+    }
+}
+
+/// Default [`Stas3TxType`] (spec §7 slot 18) for the regular non-merge,
+/// non-atomic-swap path. Atomic swap and merge variants override the
+/// `tx_type` separately at the call site (see
+/// [`build_stas3_transfer_swap_tx`], [`build_stas3_swap_swap_tx`], and
+/// [`build_stas3_confiscate_tx`]).
+fn default_tx_type_for(_spend_type: Stas3SpendType) -> Stas3TxType {
+    Stas3TxType::Regular
+}
+
+// -----------------------------------------------------------------------
 // Factory functions
 // -----------------------------------------------------------------------
 
@@ -563,6 +795,17 @@ pub fn build_stas3_issue_txs(config: &Stas3IssueConfig) -> Result<Stas3IssueTxs,
 /// - Outputs 0..M-1: STAS3 token outputs
 /// - Output M: Fee change
 pub fn build_stas3_base_tx(config: &Stas3BaseConfig) -> Result<Transaction, TokenError> {
+    build_stas3_base_tx_with_tx_type(config, default_tx_type_for(config.spend_type))
+}
+
+/// Internal helper: same as [`build_stas3_base_tx`] but lets callers pin
+/// the `tx_type` byte (spec §7 slot 18) so that atomic-swap (txType=1)
+/// and merge (txType=2..=7) variants are encoded in the witness even
+/// though the public API does not expose `tx_type` directly.
+fn build_stas3_base_tx_with_tx_type(
+    config: &Stas3BaseConfig,
+    tx_type: Stas3TxType,
+) -> Result<Transaction, TokenError> {
     if config.destinations.is_empty() {
         return Err(TokenError::InvalidDestination(
             "at least one destination required".into(),
@@ -636,23 +879,32 @@ pub fn build_stas3_base_tx(config: &Stas3BaseConfig) -> Result<Transaction, Toke
         config.fee_rate,
     )?;
 
-    // Sign token inputs with STAS3 template. `unlock_for_input` dispatches:
-    //   - arbitrator-free owner (HASH160("")) → no-auth (OP_FALSE) (spec §9.5)
-    //   - SigningKey::Single → P2PKH unlock
-    //   - SigningKey::Multi  → P2MPKH unlock
+    // Sign token inputs with the §7 witness-aware STAS3 templates.
+    // `unlock_for_input_with_witness` dispatches:
+    //   - arbitrator-free owner (HASH160("")) → no-auth (witness ‖ OP_FALSE) (spec §10.3)
+    //   - SigningKey::Single → P2PKH unlock (witness ‖ <sig> <pubkey>)
+    //   - SigningKey::Multi  → P2MPKH unlock (witness ‖ OP_0 <sigs> <redeem>)
+    let fee_idx = config.token_inputs.len();
     for (i, ti) in config.token_inputs.iter().enumerate() {
-        let unlocker = stas3_template::unlock_for_input(
+        let witness = derive_witness_for_input(
+            &tx,
+            i,
+            Some(fee_idx),
+            tx_type,
+            config.spend_type,
+            SIGHASH_ALL_FORKID,
+        )?;
+        let unlocker = stas3_template::unlock_for_input_with_witness(
             ti.locking_script.to_bytes(),
             &ti.signing_key,
-            config.spend_type,
             None,
+            witness,
         )?;
         let sig = unlocker.sign(&tx, i as u32)?;
         tx.inputs[i].unlocking_script = Some(sig);
     }
 
     // Sign fee input with P2PKH
-    let fee_idx = config.token_inputs.len();
     let p2pkh_unlocker = p2pkh::unlock(config.fee_private_key.clone(), None);
     let fee_sig = p2pkh_unlocker.sign(&tx, fee_idx as u32)?;
     tx.inputs[fee_idx].unlocking_script = Some(fee_sig);
@@ -751,7 +1003,8 @@ pub fn build_stas3_transfer_swap_tx(
 ) -> Result<Transaction, TokenError> {
     validate_swap_inputs(config)?;
     config.spend_type = Stas3SpendType::Transfer;
-    build_stas3_base_tx(config)
+    // Spec §7 slot 18: atomic-swap execution sets txType = 1.
+    build_stas3_base_tx_with_tx_type(config, Stas3TxType::AtomicSwap)
 }
 
 /// Build a STAS3 swap-swap transaction.
@@ -772,7 +1025,8 @@ pub fn build_stas3_swap_swap_tx(
     // both inputs. Cancellation (spendType = 4) is a separate factory —
     // see `build_stas3_swap_cancel_tx` for that path.
     config.spend_type = Stas3SpendType::Transfer;
-    build_stas3_base_tx(config)
+    // Spec §7 slot 18: atomic-swap execution sets txType = 1.
+    build_stas3_base_tx_with_tx_type(config, Stas3TxType::AtomicSwap)
 }
 
 /// Build a STAS3 swap flow transaction with auto-detected mode.
@@ -967,7 +1221,13 @@ pub fn build_stas3_confiscate_tx(config: Stas3ConfiscateConfig) -> Result<Transa
         fee_rate: config.fee_rate,
     };
 
-    build_stas3_base_tx(&base)
+    // Spec §4 / §9.3: confiscation places no restriction on `txType` —
+    // any value 0..=7 is valid. The `Stas3TxType` enum covers 0..=7;
+    // values outside that range are clamped to `Regular` so the witness
+    // still encodes a valid byte.
+    let tx_type =
+        Stas3TxType::from_u8(config.tx_type).unwrap_or(Stas3TxType::Regular);
+    build_stas3_base_tx_with_tx_type(&base, tx_type)
 }
 
 /// Configuration for a STAS 3.0 swap-cancellation transaction (spec §9.4).
@@ -1204,11 +1464,23 @@ pub fn build_stas3_redeem_tx(config: Stas3RedeemConfig) -> Result<Transaction, T
         config.fee_rate,
     )?;
 
-    // Sign token input with STAS3 template (spending type 1 = Transfer).
-    let unlocker = stas3_template::unlock_from_signing_key(
-        &config.token_input.signing_key,
+    // Sign token input with STAS3 template (spendType = 1 / Transfer per
+    // spec §9.x). The §7 witness encodes slots 1..=20 verbatim from the
+    // tx structure (the redeem-target P2PKH/P2MPKH output flows into the
+    // change slots 13–14, since it isn't a STAS3 output).
+    let witness = derive_witness_for_input(
+        &tx,
+        0,
+        Some(1), // fee input is index 1
+        Stas3TxType::Regular,
         Stas3SpendType::Transfer,
+        SIGHASH_ALL_FORKID,
+    )?;
+    let unlocker = stas3_template::unlock_for_input_with_witness(
+        config.token_input.locking_script.to_bytes(),
+        &config.token_input.signing_key,
         None,
+        witness,
     )?;
     let sig = unlocker.sign(&tx, 0)?;
     tx.inputs[0].unlocking_script = Some(sig);
@@ -3532,18 +3804,30 @@ mod tests {
 
         let tx = build_stas3_swap_swap_tx(&mut config).unwrap();
 
-        // Input 1 (arbitrator-free) unlocking script must be a single OP_FALSE.
+        // Input 1 (arbitrator-free) unlocking script per spec §10.3: full
+        // §7 witness body (slots 1..=20) followed by `OP_FALSE` in place
+        // of `<sig> <pubkey>`. The authz slot is therefore the LAST push
+        // and MUST be empty (OP_FALSE).
         let unlock = tx.inputs[1].unlocking_script.as_ref().expect("must be signed");
-        assert_eq!(
-            unlock.to_bytes(), &[0x00],
-            "arbitrator-free leg should unlock with single OP_FALSE"
+        let chunks = unlock.chunks().expect("unlock script chunks parse");
+        let last = chunks.last().expect("at least one push");
+        assert!(
+            last.data.is_none() || last.data.as_ref().is_some_and(|d| d.is_empty()),
+            "arbitrator-free leg authz slot must be OP_FALSE"
+        );
+        // Witness body must be non-empty — this is no longer the legacy
+        // single-OP_FALSE form.
+        assert!(
+            unlock.to_bytes().len() > 1,
+            "arbitrator-free leg now carries §7 witness body (got {} bytes)",
+            unlock.to_bytes().len()
         );
 
-        // Input 0 (regular) must be sig + pubkey (much longer).
+        // Input 0 (regular) must be witness ‖ <sig> <pubkey> (much longer).
         let unlock0 = tx.inputs[0].unlocking_script.as_ref().expect("must be signed");
         assert!(
             unlock0.to_bytes().len() > 70,
-            "regular leg should be sig + pubkey ({} bytes)",
+            "regular leg should be witness + sig + pubkey ({} bytes)",
             unlock0.to_bytes().len()
         );
     }
@@ -3730,5 +4014,385 @@ mod tests {
             build_stas3_swap_cancel_tx(config),
             Err(TokenError::SwapCancelMissingDescriptor)
         ));
+    }
+
+    // -------------------------------------------------------------------
+    // §7 unlock witness — end-to-end shape tests across factory families.
+    //
+    // Each test builds a tx through the public API and asserts that the
+    // produced unlocking script has the slots-1..=20 witness body
+    // followed by the authz push (`<sig> <pubkey>` for P2PKH).
+    // -------------------------------------------------------------------
+
+    use crate::template::stas3::encode_unlock_amount;
+
+    /// Walk a P2PKH-authz unlock and return slot pushes (1..=20) plus the
+    /// trailing two authz pushes (sig + pubkey). Returns the full chunk
+    /// list for callers that want to inspect raw shape too.
+    fn split_witness_and_authz_p2pkh(
+        unlock_bytes: &[u8],
+    ) -> Vec<bsv_script::ScriptChunk> {
+        let script = bsv_script::Script::from_bytes(unlock_bytes);
+        script.chunks().expect("unlock script chunks parse")
+    }
+
+    /// Confirm that the chunk list represents a §7 witness followed by a
+    /// P2PKH authz push (`<sig> <pubkey>` — last 2 chunks). Witness
+    /// pushes follow the slot order described on `Stas3UnlockWitness`.
+    ///
+    /// Returns the witness slot chunks (everything but the last 2).
+    fn assert_witness_shape_p2pkh<'a>(
+        chunks: &'a [bsv_script::ScriptChunk],
+        expected_first_amount: u64,
+    ) -> &'a [bsv_script::ScriptChunk] {
+        // Authz: last two chunks must be sig (~71..=73B) + pubkey (33B compressed).
+        assert!(chunks.len() >= 2, "witness + authz must produce ≥2 chunks");
+        let last = chunks.last().unwrap();
+        let second_last = &chunks[chunks.len() - 2];
+        let pubkey = last.data.as_ref().expect("pubkey push");
+        let sig = second_last.data.as_ref().expect("sig push");
+        assert_eq!(pubkey.len(), 33, "compressed pubkey is 33 bytes");
+        assert!(
+            (71..=73).contains(&sig.len()),
+            "DER sig + sighash flag is 71..=73 bytes (got {})",
+            sig.len()
+        );
+        assert_eq!(
+            *sig.last().unwrap(),
+            0x41,
+            "sig must end with SIGHASH_ALL_FORKID (0x41)"
+        );
+        // Witness slot 1 = out1_amount: minimal LE encoding.
+        let slot1 = chunks[0].data.as_ref();
+        let expected = encode_unlock_amount(expected_first_amount);
+        if expected.is_empty() {
+            assert!(
+                slot1.is_none() || slot1.is_some_and(|d| d.is_empty()),
+                "slot 1 (out1_amount=0) must be OP_FALSE (empty push)"
+            );
+        } else {
+            assert_eq!(
+                slot1.expect("slot 1 must be a push").as_slice(),
+                expected.as_slice(),
+                "slot 1 (out1_amount={expected_first_amount}) must be minimal LE",
+            );
+        }
+        &chunks[..chunks.len() - 2]
+    }
+
+    /// Locate the `txType` (slot 18) chunk in the witness body. The
+    /// witness emits in order: 3*N STAS-output chunks (N≤4), 2 change
+    /// slots, 1 noteData slot, 2 funding slots, then txType. The total
+    /// preamble size is `3*N + 2 + 1 + 2 = 3N + 5`, so txType sits at
+    /// index `3N + 5 - 1` (0-indexed) → `3N + 4` if we count from the
+    /// start of the witness. But we don't always know N here — instead
+    /// we look for the txType byte from the END: spendType is the LAST
+    /// witness chunk, preimage is second-from-last, txType is third.
+    fn extract_witness_tx_and_spend_types(
+        witness_chunks: &[bsv_script::ScriptChunk],
+    ) -> (u8, u8) {
+        assert!(
+            witness_chunks.len() >= 3,
+            "witness must contain at least txType+preimage+spendType"
+        );
+        let n = witness_chunks.len();
+        let tx_type = witness_chunks[n - 3]
+            .data
+            .as_ref()
+            .map(|d| d.first().copied().unwrap_or(0))
+            .unwrap_or(0);
+        let spend_type = witness_chunks[n - 1]
+            .data
+            .as_ref()
+            .map(|d| d.first().copied().unwrap_or(0))
+            .unwrap_or(0);
+        (tx_type, spend_type)
+    }
+
+    #[test]
+    fn e2e_base_tx_unlock_carries_witness_then_p2pkh_authz() {
+        let token_key = test_key();
+        let fee_key = test_key();
+        let owner_pkh = [0x11; 20];
+        let redemption_pkh = [0x22; 20];
+
+        let config = Stas3BaseConfig {
+            token_inputs: vec![TokenInput {
+                txid: dummy_hash(),
+                vout: 0,
+                satoshis: 5000,
+                locking_script: make_stas3_locking(&owner_pkh, &redemption_pkh),
+                signing_key: SigningKey::Single(token_key),
+            }],
+            fee_txid: dummy_hash(),
+            fee_vout: 1,
+            fee_satoshis: 50_000,
+            fee_locking_script: test_p2pkh_script(&fee_key),
+            fee_private_key: fee_key,
+            destinations: vec![Stas3OutputParams {
+                satoshis: 5000,
+                owner_pkh: [0x33; 20],
+                redemption_pkh,
+                frozen: false,
+                freezable: true,
+                service_fields: vec![],
+                optional_data: vec![],
+                action_data: None,
+            }],
+            spend_type: Stas3SpendType::Transfer,
+            fee_rate: 500,
+        };
+
+        let tx = build_stas3_base_tx(&config).unwrap();
+        let unlock = tx.inputs[0]
+            .unlocking_script
+            .as_ref()
+            .expect("token input signed");
+        let chunks = split_witness_and_authz_p2pkh(unlock.to_bytes());
+        let witness = assert_witness_shape_p2pkh(&chunks, 5000);
+        let (tx_type, spend_type) = extract_witness_tx_and_spend_types(witness);
+        assert_eq!(tx_type, 0, "base/transfer tx_type = Regular");
+        assert_eq!(spend_type, 1, "base/transfer spendType = Transfer");
+    }
+
+    #[test]
+    fn e2e_freeze_tx_unlock_witness_spend_type_is_freeze_unfreeze() {
+        let token_key = test_key();
+        let fee_key = test_key();
+        let mut config = Stas3BaseConfig {
+            token_inputs: vec![TokenInput {
+                txid: dummy_hash(),
+                vout: 0,
+                satoshis: 5000,
+                locking_script: make_stas3_locking(&[0x11; 20], &[0x22; 20]),
+                signing_key: SigningKey::Single(token_key),
+            }],
+            fee_txid: dummy_hash(),
+            fee_vout: 1,
+            fee_satoshis: 50_000,
+            fee_locking_script: test_p2pkh_script(&fee_key),
+            fee_private_key: fee_key,
+            destinations: vec![Stas3OutputParams {
+                satoshis: 5000,
+                owner_pkh: [0x11; 20],
+                redemption_pkh: [0x22; 20],
+                frozen: false,
+                freezable: true,
+                service_fields: vec![],
+                optional_data: vec![],
+                action_data: None,
+            }],
+            spend_type: Stas3SpendType::Transfer,
+            fee_rate: 500,
+        };
+
+        let tx = build_stas3_freeze_tx(&mut config).unwrap();
+        let unlock = tx.inputs[0]
+            .unlocking_script
+            .as_ref()
+            .expect("token input signed");
+        let chunks = split_witness_and_authz_p2pkh(unlock.to_bytes());
+        let witness = assert_witness_shape_p2pkh(&chunks, 5000);
+        let (tx_type, spend_type) = extract_witness_tx_and_spend_types(witness);
+        assert_eq!(tx_type, 0, "freeze tx_type = Regular");
+        assert_eq!(spend_type, 2, "freeze spendType = FreezeUnfreeze (2)");
+    }
+
+    #[test]
+    fn e2e_confiscate_tx_witness_spend_type_is_confiscation() {
+        let token_key = test_key();
+        let fee_key = test_key();
+        let redemption_pkh = [0x22; 20];
+        let config = Stas3ConfiscateConfig {
+            token_inputs: vec![TokenInput {
+                txid: dummy_hash(),
+                vout: 0,
+                satoshis: 5000,
+                locking_script: make_stas3_confiscatable_locking(
+                    &[0x11; 20],
+                    &redemption_pkh,
+                ),
+                signing_key: SigningKey::Single(token_key),
+            }],
+            fee_txid: dummy_hash(),
+            fee_vout: 1,
+            fee_satoshis: 50_000,
+            fee_locking_script: test_p2pkh_script(&fee_key),
+            fee_private_key: fee_key,
+            destinations: vec![Stas3OutputParams {
+                satoshis: 5000,
+                owner_pkh: redemption_pkh,
+                redemption_pkh,
+                frozen: false,
+                freezable: true,
+                service_fields: vec![],
+                optional_data: vec![],
+                action_data: None,
+            }],
+            fee_rate: 500,
+            tx_type: 5, // pin a non-default txType to verify it round-trips.
+        };
+        let tx = build_stas3_confiscate_tx(config).unwrap();
+        let unlock = tx.inputs[0]
+            .unlocking_script
+            .as_ref()
+            .expect("token input signed");
+        let chunks = split_witness_and_authz_p2pkh(unlock.to_bytes());
+        let witness = assert_witness_shape_p2pkh(&chunks, 5000);
+        let (tx_type, spend_type) = extract_witness_tx_and_spend_types(witness);
+        assert_eq!(tx_type, 5, "confiscate tx_type echoes caller-supplied byte");
+        assert_eq!(spend_type, 3, "confiscate spendType = Confiscation (3)");
+    }
+
+    #[test]
+    fn e2e_swap_cancel_tx_witness_spend_type_is_swap_cancellation() {
+        let receive = [0x77; 20];
+        let redemption = [0x22; 20];
+        let owner_a = [0x11; 20];
+        let token_key = test_key();
+        let fee_key = test_key();
+        let swap_data = cancel_swap_data(receive);
+        let locking = make_stas3_swap_locking(&owner_a, &redemption, &swap_data);
+        let config = Stas3SwapCancelConfig {
+            token_input: TokenInput {
+                txid: dummy_hash(),
+                vout: 0,
+                satoshis: 5000,
+                locking_script: locking,
+                signing_key: SigningKey::Single(token_key),
+            },
+            fee_txid: dummy_hash(),
+            fee_vout: 1,
+            fee_satoshis: 50_000,
+            fee_locking_script: test_p2pkh_script(&fee_key),
+            fee_private_key: fee_key,
+            destination: Stas3OutputParams {
+                satoshis: 5000,
+                owner_pkh: receive,
+                redemption_pkh: redemption,
+                frozen: false,
+                freezable: true,
+                service_fields: vec![],
+                optional_data: vec![],
+                action_data: None,
+            },
+            fee_rate: 500,
+        };
+        let tx = build_stas3_swap_cancel_tx(config).unwrap();
+        let unlock = tx.inputs[0]
+            .unlocking_script
+            .as_ref()
+            .expect("token input signed");
+        let chunks = split_witness_and_authz_p2pkh(unlock.to_bytes());
+        let witness = assert_witness_shape_p2pkh(&chunks, 5000);
+        let (tx_type, spend_type) = extract_witness_tx_and_spend_types(witness);
+        assert_eq!(tx_type, 0, "swap-cancel tx_type = Regular");
+        assert_eq!(spend_type, 4, "swap-cancel spendType = SwapCancellation (4)");
+    }
+
+    #[test]
+    fn e2e_atomic_swap_witness_tx_type_is_atomic_swap() {
+        let fee_key = test_key();
+        let swap_data = test_swap_data();
+        let redemption = [0x22; 20];
+        let mut config = Stas3BaseConfig {
+            token_inputs: vec![
+                TokenInput {
+                    txid: dummy_hash(),
+                    vout: 0,
+                    satoshis: 5000,
+                    locking_script: make_stas3_swap_locking(&[0x11; 20], &redemption, &swap_data),
+                    signing_key: SigningKey::Single(test_key()),
+                },
+                TokenInput {
+                    txid: dummy_hash(),
+                    vout: 1,
+                    satoshis: 5000,
+                    locking_script: make_stas3_swap_locking(&[0x33; 20], &redemption, &swap_data),
+                    signing_key: SigningKey::Single(test_key()),
+                },
+            ],
+            fee_txid: dummy_hash(),
+            fee_vout: 2,
+            fee_satoshis: 50_000,
+            fee_locking_script: test_p2pkh_script(&fee_key),
+            fee_private_key: fee_key,
+            destinations: vec![
+                Stas3OutputParams {
+                    satoshis: 5000,
+                    owner_pkh: [0x44; 20],
+                    redemption_pkh: redemption,
+                    frozen: false,
+                    freezable: true,
+                    service_fields: vec![],
+                    optional_data: vec![],
+                    action_data: None,
+                },
+                Stas3OutputParams {
+                    satoshis: 5000,
+                    owner_pkh: [0x55; 20],
+                    redemption_pkh: redemption,
+                    frozen: false,
+                    freezable: true,
+                    service_fields: vec![],
+                    optional_data: vec![],
+                    action_data: None,
+                },
+            ],
+            spend_type: Stas3SpendType::Transfer,
+            fee_rate: 500,
+        };
+        let tx = build_stas3_swap_swap_tx(&mut config).unwrap();
+        for i in 0..2 {
+            let unlock = tx.inputs[i]
+                .unlocking_script
+                .as_ref()
+                .expect("token input signed");
+            let chunks = split_witness_and_authz_p2pkh(unlock.to_bytes());
+            let witness = assert_witness_shape_p2pkh(&chunks, 5000);
+            let (tx_type, spend_type) = extract_witness_tx_and_spend_types(witness);
+            assert_eq!(
+                tx_type, 1,
+                "atomic-swap input {i} tx_type = AtomicSwap (1)"
+            );
+            assert_eq!(
+                spend_type, 1,
+                "atomic-swap input {i} spendType = Transfer (1) per spec §9.5"
+            );
+        }
+    }
+
+    #[test]
+    fn e2e_redeem_tx_witness_spend_type_is_transfer() {
+        let issuer_key = test_key();
+        let fee_key = test_key();
+        let config = make_redeem_config(&issuer_key, &fee_key, 10000, 10000, vec![], false);
+        let tx = build_stas3_redeem_tx(config).unwrap();
+        let unlock = tx.inputs[0]
+            .unlocking_script
+            .as_ref()
+            .expect("token input signed");
+        let chunks = split_witness_and_authz_p2pkh(unlock.to_bytes());
+        // Note: redeem produces a P2PKH redeem output (NOT a STAS3 output)
+        // → out1_amount slot reflects the lack of a leading STAS3 output, so
+        // the FIRST chunk corresponds to the change_amount slot 13 (not slot 1).
+        // Specifically: stas_outputs is empty → witness starts at slot 13.
+        // Let's verify the LAST 3 chunks are txType / preimage / spendType,
+        // and the trailing 2 are the P2PKH authz.
+        assert!(chunks.len() >= 5);
+        let last = chunks.last().unwrap();
+        let second_last = &chunks[chunks.len() - 2];
+        let pubkey = last.data.as_ref().expect("pubkey push");
+        let sig = second_last.data.as_ref().expect("sig push");
+        assert_eq!(pubkey.len(), 33, "compressed pubkey");
+        assert!((71..=73).contains(&sig.len()), "DER sig + sighash flag");
+        // Witness slots: spendType is third-from-end (after authz pubkey + sig).
+        let n = chunks.len();
+        let spend_type_byte = chunks[n - 3]
+            .data
+            .as_ref()
+            .map(|d| d.first().copied().unwrap_or(0))
+            .unwrap_or(0);
+        assert_eq!(spend_type_byte, 1, "redeem spendType = Transfer (1)");
     }
 }

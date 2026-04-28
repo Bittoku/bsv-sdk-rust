@@ -575,6 +575,47 @@ pub fn unlock_for_input(
     unlock_from_signing_key(key, spend_type, sighash_flag)
 }
 
+/// Create a STAS 3.0 unlocker that prepends the spec §7 unlock witness
+/// (slots 1..=20) before the authz push. Dispatches to:
+///   - [`Stas3NoAuthUnlockingTemplate::with_witness`] when the input is
+///     arbitrator-free (`HASH160("")` owner); the resulting unlock has the
+///     full witness body followed by `OP_FALSE` in place of `<sig> <pubkey>`
+///     (spec §10.3).
+///   - [`unlock_with_witness`] for `SigningKey::Single`.
+///   - [`unlock_mpkh_with_witness`] for `SigningKey::Multi`.
+///
+/// The caller is responsible for constructing a witness whose `tx_type`,
+/// `spend_type`, and per-output triplets match the spending tx structure
+/// (see `factory::stas3::derive_witness_for_input`).
+pub fn unlock_for_input_with_witness(
+    locking_script: &[u8],
+    key: &SigningKey,
+    sighash_flag: Option<u32>,
+    witness: Stas3UnlockWitness,
+) -> Result<Box<dyn UnlockingScriptTemplate>, TransactionError> {
+    if is_arbitrator_free_owner(locking_script) {
+        return Ok(Box::new(Stas3NoAuthUnlockingTemplate::with_witness(
+            witness,
+        )));
+    }
+    match key {
+        SigningKey::Single(pk) => Ok(Box::new(unlock_with_witness(
+            pk.clone(),
+            sighash_flag,
+            witness,
+        ))),
+        SigningKey::Multi {
+            private_keys,
+            multisig,
+        } => Ok(Box::new(unlock_mpkh_with_witness(
+            private_keys.clone(),
+            multisig.clone(),
+            sighash_flag,
+            witness,
+        )?)),
+    }
+}
+
 impl UnlockingScriptTemplate for Stas3MpkhUnlockingTemplate {
     /// Sign the specified input and produce the P2MPKH unlocking script.
     ///
