@@ -662,9 +662,21 @@ pub fn build_stas3_base_tx(config: &Stas3BaseConfig) -> Result<Transaction, Toke
 
 /// Build a STAS3 freeze transaction.
 ///
-/// Wrapper around [`build_stas3_base_tx`] that sets `frozen = true` on all outputs
-/// and uses `Stas3SpendType::FreezeUnfreeze`.
+/// Wrapper around [`build_stas3_base_tx`] that sets `frozen = true` on all
+/// outputs and uses `Stas3SpendType::FreezeUnfreeze`.
+///
+/// # Spec §9.2 enforcement
+/// - Exactly one STAS output must be produced.
+/// - Output non-`var2` fields (owner, redemption, freezable flag) must be
+///   byte-identical to the input.
+/// - The input UTXO must have the FREEZABLE flag bit (0x01) set in its
+///   `flags` byte.
+///
+/// # Errors
+/// Returns [`TokenError::FreezeOutputCount`], [`TokenError::FreezeFieldDrift`]
+/// or [`TokenError::FreezeFlagNotSet`] when these constraints are violated.
 pub fn build_stas3_freeze_tx(config: &mut Stas3BaseConfig) -> Result<Transaction, TokenError> {
+    enforce_freeze_invariants(config)?;
     config.spend_type = Stas3SpendType::FreezeUnfreeze;
     for dest in &mut config.destinations {
         dest.frozen = true;
@@ -674,14 +686,56 @@ pub fn build_stas3_freeze_tx(config: &mut Stas3BaseConfig) -> Result<Transaction
 
 /// Build a STAS3 unfreeze transaction.
 ///
-/// Wrapper around [`build_stas3_base_tx`] that sets `frozen = false` on all outputs
-/// and uses `Stas3SpendType::FreezeUnfreeze`.
+/// Wrapper around [`build_stas3_base_tx`] that sets `frozen = false` on all
+/// outputs and uses `Stas3SpendType::FreezeUnfreeze`. Same §9.2 invariants
+/// as [`build_stas3_freeze_tx`].
 pub fn build_stas3_unfreeze_tx(config: &mut Stas3BaseConfig) -> Result<Transaction, TokenError> {
+    enforce_freeze_invariants(config)?;
     config.spend_type = Stas3SpendType::FreezeUnfreeze;
     for dest in &mut config.destinations {
         dest.frozen = false;
     }
     build_stas3_base_tx(config)
+}
+
+/// Validate spec §9.2 freeze/unfreeze invariants:
+/// 1. Exactly one STAS output.
+/// 2. Non-`var2` fields identical to the (single) input.
+/// 3. FREEZABLE flag set on the input.
+fn enforce_freeze_invariants(config: &Stas3BaseConfig) -> Result<(), TokenError> {
+    if config.destinations.len() != 1 {
+        return Err(TokenError::FreezeOutputCount(config.destinations.len()));
+    }
+    if config.token_inputs.len() != 1 {
+        return Err(TokenError::FreezeFieldDrift(
+            "freeze tx must have exactly one token input",
+        ));
+    }
+    let input = &config.token_inputs[0];
+    let parsed = crate::script::reader::read_locking_script(input.locking_script.to_bytes());
+    let stas3 = parsed
+        .stas3
+        .ok_or(TokenError::FreezeFieldDrift("input is not a STAS 3.0 utxo"))?;
+    let dest = &config.destinations[0];
+
+    // Owner identical
+    if stas3.owner != dest.owner_pkh {
+        return Err(TokenError::FreezeFieldDrift("owner_pkh"));
+    }
+    // Redemption PKH identical
+    if stas3.redemption != dest.redemption_pkh {
+        return Err(TokenError::FreezeFieldDrift("redemption_pkh"));
+    }
+    // Freezable flag (bit 0 of flags byte). Input must be freezable;
+    // output should preserve the same freezable bit.
+    let input_freezable = stas3.flags.first().copied().unwrap_or(0) & 0x01 == 0x01;
+    if !input_freezable {
+        return Err(TokenError::FreezeFlagNotSet);
+    }
+    if input_freezable != dest.freezable {
+        return Err(TokenError::FreezeFieldDrift("freezable"));
+    }
+    Ok(())
 }
 
 /// Build a STAS3 transfer-swap transaction.
@@ -702,9 +756,11 @@ pub fn build_stas3_transfer_swap_tx(
 
 /// Build a STAS3 swap-swap transaction.
 ///
-/// Both inputs have swap action data and are spent via the swap path
-/// (spending type 4). Requires exactly 2 token inputs.
-/// Frozen inputs are rejected.
+/// Both inputs have swap action data and are spent via the executing-swap
+/// path. Per spec §9.5, atomic-swap execution uses `spendType = 1`
+/// (Transfer) on BOTH inputs — the previous implementation incorrectly
+/// used `SwapCancellation` (4). Requires exactly 2 token inputs. Frozen
+/// inputs are rejected.
 ///
 /// Outputs can be 2–4: principal swap legs (ownership exchanged) plus
 /// optional remainder outputs for fractional-rate swaps.
@@ -712,7 +768,10 @@ pub fn build_stas3_swap_swap_tx(
     config: &mut Stas3BaseConfig,
 ) -> Result<Transaction, TokenError> {
     validate_swap_inputs(config)?;
-    config.spend_type = Stas3SpendType::SwapCancellation;
+    // Spec §9.5: atomic swap execution uses spendType = 1 (Transfer) on
+    // both inputs. Cancellation (spendType = 4) is a separate factory —
+    // see `build_stas3_swap_cancel_tx` for that path.
+    config.spend_type = Stas3SpendType::Transfer;
     build_stas3_base_tx(config)
 }
 
@@ -881,6 +940,21 @@ pub fn build_stas3_confiscate_tx(config: Stas3ConfiscateConfig) -> Result<Transa
         ));
     }
 
+    // Spec §9.3: every confiscated input MUST have the CONFISCATABLE
+    // flag bit (0x02) set in its `flags` byte. Reject otherwise.
+    for ti in &config.token_inputs {
+        let parsed = crate::script::reader::read_locking_script(ti.locking_script.to_bytes());
+        let Some(stas3) = parsed.stas3 else {
+            return Err(TokenError::InvalidScript(
+                "confiscate input is not a STAS 3.0 utxo".into(),
+            ));
+        };
+        let flags = stas3.flags.first().copied().unwrap_or(0);
+        if flags & 0x02 != 0x02 {
+            return Err(TokenError::ConfiscateFlagNotSet);
+        }
+    }
+
     let base = Stas3BaseConfig {
         token_inputs: config.token_inputs,
         fee_txid: config.fee_txid,
@@ -894,6 +968,103 @@ pub fn build_stas3_confiscate_tx(config: Stas3ConfiscateConfig) -> Result<Transa
     };
 
     build_stas3_base_tx(&base)
+}
+
+/// Configuration for a STAS 3.0 swap-cancellation transaction (spec §9.4).
+///
+/// Cancels a single swap-bearing UTXO by spending it back to the
+/// `receiveAddr` declared in the input's swap descriptor (var2). Uses
+/// `spendType = 4` (SwapCancellation). Cannot be combined with an
+/// executing swap.
+pub struct Stas3SwapCancelConfig {
+    /// The single STAS 3.0 token input being cancelled. Must carry a swap
+    /// descriptor (action byte 0x01).
+    pub token_input: TokenInput,
+    /// Fee UTXO txid.
+    pub fee_txid: Hash,
+    /// Fee UTXO vout.
+    pub fee_vout: u32,
+    /// Fee UTXO satoshis.
+    pub fee_satoshis: u64,
+    /// Fee UTXO locking script.
+    pub fee_locking_script: Script,
+    /// Fee UTXO private key.
+    pub fee_private_key: PrivateKey,
+    /// The single STAS 3.0 output. Owner MUST equal
+    /// `token_input.var2.receiveAddr`. Satoshis must equal
+    /// `token_input.satoshis`.
+    pub destination: Stas3OutputParams,
+    /// Fee rate in satoshis per kilobyte.
+    pub fee_rate: u64,
+}
+
+/// Build a STAS 3.0 swap-cancellation transaction (spec §9.4).
+///
+/// Invariants enforced before signing:
+/// 1. Input MUST carry a swap descriptor (action byte 0x01).
+/// 2. Output owner MUST equal the input descriptor's `receiveAddr`.
+/// 3. Exactly one STAS output (no additional STAS outputs / cannot be
+///    combined with an executing swap).
+/// 4. Output satoshis must equal input satoshis (conservation).
+///
+/// Authorization is dispatched per the input `signing_key` (P2PKH or
+/// P2MPKH). Uses `Stas3SpendType::SwapCancellation`.
+pub fn build_stas3_swap_cancel_tx(
+    config: Stas3SwapCancelConfig,
+) -> Result<Transaction, TokenError> {
+    use crate::script::reader::read_locking_script;
+    use crate::types::ActionData;
+
+    // 1. Input must carry a swap descriptor.
+    let parsed = read_locking_script(config.token_input.locking_script.to_bytes());
+    let stas3 = parsed
+        .stas3
+        .ok_or(TokenError::SwapCancelMissingDescriptor)?;
+    let descriptor = match stas3.action_data_parsed.as_ref() {
+        Some(ActionData::Swap { .. }) => stas3
+            .action_data_parsed
+            .as_ref()
+            .and_then(|d| d.as_swap_descriptor())
+            .ok_or(TokenError::SwapCancelMissingDescriptor)?,
+        _ => return Err(TokenError::SwapCancelMissingDescriptor),
+    };
+
+    // 2 & 3. Exactly one output whose owner matches receiveAddr.
+    // Caller passes a single destination; we wrap into a Vec for the base
+    // builder.
+    if config.destination.owner_pkh != descriptor.receive_addr {
+        return Err(TokenError::SwapCancelOwnerMismatch);
+    }
+
+    // 4. Conservation
+    if config.destination.satoshis != config.token_input.satoshis {
+        return Err(TokenError::AmountMismatch {
+            expected: config.token_input.satoshis,
+            actual: config.destination.satoshis,
+        });
+    }
+
+    let base = Stas3BaseConfig {
+        token_inputs: vec![config.token_input],
+        fee_txid: config.fee_txid,
+        fee_vout: config.fee_vout,
+        fee_satoshis: config.fee_satoshis,
+        fee_locking_script: config.fee_locking_script,
+        fee_private_key: config.fee_private_key,
+        destinations: vec![config.destination],
+        spend_type: Stas3SpendType::SwapCancellation,
+        fee_rate: config.fee_rate,
+    };
+
+    let tx = build_stas3_base_tx(&base)?;
+
+    // Defence-in-depth: the produced tx must contain exactly one non-change
+    // STAS output (the engine output count restriction from spec §9.4).
+    let stas_out_count = tx.outputs.iter().filter(|o| !o.change).count();
+    if stas_out_count != 1 {
+        return Err(TokenError::SwapCancelOutputCount(stas_out_count));
+    }
+    Ok(tx)
 }
 
 /// Build a STAS3 redeem transaction.
@@ -1092,6 +1263,24 @@ mod tests {
 
     fn make_stas3_locking(owner_pkh: &[u8; 20], redemption_pkh: &[u8; 20]) -> Script {
         build_stas3_locking_script(owner_pkh, redemption_pkh, None, false, true, &[], &[]).unwrap()
+    }
+
+    /// Build a STAS 3.0 locking script with both freezable and confiscatable
+    /// flag bits set (flags = 0x03). Used by §9.3 confiscation tests.
+    fn make_stas3_confiscatable_locking(
+        owner_pkh: &[u8; 20],
+        redemption_pkh: &[u8; 20],
+    ) -> Script {
+        crate::script::stas3_builder::build_stas3_locking_script_with_flags(
+            owner_pkh,
+            redemption_pkh,
+            None,
+            false,
+            &[0x03], // freezable | confiscatable
+            &[],
+            &[],
+        )
+        .unwrap()
     }
 
     // ---------------------------------------------------------------
@@ -1410,6 +1599,7 @@ mod tests {
         let token_key = test_key();
         let fee_key = test_key();
 
+        // Spec §9.2 requires output owner == input owner.
         let mut config = Stas3BaseConfig {
             token_inputs: vec![TokenInput {
                 txid: dummy_hash(),
@@ -1425,7 +1615,7 @@ mod tests {
             fee_private_key: fee_key,
             destinations: vec![Stas3OutputParams {
                 satoshis: 5000,
-                owner_pkh: [0x33; 20],
+                owner_pkh: [0x11; 20], // = input owner per §9.2
                 redemption_pkh: [0x22; 20],
                 frozen: false, // will be overridden
                 freezable: true,
@@ -1466,7 +1656,7 @@ mod tests {
             fee_private_key: fee_key,
             destinations: vec![Stas3OutputParams {
                 satoshis: 5000,
-                owner_pkh: [0x33; 20],
+                owner_pkh: [0x11; 20], // = input owner per §9.2
                 redemption_pkh: [0x22; 20],
                 frozen: true, // will be overridden to false
                 freezable: true,
@@ -1484,6 +1674,120 @@ mod tests {
         assert_eq!(parsed.script_type, ScriptType::Stas3);
         let stas3 = parsed.stas3.unwrap();
         assert!(!stas3.frozen);
+    }
+
+    // -------------------------------------------------------------------
+    // Spec §9.2 — freeze invariant tests (drift / non-freezable / count).
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn freeze_rejects_owner_drift() {
+        let mut config = Stas3BaseConfig {
+            token_inputs: vec![TokenInput {
+                txid: dummy_hash(),
+                vout: 0,
+                satoshis: 5000,
+                locking_script: make_stas3_locking(&[0x11; 20], &[0x22; 20]),
+                signing_key: SigningKey::Single(test_key()),
+            }],
+            fee_txid: dummy_hash(),
+            fee_vout: 1,
+            fee_satoshis: 50_000,
+            fee_locking_script: test_p2pkh_script(&test_key()),
+            fee_private_key: test_key(),
+            destinations: vec![Stas3OutputParams {
+                satoshis: 5000,
+                owner_pkh: [0x33; 20], // drifted
+                redemption_pkh: [0x22; 20],
+                frozen: false,
+                freezable: true,
+                service_fields: vec![],
+                optional_data: vec![],
+                action_data: None,
+            }],
+            spend_type: Stas3SpendType::Transfer,
+            fee_rate: 500,
+        };
+        assert!(matches!(
+            build_stas3_freeze_tx(&mut config),
+            Err(TokenError::FreezeFieldDrift("owner_pkh"))
+        ));
+    }
+
+    #[test]
+    fn freeze_rejects_two_outputs() {
+        let dest = Stas3OutputParams {
+            satoshis: 2500,
+            owner_pkh: [0x11; 20],
+            redemption_pkh: [0x22; 20],
+            frozen: false,
+            freezable: true,
+            service_fields: vec![],
+            optional_data: vec![],
+            action_data: None,
+        };
+        let mut config = Stas3BaseConfig {
+            token_inputs: vec![TokenInput {
+                txid: dummy_hash(),
+                vout: 0,
+                satoshis: 5000,
+                locking_script: make_stas3_locking(&[0x11; 20], &[0x22; 20]),
+                signing_key: SigningKey::Single(test_key()),
+            }],
+            fee_txid: dummy_hash(),
+            fee_vout: 1,
+            fee_satoshis: 50_000,
+            fee_locking_script: test_p2pkh_script(&test_key()),
+            fee_private_key: test_key(),
+            destinations: vec![dest.clone(), dest],
+            spend_type: Stas3SpendType::Transfer,
+            fee_rate: 500,
+        };
+        assert!(matches!(
+            build_stas3_freeze_tx(&mut config),
+            Err(TokenError::FreezeOutputCount(2))
+        ));
+    }
+
+    #[test]
+    fn freeze_rejects_input_without_freezable_flag() {
+        // Build input with freezable = false → flags byte = 0x00.
+        let owner = [0x11; 20];
+        let redemption = [0x22; 20];
+        let locking = build_stas3_locking_script(
+            &owner, &redemption, None, false, false, &[], &[],
+        )
+        .unwrap();
+        let mut config = Stas3BaseConfig {
+            token_inputs: vec![TokenInput {
+                txid: dummy_hash(),
+                vout: 0,
+                satoshis: 5000,
+                locking_script: locking,
+                signing_key: SigningKey::Single(test_key()),
+            }],
+            fee_txid: dummy_hash(),
+            fee_vout: 1,
+            fee_satoshis: 50_000,
+            fee_locking_script: test_p2pkh_script(&test_key()),
+            fee_private_key: test_key(),
+            destinations: vec![Stas3OutputParams {
+                satoshis: 5000,
+                owner_pkh: owner,
+                redemption_pkh: redemption,
+                frozen: false,
+                freezable: false,
+                service_fields: vec![],
+                optional_data: vec![],
+                action_data: None,
+            }],
+            spend_type: Stas3SpendType::Transfer,
+            fee_rate: 500,
+        };
+        assert!(matches!(
+            build_stas3_freeze_tx(&mut config),
+            Err(TokenError::FreezeFlagNotSet)
+        ));
     }
 
     // ---------------------------------------------------------------
@@ -1927,7 +2231,8 @@ mod tests {
                 txid: dummy_hash(),
                 vout: 0,
                 satoshis: 5000,
-                locking_script: make_stas3_locking(&[0x11; 20], &redemption_pkh),
+                // Spec §9.3: input MUST have CONFISCATABLE flag set.
+                locking_script: make_stas3_confiscatable_locking(&[0x11; 20], &redemption_pkh),
                 signing_key: SigningKey::Single(token_key),
             }],
             fee_txid: dummy_hash(),
@@ -1959,6 +2264,47 @@ mod tests {
         }
     }
 
+    /// Spec §9.3: confiscation requires the CONFISCATABLE flag (0x02) on
+    /// the input UTXO. An input lacking the flag must be rejected.
+    #[test]
+    fn confiscate_rejects_input_without_confiscatable_flag() {
+        let token_key = test_key();
+        let fee_key = test_key();
+        let redemption_pkh = [0x22; 20];
+        let config = Stas3ConfiscateConfig {
+            token_inputs: vec![TokenInput {
+                txid: dummy_hash(),
+                vout: 0,
+                satoshis: 5000,
+                // freezable-only (flags = 0x01) → CONFISCATABLE not set.
+                locking_script: make_stas3_locking(&[0x11; 20], &redemption_pkh),
+                signing_key: SigningKey::Single(token_key),
+            }],
+            fee_txid: dummy_hash(),
+            fee_vout: 1,
+            fee_satoshis: 50_000,
+            fee_locking_script: test_p2pkh_script(&fee_key),
+            fee_private_key: fee_key,
+            destinations: vec![Stas3OutputParams {
+                satoshis: 5000,
+                owner_pkh: redemption_pkh,
+                redemption_pkh,
+                frozen: false,
+                freezable: true,
+                service_fields: vec![],
+                optional_data: vec![],
+                action_data: None,
+            }],
+            fee_rate: 500,
+            tx_type: 0,
+        };
+
+        assert!(matches!(
+            build_stas3_confiscate_tx(config),
+            Err(TokenError::ConfiscateFlagNotSet)
+        ));
+    }
+
     /// Fix G: spec §4 / §9.3 — confiscation places NO restriction on txType.
     /// Any caller-supplied `tx_type` (including non-zero, non-default values)
     /// MUST build successfully and round-trip through the parser.
@@ -1975,7 +2321,10 @@ mod tests {
                     txid: dummy_hash(),
                     vout: 0,
                     satoshis: 5000,
-                    locking_script: make_stas3_locking(&[0x11; 20], &redemption_pkh),
+                    locking_script: make_stas3_confiscatable_locking(
+                        &[0x11; 20],
+                        &redemption_pkh,
+                    ),
                     signing_key: SigningKey::Single(token_key.clone()),
                 }],
                 fee_txid: dummy_hash(),
@@ -2022,9 +2371,17 @@ mod tests {
         let fee_key = test_key();
         let redemption_pkh = [0x22; 20];
 
-        let frozen_locking =
-            build_stas3_locking_script(&[0x11; 20], &redemption_pkh, None, true, true, &[], &[])
-                .unwrap();
+        // Frozen + freezable + confiscatable so spec §9.3 invariants pass.
+        let frozen_locking = crate::script::stas3_builder::build_stas3_locking_script_with_flags(
+            &[0x11; 20],
+            &redemption_pkh,
+            None,
+            true,
+            &[0x03],
+            &[],
+            &[],
+        )
+        .unwrap();
 
         let config = Stas3ConfiscateConfig {
             token_inputs: vec![TokenInput {
@@ -2967,11 +3324,12 @@ mod tests {
                     action_data: None,
                 },
             ],
-            spend_type: Stas3SpendType::Transfer, // should be overridden to SwapCancellation
+            spend_type: Stas3SpendType::Transfer, // matches the swap-swap path
             fee_rate: 500,
         };
 
-        // Auto-detect: both have swap data → SwapSwap → spending type SwapCancellation
+        // Auto-detect: both have swap data → SwapSwap → spendType = Transfer
+        // (per spec §9.5; previously this path used SwapCancellation).
         let tx = build_stas3_swap_flow_tx(&mut config).unwrap();
         assert_eq!(tx.input_count(), 3);
     }
@@ -3227,5 +3585,150 @@ mod tests {
             }
             other => panic!("expected Swap action data, got {:?}", other),
         }
+    }
+
+    // ---------------------------------------------------------------
+    // §9.4 Swap cancellation tests (Priority 2c)
+    // ---------------------------------------------------------------
+
+    /// Build a swap descriptor whose `receive_addr` is the given PKH.
+    fn cancel_swap_data(receive_pkh: [u8; 20]) -> ActionData {
+        ActionData::Swap {
+            requested_script_hash: [0xab; 32],
+            requested_pkh: receive_pkh, // = receive_addr in the typed descriptor
+            rate_numerator: 1,
+            rate_denominator: 2,
+            next: None,
+        }
+    }
+
+    #[test]
+    fn swap_cancel_succeeds_when_owner_matches_receive_addr() {
+        let receive = [0x77; 20];
+        let redemption = [0x22; 20];
+        let owner_a = [0x11; 20];
+        let token_key = test_key();
+        let fee_key = test_key();
+
+        let swap_data = cancel_swap_data(receive);
+        let locking = make_stas3_swap_locking(&owner_a, &redemption, &swap_data);
+
+        let config = Stas3SwapCancelConfig {
+            token_input: TokenInput {
+                txid: dummy_hash(),
+                vout: 0,
+                satoshis: 5000,
+                locking_script: locking,
+                signing_key: SigningKey::Single(token_key),
+            },
+            fee_txid: dummy_hash(),
+            fee_vout: 1,
+            fee_satoshis: 50_000,
+            fee_locking_script: test_p2pkh_script(&fee_key),
+            fee_private_key: fee_key,
+            destination: Stas3OutputParams {
+                satoshis: 5000,
+                owner_pkh: receive, // == receive_addr
+                redemption_pkh: redemption,
+                frozen: false,
+                freezable: true,
+                service_fields: vec![],
+                optional_data: vec![],
+                action_data: None,
+            },
+            fee_rate: 500,
+        };
+
+        let tx = build_stas3_swap_cancel_tx(config).unwrap();
+        // Exactly one non-change STAS output, addressed to receive_addr.
+        let stas_outs: Vec<_> = tx.outputs.iter().filter(|o| !o.change).collect();
+        assert_eq!(stas_outs.len(), 1);
+        let parsed = read_locking_script(stas_outs[0].locking_script.to_bytes());
+        assert_eq!(parsed.script_type, ScriptType::Stas3);
+        assert_eq!(parsed.stas3.unwrap().owner, receive);
+    }
+
+    #[test]
+    fn swap_cancel_rejects_owner_mismatch() {
+        let receive = [0x77; 20];
+        let redemption = [0x22; 20];
+        let owner_a = [0x11; 20];
+        let token_key = test_key();
+        let fee_key = test_key();
+
+        let swap_data = cancel_swap_data(receive);
+        let locking = make_stas3_swap_locking(&owner_a, &redemption, &swap_data);
+
+        let config = Stas3SwapCancelConfig {
+            token_input: TokenInput {
+                txid: dummy_hash(),
+                vout: 0,
+                satoshis: 5000,
+                locking_script: locking,
+                signing_key: SigningKey::Single(token_key),
+            },
+            fee_txid: dummy_hash(),
+            fee_vout: 1,
+            fee_satoshis: 50_000,
+            fee_locking_script: test_p2pkh_script(&fee_key),
+            fee_private_key: fee_key,
+            destination: Stas3OutputParams {
+                satoshis: 5000,
+                owner_pkh: [0x99; 20], // != receive_addr
+                redemption_pkh: redemption,
+                frozen: false,
+                freezable: true,
+                service_fields: vec![],
+                optional_data: vec![],
+                action_data: None,
+            },
+            fee_rate: 500,
+        };
+
+        assert!(matches!(
+            build_stas3_swap_cancel_tx(config),
+            Err(TokenError::SwapCancelOwnerMismatch)
+        ));
+    }
+
+    #[test]
+    fn swap_cancel_rejects_input_without_swap_descriptor() {
+        let redemption = [0x22; 20];
+        let token_key = test_key();
+        let fee_key = test_key();
+
+        // No swap descriptor in the locking script.
+        let locking = make_stas3_locking(&[0x11; 20], &redemption);
+
+        let config = Stas3SwapCancelConfig {
+            token_input: TokenInput {
+                txid: dummy_hash(),
+                vout: 0,
+                satoshis: 5000,
+                locking_script: locking,
+                signing_key: SigningKey::Single(token_key),
+            },
+            fee_txid: dummy_hash(),
+            fee_vout: 1,
+            fee_satoshis: 50_000,
+            fee_locking_script: test_p2pkh_script(&fee_key),
+            fee_private_key: fee_key,
+            destination: Stas3OutputParams {
+                satoshis: 5000,
+                owner_pkh: [0x77; 20],
+                redemption_pkh: redemption,
+                frozen: false,
+                freezable: true,
+                service_fields: vec![],
+                optional_data: vec![],
+                action_data: None,
+            },
+            fee_rate: 500,
+        };
+
+        assert!(matches!(
+            build_stas3_swap_cancel_tx(config),
+            Err(TokenError::SwapCancelMissingDescriptor)
+        ));
     }
 }

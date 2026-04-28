@@ -101,6 +101,70 @@ pub fn build_stas3_flags(freezable: bool) -> Vec<u8> {
     }
 }
 
+/// Build a STAS 3.0 locking script with explicit `flags` bytes (spec §6.2).
+///
+/// Identical to [`build_stas3_locking_script`] except `flags` are taken
+/// verbatim instead of being derived from a single `freezable: bool`.
+/// Bit 0 = freezable, bit 1 = confiscatable (per spec §6.2). Use this
+/// when an input/output needs the CONFISCATABLE flag set (spec §9.3) or
+/// any other flag bits beyond the simple freezable case.
+pub fn build_stas3_locking_script_with_flags(
+    owner_pkh: &[u8; 20],
+    redemption_pkh: &[u8; 20],
+    action_data: Option<&ActionData>,
+    frozen: bool,
+    flags: &[u8],
+    service_fields: &[Vec<u8>],
+    optional_data: &[Vec<u8>],
+) -> Result<Script, TokenError> {
+    let base_template = hex::decode(STAS3_BASE_TEMPLATE_HEX)
+        .map_err(|e| TokenError::InvalidScript(format!("stas3 template decode error: {e}")))?;
+
+    let mut script = Vec::with_capacity(base_template.len() + 128);
+
+    // 1. Push owner PKH (OP_DATA_20 + 20 bytes)
+    script.push(0x14);
+    script.extend_from_slice(owner_pkh);
+
+    // 2. Action data encoding (mirrors build_stas3_locking_script).
+    match (frozen, action_data) {
+        (false, None) => script.push(0x00),
+        (true, None) => script.push(0x52),
+        (_, Some(data)) => {
+            let bytes = match data {
+                ActionData::Swap { .. } => data
+                    .as_swap_descriptor()
+                    .expect("ActionData::Swap matched")
+                    .to_var2_bytes(),
+                ActionData::Custom(b) => b.clone(),
+            };
+            push_data(&mut script, &bytes);
+        }
+    }
+
+    // 3. Base template
+    script.extend_from_slice(&base_template);
+
+    // 5. Push redemption PKH
+    script.push(0x14);
+    script.extend_from_slice(redemption_pkh);
+
+    // 6. Flags (verbatim)
+    push_data(&mut script, flags);
+
+    // 7. Service fields
+    for field in service_fields {
+        push_data(&mut script, field);
+    }
+
+    // 8. Optional data
+    for data in optional_data {
+        push_data(&mut script, data);
+    }
+
+    Ok(Script::from_bytes(&script))
+}
+
 /// Push data onto a script buffer with appropriate length prefix.
 fn push_data(script: &mut Vec<u8>, data: &[u8]) {
     let len = data.len();

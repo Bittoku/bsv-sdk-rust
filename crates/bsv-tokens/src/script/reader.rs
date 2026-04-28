@@ -4,6 +4,7 @@ use crate::script::templates::*;
 use crate::types::{ActionData, SwapDescriptor};
 use crate::{ScriptType, TokenId};
 
+
 /// Result of parsing a locking script.
 #[derive(Debug)]
 pub struct ParsedScript {
@@ -34,7 +35,15 @@ pub struct Stas3Fields {
     /// The 20-byte owner public key hash.
     pub owner: [u8; 20],
     /// The 20-byte redemption public key hash.
+    ///
+    /// This is also exposed as a typed [`TokenId`] via [`Self::token_id`]
+    /// (the protoID is derived from this PKH).
     pub redemption: [u8; 20],
+    /// The token ID derived from `redemption` via [`TokenId::from_pkh`].
+    ///
+    /// Provides parity with `StasFields::token_id` so consumers can route
+    /// STAS v2 and STAS 3.0 utxos through the same lineage / lookup paths.
+    pub token_id: TokenId,
     /// Flag bytes from the OP_RETURN data section.
     pub flags: Vec<u8>,
     /// Raw action data bytes (if present).
@@ -269,9 +278,12 @@ fn try_parse_stas3(script: &[u8]) -> Option<Stas3Fields> {
         vec![]
     };
 
+    let token_id = TokenId::from_pkh(redemption);
+
     Some(Stas3Fields {
         owner,
         redemption,
+        token_id,
         flags,
         action_data_raw,
         action_data_parsed,
@@ -621,6 +633,23 @@ mod tests {
     #[test]
     fn is_stas_false_for_empty() {
         assert!(!is_stas(&[]));
+    }
+
+    #[test]
+    fn stas3_extracts_token_id() {
+        // Spec parity with STAS v2: STAS 3.0 fields must expose a TokenId
+        // derived from the redemption PKH (Priority 2d).
+        use crate::script::stas3_builder::build_stas3_locking_script;
+        let owner = [0x11; 20];
+        let redemption = [0x22; 20];
+        let script = build_stas3_locking_script(
+            &owner, &redemption, None, false, true, &[], &[],
+        )
+        .unwrap();
+        let parsed = read_locking_script(script.to_bytes());
+        assert_eq!(parsed.script_type, ScriptType::Stas3);
+        let stas3 = parsed.stas3.unwrap();
+        assert_eq!(stas3.token_id.public_key_hash(), &redemption);
     }
 
     #[test]

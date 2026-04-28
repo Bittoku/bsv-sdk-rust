@@ -76,4 +76,41 @@ pub enum TokenError {
     /// JSON serialization error.
     #[error(transparent)]
     Json(#[from] serde_json::Error),
+
+    /// STAS 3.0 §9.2 — Freeze tx must produce exactly one STAS output.
+    #[error("freeze tx must produce exactly one STAS output, found {0}")]
+    FreezeOutputCount(usize),
+
+    /// STAS 3.0 §9.2 — Freeze output non-`var2` fields must be byte-identical
+    /// to the input.
+    #[error("freeze tx output drifted from input on field: {0}")]
+    FreezeFieldDrift(&'static str),
+
+    /// STAS 3.0 §9.2 — Freeze requires the FREEZABLE flag to be set on the
+    /// input UTXO's `flags` byte.
+    #[error("freeze tx requires the FREEZABLE flag bit set on the input")]
+    FreezeFlagNotSet,
+
+    /// STAS 3.0 §9.3 — Confiscation requires the CONFISCATABLE flag to be
+    /// set on the input UTXO's `flags` byte.
+    #[error("confiscate tx requires the CONFISCATABLE flag bit set on the input")]
+    ConfiscateFlagNotSet,
+
+    /// STAS 3.0 §9.4 — Swap cancellation requires exactly one output.
+    #[error("swap cancel tx requires exactly one output, found {0}")]
+    SwapCancelOutputCount(usize),
+
+    /// STAS 3.0 §9.4 — Swap cancellation output owner must equal the input
+    /// swap descriptor's `receiveAddr` (per spec §6.3).
+    #[error("swap cancel output owner does not match input receiveAddr")]
+    SwapCancelOwnerMismatch,
+
+    /// STAS 3.0 §9.4 — Swap cancellation requires the input to carry a swap
+    /// descriptor (action byte 0x01).
+    #[error("swap cancel input must carry a swap descriptor (action 0x01)")]
+    SwapCancelMissingDescriptor,
+
+    /// STAS 3.0 §7 — `noteData` payload exceeds the 65 533-byte maximum.
+    #[error("noteData payload too large: {0} bytes (max 65533)")]
+    NoteDataTooLarge(usize),
 }

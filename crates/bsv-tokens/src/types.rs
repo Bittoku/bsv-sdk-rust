@@ -150,6 +150,63 @@ pub enum Stas3SpendType {
     SwapCancellation = 4,
 }
 
+impl Stas3SpendType {
+    /// Numeric byte representation of this spend type (spec §7 slot 20).
+    pub fn to_u8(self) -> u8 {
+        self as u8
+    }
+}
+
+/// STAS 3.0 transaction-type byte (spec §7 slot 18 / §8.1).
+///
+/// `0` is "regular" (no special trailing parameters). `1` selects atomic-swap
+/// semantics with a counterparty locking script + piece array. `2..=7` select
+/// merge variants with `piece_count = txType` pieces.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[repr(u8)]
+pub enum Stas3TxType {
+    /// No trailing parameters; regular spend.
+    Regular = 0,
+    /// Atomic swap (counterparty script + piece array).
+    AtomicSwap = 1,
+    /// Merge variant with 2 pieces.
+    Merge2 = 2,
+    /// Merge variant with 3 pieces.
+    Merge3 = 3,
+    /// Merge variant with 4 pieces.
+    Merge4 = 4,
+    /// Merge variant with 5 pieces.
+    Merge5 = 5,
+    /// Merge variant with 6 pieces.
+    Merge6 = 6,
+    /// Merge variant with 7 pieces.
+    Merge7 = 7,
+}
+
+impl Stas3TxType {
+    /// Numeric byte representation (spec §7 slot 18).
+    pub fn to_u8(self) -> u8 {
+        self as u8
+    }
+
+    /// Parse a numeric byte value (0..=7) into a `Stas3TxType`.
+    ///
+    /// Returns `None` for any value outside the valid range.
+    pub fn from_u8(value: u8) -> Option<Self> {
+        match value {
+            0 => Some(Stas3TxType::Regular),
+            1 => Some(Stas3TxType::AtomicSwap),
+            2 => Some(Stas3TxType::Merge2),
+            3 => Some(Stas3TxType::Merge3),
+            4 => Some(Stas3TxType::Merge4),
+            5 => Some(Stas3TxType::Merge5),
+            6 => Some(Stas3TxType::Merge6),
+            7 => Some(Stas3TxType::Merge7),
+            _ => None,
+        }
+    }
+}
+
 /// Additional data attached to a STAS 3.0 action.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ActionData {

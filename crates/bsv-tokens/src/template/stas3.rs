@@ -10,14 +10,14 @@
 
 use bsv_primitives::ec::PrivateKey;
 use bsv_script::Script;
-use bsv_transaction::sighash::SIGHASH_ALL_FORKID;
+use bsv_transaction::sighash::{calc_preimage, SIGHASH_ALL_FORKID};
 use bsv_transaction::template::p2mpkh::MultisigScript;
 use bsv_transaction::template::UnlockingScriptTemplate;
 use bsv_transaction::transaction::Transaction;
 use bsv_transaction::TransactionError;
 
 use crate::script::stas3_swap::is_arbitrator_free_owner;
-use crate::types::{Stas3SpendType, SigningKey};
+use crate::types::{Stas3SpendType, Stas3TxType, SigningKey};
 
 // ---------------------------------------------------------------------------
 // Fix K: STAS 3.0 unlocking-script amount encoding (spec §7).
@@ -64,27 +64,268 @@ pub fn push_unlock_amount(value: u64) -> Vec<u8> {
 }
 
 // ---------------------------------------------------------------------------
+// §7 Unlock witness assembly (slots 1..=20)
+// ---------------------------------------------------------------------------
+
+/// Identifier for one of the four primary STAS outputs in a STAS 3.0 spend
+/// (spec §7 slots 1..=12). Each present output contributes a triplet
+/// `(amount, owner_pkh, var2)` to the witness; absent outputs are skipped
+/// entirely (no push at all).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stas3WitnessOutput {
+    /// STAS satoshi amount carried by the output. Encoded via
+    /// [`encode_unlock_amount`].
+    pub amount: u64,
+    /// Owner public key hash (20 bytes raw).
+    pub owner_pkh: [u8; 20],
+    /// `var2` body bytes (the "action data") — pushed verbatim. Empty for a
+    /// passive STAS output.
+    pub var2: Vec<u8>,
+}
+
+/// Optional change leg of a STAS 3.0 spend (spec §7 slots 13–14).
+///
+/// Encoded as `<change_amount> <change_addr>`. Absence of change is encoded
+/// as `OP_FALSE` for both slots.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stas3WitnessChange {
+    /// Change amount in satoshis (minimal LE).
+    pub amount: u64,
+    /// Change address PKH (20 bytes raw P2PKH-PKH).
+    pub addr_pkh: [u8; 20],
+}
+
+/// Full STAS 3.0 unlocking-script witness (spec §7 slots 1..=20).
+///
+/// Slot 21+ (the authorization push: P2PKH `<sig> <pubkey>`, P2MPKH
+/// `OP_0 sig … redeem_buffer`, or no-auth `OP_FALSE`) is appended by the
+/// template implementation; this struct only encodes slots 1..=20.
+#[derive(Debug, Clone)]
+pub struct Stas3UnlockWitness {
+    /// Up to 4 STAS output triplets (spec §7 slots 1–12). Position in the
+    /// vec corresponds to STAS-output index. When fewer than 4 are present
+    /// the trailing slots are SKIPPED ENTIRELY (no push at all per spec).
+    pub stas_outputs: Vec<Stas3WitnessOutput>,
+    /// Change leg (spec §7 slots 13–14). `None` → both emitted as OP_FALSE.
+    pub change: Option<Stas3WitnessChange>,
+    /// `noteData` payload (spec §7 slot 15). `None` → OP_FALSE. The payload
+    /// must be ≤ 65 533 bytes; see [`Stas3UnlockWitness::write_into`].
+    pub note_data: Option<Vec<u8>>,
+    /// Funding input pointer (spec §7 slots 16–17): `(funding_txid,
+    /// funding_vout)` of the funding input on this spending tx. `None` →
+    /// both emitted as OP_FALSE.
+    pub funding_input: Option<([u8; 32], u32)>,
+    /// `txType` byte (spec §7 slot 18, range 0..=7).
+    pub tx_type: Stas3TxType,
+    /// BIP-143-style preimage of the input being signed (spec §7 slot 19).
+    pub sighash_preimage: Vec<u8>,
+    /// `spendType` byte (spec §7 slot 20).
+    pub spend_type: Stas3SpendType,
+}
+
+impl Stas3UnlockWitness {
+    /// Maximum allowed `noteData` length per spec §7.
+    pub const MAX_NOTE_DATA_LEN: usize = 65_533;
+
+    /// Write slots 1..=20 into `script` in stack-push order (i.e. bottom of
+    /// stack first). The caller appends the slot 21+ authorization push
+    /// afterward.
+    ///
+    /// # Errors
+    /// Returns [`TransactionError::SigningError`] when:
+    /// - `note_data` exceeds [`Self::MAX_NOTE_DATA_LEN`]
+    /// - more than 4 STAS outputs are present
+    /// - `tx_type` is out of range (compile-time guaranteed via the enum)
+    pub fn write_into(&self, script: &mut Script) -> Result<(), TransactionError> {
+        // Validation
+        if self.stas_outputs.len() > 4 {
+            return Err(TransactionError::SigningError(format!(
+                "STAS 3.0 witness supports at most 4 STAS outputs, got {}",
+                self.stas_outputs.len()
+            )));
+        }
+        if let Some(note) = &self.note_data {
+            if note.len() > Self::MAX_NOTE_DATA_LEN {
+                return Err(TransactionError::SigningError(format!(
+                    "noteData payload too large: {} bytes (max {})",
+                    note.len(),
+                    Self::MAX_NOTE_DATA_LEN
+                )));
+            }
+        }
+
+        // Slots 1–12: STAS output triplets in spec order — output 1, 2, 3, 4.
+        // Outputs that are absent are SKIPPED ENTIRELY (no push at all).
+        for out in &self.stas_outputs {
+            // amount — minimal LE up to 8B (empty push for zero).
+            script.append_push_data(&encode_unlock_amount(out.amount))?;
+            // owner_pkh — 20B raw push.
+            script.append_push_data(&out.owner_pkh)?;
+            // var2 — single push of body bytes (may be empty → OP_FALSE).
+            script.append_push_data(&out.var2)?;
+        }
+
+        // Slot 13: change_amount — minimal LE; OP_FALSE when no change.
+        // Slot 14: change_addr — 20B; OP_FALSE when no change.
+        match &self.change {
+            Some(ch) => {
+                script.append_push_data(&encode_unlock_amount(ch.amount))?;
+                script.append_push_data(&ch.addr_pkh)?;
+            }
+            None => {
+                push_op_false(script)?;
+                push_op_false(script)?;
+            }
+        }
+
+        // Slot 15: noteData — payload bytes; OP_FALSE when None.
+        match &self.note_data {
+            Some(note) => script.append_push_data(note)?,
+            None => push_op_false(script)?,
+        }
+
+        // Slots 16–17: funding pointer — (fundIdx 4B LE, fundTxid 32B raw);
+        // OP_FALSE for each when None.
+        match &self.funding_input {
+            Some((txid, vout)) => {
+                script.append_push_data(&vout.to_le_bytes())?;
+                script.append_push_data(txid)?;
+            }
+            None => {
+                push_op_false(script)?;
+                push_op_false(script)?;
+            }
+        }
+
+        // Slot 18: txType — single byte (always present).
+        script.append_push_data(&[self.tx_type.to_u8()])?;
+
+        // Slot 19: sighashPreimage — variable push.
+        script.append_push_data(&self.sighash_preimage)?;
+
+        // Slot 20: spendType — single byte (always present).
+        script.append_push_data(&[self.spend_type.to_u8()])?;
+
+        Ok(())
+    }
+}
+
+/// Push an `OP_FALSE` (single-byte 0x00 / empty push) into `script`.
+fn push_op_false(script: &mut Script) -> Result<(), TransactionError> {
+    script.append_push_data(&[])?;
+    Ok(())
+}
+
+/// Compute the BIP-143-style preimage for the specified input of `tx` using
+/// the input's source-output locking script and satoshi value.
+///
+/// Returns the raw preimage bytes (NOT yet hashed). Suitable for
+/// [`Stas3UnlockWitness::sighash_preimage`].
+pub fn compute_input_preimage(
+    tx: &Transaction,
+    input_index: usize,
+    sighash_flag: u32,
+) -> Result<Vec<u8>, TransactionError> {
+    if input_index >= tx.inputs.len() {
+        return Err(TransactionError::SigningError(format!(
+            "input index {} out of range (tx has {} inputs)",
+            input_index,
+            tx.inputs.len()
+        )));
+    }
+    let input = &tx.inputs[input_index];
+    let source_output = input.source_tx_output().ok_or_else(|| {
+        TransactionError::SigningError(
+            "missing source output on input (no previous tx info)".to_string(),
+        )
+    })?;
+    calc_preimage(
+        tx,
+        input_index,
+        source_output.locking_script.to_bytes(),
+        sighash_flag,
+        source_output.satoshis,
+    )
+}
+
+// ---------------------------------------------------------------------------
 // No-auth STAS 3.0 unlocker (arbitrator-free swap)
 // ---------------------------------------------------------------------------
 
 /// STAS 3.0 no-auth unlocking template.
 ///
 /// Used for inputs whose owner field is `HASH160("")` (arbitrator-free swap,
-/// spec §9.5 / §10.3). Produces a single `OP_FALSE` push, signalling to the
-/// engine that no signature or preimage is being supplied for this leg.
-pub struct Stas3NoAuthUnlockingTemplate;
+/// spec §9.5 / §10.3).
+///
+/// # Spec interpretation (FLAG FOR REVIEW)
+///
+/// Spec §10.3 reads "instructs the engine to accept OP_FALSE in place of
+/// both signature and preimage". With the §7 witness now encoding the
+/// preimage at slot 19 and the authz push at slot 21+, this template emits
+/// `OP_FALSE` in the AUTHORIZATION slot only — i.e. the full unlock is the
+/// witness body (with slot 19 already containing OP_FALSE) followed by a
+/// single OP_FALSE in place of `<sig> <pubkey>`. This produces TWO
+/// OP_FALSE pushes total: one for slot 19 (preimage) and one for slot 21+
+/// (authz). Confirm with the spec author whether the §10.3 wording
+/// requires emitting BOTH OP_FALSEs explicitly (current behaviour) or just
+/// a single combined marker.
+///
+/// When constructed via [`Self::with_witness`], the produced unlocking
+/// script is the full witness body followed by `OP_FALSE`. When
+/// constructed via [`Self::new`] (legacy / back-compat), the produced
+/// unlocking script is a single `OP_FALSE` byte.
+pub struct Stas3NoAuthUnlockingTemplate {
+    witness: Option<Stas3UnlockWitness>,
+}
+
+impl Stas3NoAuthUnlockingTemplate {
+    /// Construct a legacy no-auth template that emits a single OP_FALSE.
+    pub fn new() -> Self {
+        Self { witness: None }
+    }
+
+    /// Construct a no-auth template that emits the full §7 witness with
+    /// `OP_FALSE` in the authz slot (slot 21+). The witness's slot 19
+    /// (preimage) should also be set to an empty body (use
+    /// `sighash_preimage = Vec::new()`) to signal "no preimage" — see the
+    /// §10.3 interpretation note on this struct.
+    pub fn with_witness(witness: Stas3UnlockWitness) -> Self {
+        Self {
+            witness: Some(witness),
+        }
+    }
+}
+
+impl Default for Stas3NoAuthUnlockingTemplate {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl UnlockingScriptTemplate for Stas3NoAuthUnlockingTemplate {
-    /// Produce the no-auth unlocking script: a single `OP_FALSE`.
+    /// Produce the no-auth unlocking script.
+    ///
+    /// Without a witness: a single `OP_FALSE`. With a witness: full §7
+    /// witness slots 1..=20 followed by `OP_FALSE` in the authz slot (see
+    /// §10.3 interpretation note on the struct).
     fn sign(&self, _tx: &Transaction, _input_index: u32) -> Result<Script, TransactionError> {
         let mut script = Script::new();
-        script.append_push_data(&[])?; // OP_FALSE / OP_0
+        if let Some(w) = &self.witness {
+            w.write_into(&mut script)?;
+        }
+        // Authz slot 21+: single OP_FALSE in place of `<sig> <pubkey>`.
+        script.append_push_data(&[])?;
         Ok(script)
     }
 
-    /// Estimated length of the no-auth unlocking script: 1 byte (OP_FALSE).
+    /// Estimated length of the no-auth unlocking script. Without a witness
+    /// this is 1 byte (OP_FALSE). With a witness an upper bound is
+    /// approximated from the witness sizes.
     fn estimate_length(&self, _tx: &Transaction, _input_index: u32) -> u32 {
-        1
+        match &self.witness {
+            None => 1,
+            Some(w) => 1 + estimate_witness_len(w),
+        }
     }
 }
 
@@ -94,14 +335,22 @@ impl UnlockingScriptTemplate for Stas3NoAuthUnlockingTemplate {
 
 /// STAS 3.0 unlocking script template.
 ///
-/// Produces `<DER_signature + sighash_byte> <compressed_pubkey>`, identical
-/// to P2PKH / STAS.  The `spend_type` is stored for future preimage encoding.
+/// By default produces `<DER_signature + sighash_byte> <compressed_pubkey>`,
+/// identical to P2PKH / STAS. When constructed with a [`Stas3UnlockWitness`]
+/// (via [`unlock_with_witness`]) the produced unlocking script is the full
+/// §7 witness body (slots 1..=20) followed by the authz push
+/// `<sig> <pubkey>`.
 pub struct Stas3UnlockingTemplate {
     private_key: PrivateKey,
     sighash_flag: u32,
-    /// The spend type for this unlock (stored, not yet encoded in script).
+    /// The spend type for this unlock. Stored on the legacy path; consumed
+    /// by the witness when the template is constructed via
+    /// [`unlock_with_witness`].
     #[allow(dead_code)]
     spend_type: Stas3SpendType,
+    /// Optional pre-built §7 witness (slots 1..=20). When present, the
+    /// produced unlock script is `witness ‖ <sig> <pubkey>`.
+    witness: Option<Stas3UnlockWitness>,
 }
 
 /// Create a STAS 3.0 unlocker.
@@ -119,11 +368,35 @@ pub fn unlock(
         private_key,
         sighash_flag: sighash_flag.unwrap_or(SIGHASH_ALL_FORKID),
         spend_type,
+        witness: None,
+    }
+}
+
+/// Create a STAS 3.0 unlocker that prepends the full §7 witness (slots
+/// 1..=20) before the authz `<sig> <pubkey>` push.
+///
+/// The caller is responsible for constructing a witness whose `tx_type`,
+/// `spend_type`, and per-output triplets match the spending tx structure.
+pub fn unlock_with_witness(
+    private_key: PrivateKey,
+    sighash_flag: Option<u32>,
+    witness: Stas3UnlockWitness,
+) -> Stas3UnlockingTemplate {
+    let spend_type = witness.spend_type;
+    Stas3UnlockingTemplate {
+        private_key,
+        sighash_flag: sighash_flag.unwrap_or(SIGHASH_ALL_FORKID),
+        spend_type,
+        witness: Some(witness),
     }
 }
 
 impl UnlockingScriptTemplate for Stas3UnlockingTemplate {
     /// Sign the specified input and produce the unlocking script.
+    ///
+    /// When constructed via [`unlock_with_witness`], the produced script is
+    /// `witness_body ‖ <sig> <pubkey>` per spec §7 + §10.1. Otherwise the
+    /// legacy `<sig> <pubkey>` form is produced for back-compat.
     fn sign(&self, tx: &Transaction, input_index: u32) -> Result<Script, TransactionError> {
         let idx = input_index as usize;
 
@@ -152,15 +425,24 @@ impl UnlockingScriptTemplate for Stas3UnlockingTemplate {
         sig_buf.push(self.sighash_flag as u8);
 
         let mut script = Script::new();
+        if let Some(w) = &self.witness {
+            w.write_into(&mut script)?;
+        }
         script.append_push_data(&sig_buf)?;
         script.append_push_data(&pub_key_bytes)?;
 
         Ok(script)
     }
 
-    /// Estimate the byte length of a STAS 3.0 unlocking script (same as P2PKH).
+    /// Estimate the byte length of a STAS 3.0 unlocking script. The legacy
+    /// `<sig> <pubkey>` form is 106 bytes; with a witness, the witness
+    /// body's bytes are added.
     fn estimate_length(&self, _tx: &Transaction, _input_index: u32) -> u32 {
-        106
+        let base = 106;
+        match &self.witness {
+            None => base,
+            Some(w) => base + estimate_witness_len(w),
+        }
     }
 }
 
@@ -170,13 +452,17 @@ impl UnlockingScriptTemplate for Stas3UnlockingTemplate {
 
 /// STAS 3.0 P2MPKH unlocking script template.
 ///
-/// Produces (per STAS 3.0 spec v0.1 § 10.2):
+/// By default produces (per STAS 3.0 spec v0.1 § 10.2):
 ///   `OP_0 <sig_1> <sig_2> … <sig_m> <redeem_script>`
 ///
 /// The leading `OP_0` is the `OP_CHECKMULTISIG` dummy stack element. The
 /// final push is the canonical STAS 3.0 redeem buffer
 /// `[m][0x21 pk1] … [0x21 pkN][n]` produced by
 /// [`MultisigScript::to_serialized_bytes`].
+///
+/// When constructed with a [`Stas3UnlockWitness`] (via
+/// [`unlock_mpkh_with_witness`]), the produced script is the §7 witness
+/// body followed by the P2MPKH authz push.
 pub struct Stas3MpkhUnlockingTemplate {
     /// The m private keys for threshold signing.
     private_keys: Vec<PrivateKey>,
@@ -184,9 +470,12 @@ pub struct Stas3MpkhUnlockingTemplate {
     multisig: MultisigScript,
     /// Sighash flag.
     sighash_flag: u32,
-    /// The spend type (stored for future preimage encoding).
+    /// The spend type. Stored on the legacy path; consumed by the witness
+    /// when one is supplied.
     #[allow(dead_code)]
     spend_type: Stas3SpendType,
+    /// Optional pre-built §7 witness (slots 1..=20).
+    witness: Option<Stas3UnlockWitness>,
 }
 
 /// Create a STAS 3.0 P2MPKH unlocker.
@@ -217,6 +506,34 @@ pub fn unlock_mpkh(
         multisig,
         sighash_flag: sighash_flag.unwrap_or(SIGHASH_ALL_FORKID),
         spend_type,
+        witness: None,
+    })
+}
+
+/// Create a STAS 3.0 P2MPKH unlocker that prepends the full §7 witness.
+///
+/// Same key-count validation as [`unlock_mpkh`]. The produced unlock
+/// script is `witness_body ‖ OP_0 <sig_1>..<sig_m> <redeem_script>`.
+pub fn unlock_mpkh_with_witness(
+    private_keys: Vec<PrivateKey>,
+    multisig: MultisigScript,
+    sighash_flag: Option<u32>,
+    witness: Stas3UnlockWitness,
+) -> Result<Stas3MpkhUnlockingTemplate, TransactionError> {
+    if private_keys.len() != multisig.threshold() as usize {
+        return Err(TransactionError::SigningError(format!(
+            "expected {} private keys for threshold, got {}",
+            multisig.threshold(),
+            private_keys.len()
+        )));
+    }
+    let spend_type = witness.spend_type;
+    Ok(Stas3MpkhUnlockingTemplate {
+        private_keys,
+        multisig,
+        sighash_flag: sighash_flag.unwrap_or(SIGHASH_ALL_FORKID),
+        spend_type,
+        witness: Some(witness),
     })
 }
 
@@ -253,7 +570,7 @@ pub fn unlock_for_input(
     sighash_flag: Option<u32>,
 ) -> Result<Box<dyn UnlockingScriptTemplate>, TransactionError> {
     if is_arbitrator_free_owner(locking_script) {
-        return Ok(Box::new(Stas3NoAuthUnlockingTemplate));
+        return Ok(Box::new(Stas3NoAuthUnlockingTemplate::new()));
     }
     unlock_from_signing_key(key, spend_type, sighash_flag)
 }
@@ -285,6 +602,11 @@ impl UnlockingScriptTemplate for Stas3MpkhUnlockingTemplate {
 
         let mut script = Script::new();
 
+        // §7 witness body (slots 1..=20) when present.
+        if let Some(w) = &self.witness {
+            w.write_into(&mut script)?;
+        }
+
         // OP_0 dummy stack element required by OP_CHECKMULTISIG.
         script.append_push_data(&[])?;
 
@@ -307,12 +629,69 @@ impl UnlockingScriptTemplate for Stas3MpkhUnlockingTemplate {
     /// Estimate the byte length of a STAS 3.0 P2MPKH unlocking script.
     ///
     /// Layout: 1 (OP_0) + m * 73 (push + DER + sighash) + 2 (PUSHDATA1
-    /// prefix) + redeem buffer (`2 + 34 * n` bytes).
+    /// prefix) + redeem buffer (`2 + 34 * n` bytes). When a witness is
+    /// present, its bytes are added.
     fn estimate_length(&self, _tx: &Transaction, _input_index: u32) -> u32 {
         let m = self.multisig.threshold() as u32;
         let n = self.multisig.n() as u32;
         let redeem_len = 2 + n * 34;
-        1 + m * 73 + 2 + redeem_len
+        let base = 1 + m * 73 + 2 + redeem_len;
+        match &self.witness {
+            None => base,
+            Some(w) => base + estimate_witness_len(w),
+        }
+    }
+}
+
+/// Conservative byte-length estimate for a §7 witness body (slots 1..=20).
+fn estimate_witness_len(w: &Stas3UnlockWitness) -> u32 {
+    let mut total: u32 = 0;
+    for out in &w.stas_outputs {
+        // amount push: header (1) + body (0..=8)
+        total += 1 + encode_unlock_amount(out.amount).len() as u32;
+        // owner_pkh: 1 + 20
+        total += 21;
+        // var2: header (1..=3) + body
+        total += push_header_len(out.var2.len()) + out.var2.len() as u32;
+    }
+    // Slots 13–14 (change)
+    match &w.change {
+        Some(ch) => {
+            total += 1 + encode_unlock_amount(ch.amount).len() as u32;
+            total += 21;
+        }
+        None => total += 2, // two OP_FALSE
+    }
+    // Slot 15 (noteData)
+    match &w.note_data {
+        Some(n) => total += push_header_len(n.len()) + n.len() as u32,
+        None => total += 1,
+    }
+    // Slots 16–17 (funding)
+    match &w.funding_input {
+        Some(_) => total += 1 + 4 + 1 + 32, // (push 4B vout) + (push 32B txid)
+        None => total += 2,
+    }
+    // Slot 18 (txType): 1B push (header 1 + body 1)
+    total += 2;
+    // Slot 19 (preimage): variable push
+    total += push_header_len(w.sighash_preimage.len()) + w.sighash_preimage.len() as u32;
+    // Slot 20 (spendType): 1B push (header 1 + body 1)
+    total += 2;
+    total
+}
+
+/// Header length for a minimal push of `body_len` bytes (excluding body).
+///
+/// 0 → 1 (`OP_FALSE`); 1..=75 → 1 (bare push opcode = length); 76..=255 → 2
+/// (`OP_PUSHDATA1` + 1B length); 256..=65535 → 3 (`OP_PUSHDATA2` + 2B
+/// length); larger → 5 (`OP_PUSHDATA4` + 4B length).
+fn push_header_len(body_len: usize) -> u32 {
+    match body_len {
+        0..=75 => 1,
+        76..=255 => 2,
+        256..=65_535 => 3,
+        _ => 5,
     }
 }
 
@@ -689,9 +1068,11 @@ mod tests {
         }));
         tx.add_input(input);
 
-        let unlocker = Stas3NoAuthUnlockingTemplate;
+        let unlocker = Stas3NoAuthUnlockingTemplate::new();
         let script = unlocker.sign(&tx, 0).unwrap();
-        // OP_FALSE is encoded as a single 0x00 byte (an empty push).
+        // Legacy back-compat path (no witness): single OP_FALSE byte.
+        // The full §7 witness path is exercised by the witness-aware tests
+        // below — see `no_auth_with_witness_emits_two_op_false`.
         assert_eq!(script.to_bytes(), &[0x00]);
         assert_eq!(unlocker.estimate_length(&tx, 0), 1);
     }
@@ -770,5 +1151,296 @@ mod tests {
         let est = unlocker.estimate_length(&tx, 0);
         // 1 (OP_0) + 3*73 (sigs) + 2 (PUSHDATA1) + (2 + 5*34) redeem
         assert_eq!(est, 1 + 3 * 73 + 2 + (2 + 5 * 34));
+    }
+
+    // -------------------------------------------------------------------
+    // §7 Stas3UnlockWitness snapshot & shape tests (Priority 1)
+    // -------------------------------------------------------------------
+
+    fn fixed_preimage() -> Vec<u8> {
+        // Deterministic 32-byte fixture so snapshot tests pin exact bytes.
+        (0..32u8).map(|i| i.wrapping_mul(7)).collect()
+    }
+
+    /// Common-case witness: 1 STAS output, no change, no note, txType=0,
+    /// spendType=Transfer, no funding pointer.
+    fn build_witness_1out_no_change() -> Stas3UnlockWitness {
+        Stas3UnlockWitness {
+            stas_outputs: vec![Stas3WitnessOutput {
+                amount: 5_000,
+                owner_pkh: [0x33; 20],
+                var2: vec![],
+            }],
+            change: None,
+            note_data: None,
+            funding_input: None,
+            tx_type: Stas3TxType::Regular,
+            sighash_preimage: fixed_preimage(),
+            spend_type: Stas3SpendType::Transfer,
+        }
+    }
+
+    #[test]
+    fn witness_1out_no_change_no_note_layout() {
+        let mut script = Script::new();
+        let w = build_witness_1out_no_change();
+        w.write_into(&mut script).unwrap();
+        let bytes = script.to_bytes();
+
+        // Spec §7 ordering for this configuration. Decode the chunks and
+        // assert their layout slot-by-slot.
+        let chunks = script.chunks().unwrap();
+        assert!(chunks.len() >= 9, "expected at least 9 pushes, got {}", chunks.len());
+
+        // Slot 1: amount → minimal LE [0x88, 0x13] for 5000.
+        assert_eq!(chunks[0].data.as_deref(), Some(&[0x88u8, 0x13][..]));
+        // Slot 2: owner_pkh → 20 bytes 0x33.
+        assert_eq!(chunks[1].data.as_deref(), Some(&[0x33u8; 20][..]));
+        // Slot 3: var2 → empty push.
+        assert!(
+            chunks[2].data.is_none() || chunks[2].data.as_ref().is_some_and(|d| d.is_empty()),
+            "var2 should be empty"
+        );
+        // Slot 13: change_amount → OP_FALSE
+        assert!(
+            chunks[3].data.is_none() || chunks[3].data.as_ref().is_some_and(|d| d.is_empty())
+        );
+        // Slot 14: change_addr → OP_FALSE
+        assert!(
+            chunks[4].data.is_none() || chunks[4].data.as_ref().is_some_and(|d| d.is_empty())
+        );
+        // Slot 15: noteData → OP_FALSE
+        assert!(
+            chunks[5].data.is_none() || chunks[5].data.as_ref().is_some_and(|d| d.is_empty())
+        );
+        // Slot 16: fundIdx → OP_FALSE
+        assert!(
+            chunks[6].data.is_none() || chunks[6].data.as_ref().is_some_and(|d| d.is_empty())
+        );
+        // Slot 17: fundTxid → OP_FALSE
+        assert!(
+            chunks[7].data.is_none() || chunks[7].data.as_ref().is_some_and(|d| d.is_empty())
+        );
+        // Slot 18: txType
+        assert_eq!(chunks[8].data.as_deref(), Some(&[0x00u8][..]));
+        // Slot 19: preimage
+        assert_eq!(chunks[9].data.as_deref(), Some(fixed_preimage().as_slice()));
+        // Slot 20: spendType
+        assert_eq!(chunks[10].data.as_deref(), Some(&[0x01u8][..]));
+
+        // Snapshot the exact hex prefix (slots 1..=3 + change OP_FALSEs +
+        // noteData OP_FALSE + funding OP_FALSEs + txType byte). 32 bytes
+        // total (3 + 21 + 1 + 2 + 1 + 2 + 2). The preimage portion varies
+        // less interestingly.
+        let prefix_len = 3 + 21 + 1 + 2 + 1 + 2 + 2;
+        let prefix_hex = hex::encode(&bytes[..prefix_len]);
+        assert_eq!(
+            prefix_hex,
+            // 02 88 13               — amount push (5000 LE)
+            // 14 33...33             — owner_pkh push (20×0x33)
+            // 00                     — var2 empty
+            // 00 00                  — change_amount + change_addr OP_FALSEs
+            // 00                     — noteData OP_FALSE
+            // 00 00                  — fundIdx + fundTxid OP_FALSEs
+            // 01 00                  — txType byte 0x00
+            "0288131433333333333333333333333333333333333333330000000000000100",
+        );
+    }
+
+    #[test]
+    fn witness_1out_with_change_layout() {
+        let mut w = build_witness_1out_no_change();
+        w.change = Some(Stas3WitnessChange {
+            amount: 1234,
+            addr_pkh: [0x44; 20],
+        });
+        let mut script = Script::new();
+        w.write_into(&mut script).unwrap();
+        let chunks = script.chunks().unwrap();
+        // Slot 13 (change_amount): minimal LE for 1234 = 0x04 0xD2
+        assert_eq!(chunks[3].data.as_deref(), Some(&[0xD2u8, 0x04][..]));
+        // Slot 14 (change_addr): 20× 0x44
+        assert_eq!(chunks[4].data.as_deref(), Some(&[0x44u8; 20][..]));
+    }
+
+    #[test]
+    fn witness_2_outputs_layout_skips_outputs_3_and_4() {
+        let mut w = build_witness_1out_no_change();
+        // Add a second STAS output triplet.
+        w.stas_outputs.push(Stas3WitnessOutput {
+            amount: 0, // empty body push
+            owner_pkh: [0xAA; 20],
+            var2: vec![0x01],
+        });
+        let mut script = Script::new();
+        w.write_into(&mut script).unwrap();
+        let chunks = script.chunks().unwrap();
+
+        // Output 1 occupies chunks 0..3, Output 2 occupies chunks 3..6.
+        // Chunk 3: amount empty (zero). Chunk 4: 20×0xAA. Chunk 5: var2 [0x01].
+        assert!(
+            chunks[3].data.is_none() || chunks[3].data.as_ref().is_some_and(|d| d.is_empty())
+        );
+        assert_eq!(chunks[4].data.as_deref(), Some(&[0xAAu8; 20][..]));
+        assert_eq!(chunks[5].data.as_deref(), Some(&[0x01u8][..]));
+        // Slot 13 (change_amount) starts at chunk 6 — proves 3rd/4th
+        // output triplets are skipped entirely (no extra pushes).
+        assert!(
+            chunks[6].data.is_none() || chunks[6].data.as_ref().is_some_and(|d| d.is_empty()),
+            "slot 13 (change_amount) must be the 7th chunk when 2 outputs are present"
+        );
+    }
+
+    #[test]
+    fn witness_confiscation_tx_type_5() {
+        let w = Stas3UnlockWitness {
+            stas_outputs: vec![Stas3WitnessOutput {
+                amount: 1,
+                owner_pkh: [0x55; 20],
+                var2: vec![],
+            }],
+            change: None,
+            note_data: None,
+            funding_input: Some(([0xCC; 32], 7)),
+            tx_type: Stas3TxType::Merge5,
+            sighash_preimage: fixed_preimage(),
+            spend_type: Stas3SpendType::Confiscation,
+        };
+        let mut script = Script::new();
+        w.write_into(&mut script).unwrap();
+        let chunks = script.chunks().unwrap();
+        // Slot 16 (fundIdx): 4-byte LE of 7 = [0x07, 0x00, 0x00, 0x00]
+        assert_eq!(
+            chunks[6].data.as_deref(),
+            Some(&[0x07u8, 0x00, 0x00, 0x00][..]),
+            "fundIdx must be 4B LE of vout"
+        );
+        // Slot 17 (fundTxid): 32 bytes 0xCC
+        assert_eq!(chunks[7].data.as_deref(), Some(&[0xCCu8; 32][..]));
+        // Slot 18 (txType): 0x05 (Merge5)
+        assert_eq!(chunks[8].data.as_deref(), Some(&[0x05u8][..]));
+        // Slot 20 (spendType): 0x03 (Confiscation)
+        assert_eq!(chunks[10].data.as_deref(), Some(&[0x03u8][..]));
+    }
+
+    #[test]
+    fn witness_rejects_too_many_stas_outputs() {
+        let w = Stas3UnlockWitness {
+            stas_outputs: vec![
+                Stas3WitnessOutput { amount: 1, owner_pkh: [0; 20], var2: vec![] },
+                Stas3WitnessOutput { amount: 1, owner_pkh: [0; 20], var2: vec![] },
+                Stas3WitnessOutput { amount: 1, owner_pkh: [0; 20], var2: vec![] },
+                Stas3WitnessOutput { amount: 1, owner_pkh: [0; 20], var2: vec![] },
+                Stas3WitnessOutput { amount: 1, owner_pkh: [0; 20], var2: vec![] },
+            ],
+            change: None,
+            note_data: None,
+            funding_input: None,
+            tx_type: Stas3TxType::Regular,
+            sighash_preimage: vec![],
+            spend_type: Stas3SpendType::Transfer,
+        };
+        let mut script = Script::new();
+        assert!(w.write_into(&mut script).is_err());
+    }
+
+    #[test]
+    fn witness_rejects_oversized_note_data() {
+        let mut w = build_witness_1out_no_change();
+        w.note_data = Some(vec![0u8; Stas3UnlockWitness::MAX_NOTE_DATA_LEN + 1]);
+        let mut script = Script::new();
+        assert!(w.write_into(&mut script).is_err());
+    }
+
+    #[test]
+    fn witness_with_note_data_emits_push() {
+        let mut w = build_witness_1out_no_change();
+        w.note_data = Some(b"hello".to_vec());
+        let mut script = Script::new();
+        w.write_into(&mut script).unwrap();
+        let chunks = script.chunks().unwrap();
+        // Slot 15 (noteData) is at chunk 5 (3 output chunks + 2 change OP_FALSEs).
+        assert_eq!(chunks[5].data.as_deref(), Some(&b"hello"[..]));
+    }
+
+    // -------------------------------------------------------------------
+    // No-auth template § 10.3 interpretation: with-witness path emits
+    // OP_FALSE in slot 19 (preimage) AND slot 21+ (authz) — TWO total.
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn no_auth_with_witness_emits_two_op_false() {
+        let mut w = build_witness_1out_no_change();
+        w.sighash_preimage = Vec::new(); // preimage encoded as OP_FALSE
+        let unlocker = Stas3NoAuthUnlockingTemplate::with_witness(w);
+        let tx = bsv_transaction::transaction::Transaction::default();
+        let script = unlocker.sign(&tx, 0).unwrap();
+        let chunks = script.chunks().unwrap();
+        // The last two pushes should be empty pushes (OP_FALSE) — slot 19
+        // (preimage) and slot 21+ (authz).
+        let last = chunks.last().unwrap();
+        let second_last = &chunks[chunks.len() - 3]; // slot 19 is 2 chunks before authz (after slot 20)
+        assert!(
+            last.data.is_none() || last.data.as_ref().is_some_and(|d| d.is_empty()),
+            "authz slot must be OP_FALSE"
+        );
+        assert!(
+            second_last.data.is_none()
+                || second_last.data.as_ref().is_some_and(|d| d.is_empty()),
+            "preimage slot 19 must be OP_FALSE"
+        );
+    }
+
+    // -------------------------------------------------------------------
+    // Priority 4: assert engine constants are baked into the template.
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn engine_constants_baked_into_template() {
+        use crate::script::stas3_builder::build_stas3_locking_script;
+        let script = build_stas3_locking_script(
+            &[0u8; 20],
+            &[0u8; 20],
+            None,
+            false,
+            true,
+            &[],
+            &[],
+        )
+        .unwrap();
+        let script_hex = hex::encode(script.to_bytes());
+
+        // PUBKEY_A: hard-coded sigtail pubkey (spec §11 / template Section D).
+        // Pinned in `stas_builder.rs` and `stas3_builder.rs`.
+        let pubkey_a = "038ff83d8cf12121491609c4939dc11c4aa35503508fe432dc5a5c1905608b9218";
+        assert!(
+            script_hex.contains(pubkey_a),
+            "STAS3 template must bake PUBKEY_A {}",
+            pubkey_a
+        );
+        // PUBKEY_B: secondary engine pubkey.
+        let pubkey_b = "023635954789a02e39fb7e54440b6f528d53efd65635ddad7f3c4085f97fdbdc48";
+        assert!(
+            script_hex.contains(pubkey_b),
+            "STAS3 template must bake PUBKEY_B {}",
+            pubkey_b
+        );
+        // SIG_PREFIX_DER: the hard-coded ECDSA-trick DER prefix ending b16f
+        // (canonical 79be… secp256k1 generator x-coord trick — see spec §11).
+        let sig_prefix = "3044022079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+        assert!(
+            script_hex.contains(sig_prefix),
+            "STAS3 template must bake SIG_PREFIX_DER ending b16f81798"
+        );
+        // HALF_N: half-curve-order constant for low-S enforcement —
+        // appears in the template as the 32-byte sequence
+        // `414136d08c5ed2bf3ba048afe6dcaebafe`-prefixed (template uses the
+        // little-endian-byte-reversed half-N constant). Pin its presence.
+        let half_n_marker = "414136d08c5ed2bf3ba048afe6dcaebafe";
+        assert!(
+            script_hex.contains(half_n_marker),
+            "STAS3 template must bake HALF_N marker {}",
+            half_n_marker
+        );
     }
 }
