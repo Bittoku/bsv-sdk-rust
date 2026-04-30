@@ -17,6 +17,7 @@ pub mod proof;
 pub mod scheme;
 pub mod script;
 pub mod script_type;
+pub mod stas3;
 pub mod template;
 pub mod token_id;
 pub mod types;
@@ -45,6 +46,7 @@ pub use template::stas3::{
 };
 pub use proof::split_tx_around_output;
 pub use lineage::{LineageValidator, TxFetcher};
+pub use stas3::{verify_input as stas3_verify_input, Stas3VerifyError};
 pub use factory::{
     build_contract_tx, ContractConfig,
     build_issue_tx, build_transfer_tx, build_split_tx, build_merge_tx, build_redeem_tx,

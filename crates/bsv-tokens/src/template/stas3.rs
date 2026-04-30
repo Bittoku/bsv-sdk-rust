@@ -26,16 +26,28 @@ use crate::types::{Stas3SpendType, Stas3TxType, SigningKey};
 // empty". This means minimal little-endian: zero is an empty push, otherwise
 // emit only as many low-order bytes as needed (no sign-padding, since these
 // are unsigned). Maximum width is 8 bytes (u64).
+//
+// Sign-bit safety
+// ---------------
+// The engine treats the pushed bytes as a Bitcoin script number when it
+// later splices them into the BIP-143-style outputs blob via
+// `OP_BIN2NUM` / `OP_NUM2BIN`. Bitcoin script numbers are sign-magnitude
+// little-endian: when the high bit of the most-significant byte is set,
+// the value is interpreted as negative. For unsigned-LE token amounts
+// whose top byte happens to have its high bit set (any value with a top
+// byte ≥ 0x80, e.g. 0xBD0E = 48398), we MUST append a `0x00` sentinel
+// byte to keep the value non-negative when read as a script number.
+// Without it the engine reconstructs a wildly different change amount in
+// its outputs blob and the BIP-143 hashOutputs check fails.
 // ---------------------------------------------------------------------------
 
-/// Encode an unsigned amount as the body of a minimal little-endian push,
-/// per STAS 3.0 spec §7. Zero produces an empty body (intended to be emitted
-/// as `OP_FALSE`/`OP_0`); non-zero amounts produce 1..=8 bytes — only as
-/// many as the most-significant nonzero byte requires.
+/// Encode `value` as little-endian bytes, appending a `0x00` sign-bit
+/// sentinel when the high bit of the most-significant byte is set so the
+/// engine reads it back as the same non-negative integer via OP_BIN2NUM.
 ///
-/// This is the body only — callers wrap it with the appropriate push opcode
-/// (`OP_FALSE` for empty, otherwise a bare push).
-pub fn encode_unlock_amount(value: u64) -> Vec<u8> {
+/// Returns an empty `Vec` for `0` (matching Bitcoin's "empty array = 0"
+/// convention).
+pub(crate) fn amount_to_script_num_le(value: u64) -> Vec<u8> {
     if value == 0 {
         return Vec::new();
     }
@@ -45,19 +57,39 @@ pub fn encode_unlock_amount(value: u64) -> Vec<u8> {
     while len > 1 && raw[len - 1] == 0 {
         len -= 1;
     }
-    raw[..len].to_vec()
+    let mut bytes = raw[..len].to_vec();
+    // Append a 0x00 sentinel when the high bit of the last byte is set so
+    // the value isn't interpreted as a negative script number by the
+    // engine (sign-magnitude little-endian).
+    if bytes.last().map(|b| b & 0x80 != 0).unwrap_or(false) {
+        bytes.push(0x00);
+    }
+    bytes
+}
+
+/// Encode an unsigned amount as the body of a minimal little-endian push,
+/// per STAS 3.0 spec §7. Zero produces an empty body (intended to be emitted
+/// as `OP_FALSE`/`OP_0`); non-zero amounts produce 1..=9 bytes — the
+/// minimal LE encoding plus a `0x00` sign-bit sentinel when the high bit of
+/// the most-significant byte is set.
+///
+/// This is the body only — callers wrap it with the appropriate push opcode
+/// (`OP_FALSE` for empty, otherwise a bare push).
+pub fn encode_unlock_amount(value: u64) -> Vec<u8> {
+    amount_to_script_num_le(value)
 }
 
 /// Encode an amount as a complete minimal push (header + body) for inclusion
 /// in a STAS 3.0 unlocking script per spec §7. Zero → `[0x00]` (`OP_FALSE`);
-/// otherwise a bare push of 1..=8 minimal LE bytes.
+/// otherwise a bare push of 1..=9 minimal LE bytes (8 LE bytes + an
+/// optional 0x00 sign-bit sentinel — see [`encode_unlock_amount`]).
 pub fn push_unlock_amount(value: u64) -> Vec<u8> {
     let body = encode_unlock_amount(value);
     if body.is_empty() {
         vec![0x00] // OP_FALSE / OP_0 = empty push
     } else {
         let mut out = Vec::with_capacity(body.len() + 1);
-        out.push(body.len() as u8); // bare push, len <= 8 always fits
+        out.push(body.len() as u8); // bare push, len <= 9 always fits
         out.extend_from_slice(&body);
         out
     }
@@ -1018,15 +1050,17 @@ mod tests {
     #[test]
     fn encode_unlock_amount_one_byte() {
         assert_eq!(encode_unlock_amount(1), vec![0x01]);
-        assert_eq!(encode_unlock_amount(0xFF), vec![0xFF]);
+        // 0xFF has the high bit set in its single byte → sign-bit sentinel appended.
+        assert_eq!(encode_unlock_amount(0xFF), vec![0xFF, 0x00]);
         assert_eq!(push_unlock_amount(1), vec![0x01, 0x01]);
-        assert_eq!(push_unlock_amount(0xFF), vec![0x01, 0xFF]);
+        assert_eq!(push_unlock_amount(0xFF), vec![0x02, 0xFF, 0x00]);
     }
 
     #[test]
     fn encode_unlock_amount_two_bytes() {
         assert_eq!(encode_unlock_amount(0x100), vec![0x00, 0x01]);
-        assert_eq!(encode_unlock_amount(0xFFFF), vec![0xFF, 0xFF]);
+        // 0xFFFF: top byte is 0xFF, high bit set → sentinel appended.
+        assert_eq!(encode_unlock_amount(0xFFFF), vec![0xFF, 0xFF, 0x00]);
         assert_eq!(push_unlock_amount(0x100), vec![0x02, 0x00, 0x01]);
     }
 
@@ -1038,7 +1072,7 @@ mod tests {
 
     #[test]
     fn encode_unlock_amount_five_bytes() {
-        // 0x100000000 → 5 bytes minimal LE
+        // 0x100000000 → 5 bytes minimal LE (top byte 0x01, no sentinel needed)
         assert_eq!(
             encode_unlock_amount(0x100000000),
             vec![0x00, 0x00, 0x00, 0x00, 0x01]
@@ -1047,35 +1081,63 @@ mod tests {
 
     #[test]
     fn encode_unlock_amount_seven_bytes() {
-        // 0xFFFFFFFFFFFFFF → 7 bytes
+        // 0xFFFFFFFFFFFFFF → 7 bytes of 0xFF + sign-bit sentinel.
         assert_eq!(
             encode_unlock_amount(0x00FF_FFFF_FFFF_FFFF),
-            vec![0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]
+            vec![0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00]
         );
     }
 
     #[test]
     fn encode_unlock_amount_eight_bytes_max() {
+        // u64::MAX has the high bit set in the top byte → sentinel appended,
+        // for 9 body bytes total.
         assert_eq!(
             encode_unlock_amount(u64::MAX),
-            vec![0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]
+            vec![0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00]
         );
-        // The push form is 1-byte length prefix + 8 bytes body = 9 bytes.
-        assert_eq!(push_unlock_amount(u64::MAX).len(), 9);
-        assert_eq!(push_unlock_amount(u64::MAX)[0], 0x08);
+        // The push form is 1-byte length prefix + 9 bytes body = 10 bytes.
+        assert_eq!(push_unlock_amount(u64::MAX).len(), 10);
+        assert_eq!(push_unlock_amount(u64::MAX)[0], 0x09);
+    }
+
+    #[test]
+    fn encode_unlock_amount_appends_sign_bit_sentinel() {
+        // 48398 = 0xBD0E. Minimal LE is [0x0E, 0xBD]; the high bit of 0xBD
+        // is set, so the engine would otherwise read this back as a
+        // negative script number (-15630). Append a 0x00 sentinel.
+        assert_eq!(
+            encode_unlock_amount(48398),
+            vec![0x0E, 0xBD, 0x00],
+            "values whose top byte has bit 7 set must carry a 0x00 sign sentinel"
+        );
+        // Push form is `0x03 0x0E 0xBD 0x00`.
+        assert_eq!(
+            push_unlock_amount(48398),
+            vec![0x03, 0x0E, 0xBD, 0x00]
+        );
     }
 
     #[test]
     fn encode_unlock_amount_snapshot_table() {
         // Comprehensive snapshot table covering the spec §7 examples.
+        // Entries marked with the sign-bit sentinel (0x00 trailer) carry a
+        // top byte ≥ 0x80 — see `encode_unlock_amount`'s sign-bit safety note.
         let cases: &[(u64, &[u8])] = &[
             (0, &[]),
             (1, &[0x01]),
-            (0xFF, &[0xFF]),
+            (0xFF, &[0xFF, 0x00]), // sign-bit sentinel
             (0x100, &[0x00, 0x01]),
-            (0xFFFF, &[0xFF, 0xFF]),
+            (0xFFFF, &[0xFF, 0xFF, 0x00]), // sign-bit sentinel
             (0x100000000, &[0x00, 0x00, 0x00, 0x00, 0x01]),
-            (0x00FF_FFFF_FFFF_FFFF, &[0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]),
+            (
+                0x00FF_FFFF_FFFF_FFFF,
+                &[0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00],
+            ), // sign-bit sentinel
+            (
+                u64::MAX,
+                &[0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00],
+            ), // sign-bit sentinel
         ];
         for (value, expected) in cases {
             let got = encode_unlock_amount(*value);
