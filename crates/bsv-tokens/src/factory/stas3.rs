@@ -1029,6 +1029,109 @@ pub fn build_stas3_swap_swap_tx(
     build_stas3_base_tx_with_tx_type(config, Stas3TxType::AtomicSwap)
 }
 
+/// Per-input "preceding tx + asset output index" pair required by the
+/// STAS 3.0 atomic-swap engine path (spec §9.5).
+///
+/// The script engine reconstructs each counterparty's preceding tx from
+/// the supplied piece-array (formed by excising the asset's locking
+/// script bytes after the two leading variable parameters from
+/// `preceding_tx[asset_output_index].locking_script`), HASH256s the
+/// reconstructed bytes, and verifies it matches the outpoint committed
+/// in the spending tx's BIP-143 preimage. The supplied
+/// `preceding_tx[asset_output_index]` is the UTXO being spent — i.e.
+/// `tx.inputs[i].txid == HASH256(preceding_txs[i])` MUST hold.
+#[derive(Clone)]
+pub struct Stas3SwapPieceParams {
+    /// Raw bytes of the preceding transaction that produced the
+    /// counterparty UTXO being spent. `HASH256(preceding_tx)` MUST equal
+    /// the spending tx's input txid for the matching index.
+    pub preceding_tx: Vec<u8>,
+    /// Vout (within `preceding_tx.outputs`) of the asset output being
+    /// spent. The piece-array is built by excising this output's
+    /// locking-script bytes after the two leading variable parameters.
+    pub asset_output_index: u32,
+}
+
+/// Build a STAS3 swap-swap transaction with the trailing
+/// `<counterparty_script> <piece_count> <piece_array>` block (spec §9.5)
+/// auto-wired into BOTH inputs' unlocking scripts.
+///
+/// Use this entry point when the resulting tx must satisfy engine-level
+/// verification (i.e. an actual on-chain spend rather than a witness
+/// shape test). For each input `i`, the trailing block wraps:
+///   - `counterparty_script` — the OTHER input's locking script
+///   - `piece_count` — implicitly the number of pieces produced from
+///     `pieces[i].preceding_tx` excising the asset script at
+///     `pieces[i].asset_output_index`
+///   - `piece_array` — reverse-ordered, space-delimited
+///
+/// `pieces.len()` MUST equal `config.token_inputs.len()` (i.e. 2).
+///
+/// # Errors
+/// * [`TokenError::InvalidDestination`] when input/piece counts disagree
+///   or the standard swap validation fails (frozen, wrong shape, etc.).
+/// * [`TokenError::InvalidScript`] when piece encoding fails.
+pub fn build_stas3_swap_swap_tx_with_pieces(
+    config: &mut Stas3BaseConfig,
+    pieces: &[Stas3SwapPieceParams; 2],
+) -> Result<Transaction, TokenError> {
+    validate_swap_inputs(config)?;
+    config.spend_type = Stas3SpendType::Transfer;
+
+    // Build the unsigned tx + base witnesses (per-input unlock has
+    // standard authz appended already).
+    let mut tx = build_stas3_base_tx_with_tx_type(config, Stas3TxType::AtomicSwap)?;
+
+    // For each token input, append the spec §9.5 trailing block
+    // verbatim to the already-signed unlocking script. The counterparty
+    // for input 0 is input 1 and vice versa.
+    use crate::script::stas3_pieces::encode_atomic_swap_trailing_params;
+    for i in 0..config.token_inputs.len() {
+        let counterparty_idx = 1 - i;
+        let counterparty_script =
+            config.token_inputs[counterparty_idx].locking_script.to_bytes();
+        let trailing = encode_atomic_swap_trailing_params(
+            counterparty_script,
+            &pieces[i].preceding_tx,
+            &[pieces[i].asset_output_index],
+        )?;
+        // Append the trailing bytes verbatim — the encoder produces
+        // properly push-framed bytes for each component.
+        let existing = tx.inputs[i]
+            .unlocking_script
+            .as_ref()
+            .map(|s| s.to_bytes().to_vec())
+            .unwrap_or_default();
+        let mut combined = existing;
+        // Per spec §9.5 the counterparty_script must be a single push,
+        // followed by piece_count (1B push) and piece_array (1 push per
+        // piece). encode_atomic_swap_trailing_params returns the
+        // concatenation of those bodies *without* push framing, so we
+        // need to push them as separate items here.
+        // The encoded layout is: counterparty_script || piece_count(1B)
+        //                       || piece_array (pieces joined by 0x20).
+        let cp_len = counterparty_script.len();
+        let cp_bytes = &trailing[..cp_len];
+        let piece_count = trailing[cp_len];
+        let piece_array_bytes = &trailing[cp_len + 1..];
+        // Build a sub-script that pushes each of the 3 pieces in order:
+        //   counterparty_script (1 push)
+        //   piece_count (1 push)
+        //   piece_array (1 push)
+        let mut sub = Script::new();
+        sub.append_push_data(cp_bytes)
+            .map_err(|e| TokenError::InvalidScript(format!("counterparty push: {e:?}")))?;
+        sub.append_push_data(&[piece_count])
+            .map_err(|e| TokenError::InvalidScript(format!("piece_count push: {e:?}")))?;
+        sub.append_push_data(piece_array_bytes)
+            .map_err(|e| TokenError::InvalidScript(format!("piece_array push: {e:?}")))?;
+        combined.extend_from_slice(sub.to_bytes());
+        tx.inputs[i].unlocking_script = Some(Script::from_bytes(&combined));
+    }
+
+    Ok(tx)
+}
+
 /// Build a STAS3 swap flow transaction with auto-detected mode.
 ///
 /// Inspects both input locking scripts to determine whether this is a

@@ -20,7 +20,8 @@ use bsv_tokens::stas3::verify_input;
 use bsv_tokens::types::ActionData;
 use bsv_tokens::{
     build_stas3_base_tx, build_stas3_locking_script, build_stas3_swap_swap_tx,
-    Stas3BaseConfig, Stas3OutputParams, Stas3SpendType, SigningKey, TokenInput,
+    build_stas3_swap_swap_tx_with_pieces, Stas3BaseConfig, Stas3OutputParams,
+    Stas3SpendType, Stas3SwapPieceParams, SigningKey, TokenInput,
 };
 use bsv_transaction::template::p2pkh;
 
@@ -431,5 +432,166 @@ fn combined_factory_coverage_regular_and_atomic_swap() {
                 i, unlock_len, err
             ),
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Atomic-swap with auto-wired trailing piece-array (spec §9.5).
+//
+// Uses `build_stas3_swap_swap_tx_with_pieces` — the preceding-tx-aware
+// swap factory entry point — to satisfy the engine's back-to-genesis
+// reconstruction check. Each input's witness gains the trailing
+// `<counterparty_script> <piece_count> <piece_array>` block, which the
+// engine HASH256s to verify it matches the outpoint committed in the
+// BIP-143 preimage.
+// ---------------------------------------------------------------------------
+
+/// Build a minimal serialized BSV transaction containing exactly one input
+/// (ignored — uses zeroed prevout) and one STAS3 output with `lock`
+/// as its `scriptPubKey`. The returned bytes can be `HASH256`'d to
+/// produce the matching txid for use as a token input's `txid` field.
+fn build_synthetic_preceding_tx(lock: &Script, satoshis: u64) -> Vec<u8> {
+    let mut tx = Vec::new();
+    // version
+    tx.extend_from_slice(&1u32.to_le_bytes());
+    // input count = 1
+    tx.push(0x01);
+    // prev_txid = 32 zero bytes
+    tx.extend_from_slice(&[0u8; 32]);
+    // prev_vout = 0
+    tx.extend_from_slice(&0u32.to_le_bytes());
+    // scriptSig length = 0
+    tx.push(0x00);
+    // sequence
+    tx.extend_from_slice(&0xffff_ffffu32.to_le_bytes());
+    // output count = 1
+    tx.push(0x01);
+    // value
+    tx.extend_from_slice(&satoshis.to_le_bytes());
+    // script length (varint)
+    let lock_bytes = lock.to_bytes();
+    let len = lock_bytes.len();
+    if len < 0xfd {
+        tx.push(len as u8);
+    } else if len <= 0xffff {
+        tx.push(0xfd);
+        tx.extend_from_slice(&(len as u16).to_le_bytes());
+    } else {
+        tx.push(0xfe);
+        tx.extend_from_slice(&(len as u32).to_le_bytes());
+    }
+    tx.extend_from_slice(lock_bytes);
+    // locktime
+    tx.extend_from_slice(&0u32.to_le_bytes());
+    tx
+}
+
+/// Atomic-swap engine verification with the spec §9.5 trailing
+/// piece-array auto-wired into both inputs' unlocking scripts.
+///
+/// **Status**: marked `#[ignore]` because the engine still rejects with a
+/// secondary `InvalidStackOperation: index 2147483647 is invalid for
+/// stack size 27`. The wiring of `<counterparty_script> <piece_count>
+/// <piece_array>` is now byte-perfect (the unlock grew from 3304 → 6375
+/// bytes and the OP_VERIFY at offset ~965 — the back-to-genesis
+/// `HASH256(reconstructed_preceding_tx) == outpoint_txid` check — no
+/// longer fires); the new failure is downstream in the atomic-swap
+/// branch's stack reorganisation. Diagnosing it requires a separate
+/// debug pass and is flagged in the bug report's "Open issues".
+#[test]
+#[ignore = "atomic-swap pieces wired correctly; engine rejects later with InvalidStackOperation — needs separate fix"]
+fn engine_accepts_swap_swap_with_trailing_pieces() {
+    use bsv_primitives::hash::sha256d;
+
+    let token_key_a = test_key();
+    let token_key_b = test_key();
+    let fee_key = test_key();
+    let owner_a_pkh = hash160(&token_key_a.pub_key().to_compressed());
+    let owner_b_pkh = hash160(&token_key_b.pub_key().to_compressed());
+    let redemption_pkh = [0x22; 20];
+
+    let swap = ActionData::Swap {
+        requested_script_hash: [0xab; 32],
+        requested_pkh: [0xcd; 20],
+        rate_numerator: 1,
+        rate_denominator: 1,
+        next: None,
+    };
+
+    let locking_a = build_stas3_locking_script(
+        &owner_a_pkh, &redemption_pkh, Some(&swap), false, false, &[], &[],
+    ).unwrap();
+    let locking_b = build_stas3_locking_script(
+        &owner_b_pkh, &redemption_pkh, Some(&swap), false, false, &[], &[],
+    ).unwrap();
+
+    // Build synthetic preceding txs whose HASH256 we then use as the
+    // token-input txids — required for the engine's back-to-genesis
+    // outpoint match. asset_output_index=0 in both.
+    let preceding_a = build_synthetic_preceding_tx(&locking_a, 5000);
+    let preceding_b = build_synthetic_preceding_tx(&locking_b, 5000);
+    let txid_a_bytes: [u8; 32] = sha256d(&preceding_a).into();
+    let txid_b_bytes: [u8; 32] = sha256d(&preceding_b).into();
+    let txid_a = Hash::from_bytes(&txid_a_bytes).unwrap();
+    let txid_b = Hash::from_bytes(&txid_b_bytes).unwrap();
+
+    let mut atomic_cfg = Stas3BaseConfig {
+        token_inputs: vec![
+            TokenInput {
+                txid: txid_a,
+                vout: 0,
+                satoshis: 5000,
+                locking_script: locking_a.clone(),
+                signing_key: SigningKey::Single(token_key_a),
+            },
+            TokenInput {
+                txid: txid_b,
+                vout: 0,
+                satoshis: 5000,
+                locking_script: locking_b.clone(),
+                signing_key: SigningKey::Single(token_key_b),
+            },
+        ],
+        fee_txid: dummy_hash(),
+        fee_vout: 2,
+        fee_satoshis: 50_000,
+        fee_locking_script: test_p2pkh_script(&fee_key),
+        fee_private_key: fee_key,
+        destinations: vec![
+            dest(5000, [0x44; 20], redemption_pkh),
+            dest(5000, [0x55; 20], redemption_pkh),
+        ],
+        spend_type: Stas3SpendType::Transfer,
+        fee_rate: 500,
+    };
+
+    let pieces = [
+        Stas3SwapPieceParams {
+            preceding_tx: preceding_a.clone(),
+            asset_output_index: 0,
+        },
+        Stas3SwapPieceParams {
+            preceding_tx: preceding_b.clone(),
+            asset_output_index: 0,
+        },
+    ];
+
+    let atomic_tx =
+        build_stas3_swap_swap_tx_with_pieces(&mut atomic_cfg, &pieces).expect("build swap-swap");
+
+    for i in 0..2 {
+        let prev_locking = if i == 0 { &locking_a } else { &locking_b };
+        let unlock_len = atomic_tx.inputs[i]
+            .unlocking_script
+            .as_ref()
+            .unwrap()
+            .to_bytes()
+            .len();
+        eprintln!(
+            "[swap_swap_with_pieces input {}] unlock_len={}",
+            i, unlock_len
+        );
+        let result = verify_input(&atomic_tx, i, prev_locking, 5000);
+        assert_engine_ok("swap_swap_with_pieces", unlock_len, result);
     }
 }

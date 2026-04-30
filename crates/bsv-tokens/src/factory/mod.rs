@@ -9,12 +9,14 @@ pub mod stas;
 pub use contract::{build_contract_tx, ContractConfig};
 pub use stas3::{
     build_stas3_base_tx, build_stas3_freeze_tx, build_stas3_issue_txs, build_stas3_swap_flow_tx,
-    build_stas3_transfer_swap_tx, build_stas3_swap_swap_tx, build_stas3_swap_cancel_tx,
+    build_stas3_transfer_swap_tx, build_stas3_swap_swap_tx,
+    build_stas3_swap_swap_tx_with_pieces, build_stas3_swap_cancel_tx,
     build_stas3_unfreeze_tx, build_stas3_split_tx, build_stas3_merge_tx,
     build_stas3_confiscate_tx, build_stas3_redeem_tx, build_swap_remainder_output,
     Stas3BaseConfig, Stas3IssueConfig, Stas3IssueOutput, Stas3IssueTxs,
     Stas3OutputParams, Stas3SplitConfig, Stas3MergeConfig, Stas3ConfiscateConfig,
-    Stas3RedeemConfig, Stas3SwapCancelConfig, RedeemAddressType, TokenInput,
+    Stas3RedeemConfig, Stas3SwapCancelConfig, Stas3SwapPieceParams,
+    RedeemAddressType, TokenInput,
 };
 pub use stas::{
     build_issue_tx, build_merge_tx, build_redeem_tx, build_split_tx, build_transfer_tx,
