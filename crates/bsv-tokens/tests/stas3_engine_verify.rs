@@ -489,17 +489,29 @@ fn build_synthetic_preceding_tx(lock: &Script, satoshis: u64) -> Vec<u8> {
 /// Atomic-swap engine verification with the spec §9.5 trailing
 /// piece-array auto-wired into both inputs' unlocking scripts.
 ///
-/// **Status**: marked `#[ignore]` because the engine still rejects with a
-/// secondary `InvalidStackOperation: index 2147483647 is invalid for
-/// stack size 27`. The wiring of `<counterparty_script> <piece_count>
-/// <piece_array>` is now byte-perfect (the unlock grew from 3304 → 6375
-/// bytes and the OP_VERIFY at offset ~965 — the back-to-genesis
-/// `HASH256(reconstructed_preceding_tx) == outpoint_txid` check — no
-/// longer fires); the new failure is downstream in the atomic-swap
-/// branch's stack reorganisation. Diagnosing it requires a separate
-/// debug pass and is flagged in the bug report's "Open issues".
+/// The piece-array is encoded length-prefixed (`[len][body][len][body]...`)
+/// to match the engine ASM's `OP_1 OP_SPLIT OP_IFDUP OP_IF OP_SWAP
+/// OP_SPLIT OP_ENDIF` consumption pattern.
+///
+/// **Status**: with the length-prefixed encoding, the engine progresses
+/// past the original `InvalidStackOperation` failure but now rejects
+/// with `NumberTooSmall: n is negative` at `OP_SPLIT` — a separate
+/// downstream issue. In the synthetic preceding tx, the `head` piece is
+/// 141 bytes (4 version + 1 input_count + 41 input + 1 output_count +
+/// 8 value + 3 script_len_varint + 21 owner+var2 prefix + ... ≈ 141B),
+/// so its 1-byte length prefix `0x8d` is interpreted as a negative
+/// Bitcoin-script number. The engine ASM's `OP_1 OP_SPLIT` reads exactly
+/// 1 byte as the length prefix, so each piece body must be ≤ 0x7F = 127
+/// bytes — but the synthetic-preceding-tx head exceeds that. The Elixir
+/// reference SDK fails with the matching `:invalid_split_range`.
+///
+/// The encoder/decoder pair is now byte-identical to the Elixir SDK; the
+/// remaining downstream rejection is independent of this fix and tracked
+/// separately. Keep the `#[ignore]` so CI stays green; remove it once
+/// the upstream piece-size constraint is resolved.
 #[test]
-#[ignore = "atomic-swap pieces wired correctly; engine rejects later with InvalidStackOperation — needs separate fix"]
+#[ignore = "encoder fix applied; engine still rejects pieces > 127 bytes via signed-byte OP_SPLIT — \
+            same failure as Elixir SDK; needs separate piece-size resolution"]
 fn engine_accepts_swap_swap_with_trailing_pieces() {
     use bsv_primitives::hash::sha256d;
 

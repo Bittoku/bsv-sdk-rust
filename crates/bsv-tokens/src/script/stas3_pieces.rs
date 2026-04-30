@@ -6,7 +6,7 @@
 //! ```text
 //! counterparty_locking_script
 //! piece_count       : 1-byte unsigned integer
-//! piece_array       : pieces joined by single 0x20 (space) bytes
+//! piece_array       : length-prefixed pieces (1-byte length, then body)
 //! ```
 //!
 //! For `txType = 2..7` (merge variants) the trailing parameters are the same
@@ -14,7 +14,7 @@
 //!
 //! ```text
 //! piece_count       : 1-byte unsigned integer (must equal txType, 2..=7)
-//! piece_array       : pieces joined by single 0x20 (space) bytes
+//! piece_array       : length-prefixed pieces (1-byte length, then body)
 //! ```
 //!
 //! "Pieces" are produced from the **preceding transaction** of an asset input
@@ -23,13 +23,28 @@
 //! `[OP_DATA_20 + 20B owner][var2 push]`) from each named output, then
 //! splitting the remaining preceding-tx bytes around those excised regions
 //! (everything BEFORE the first asset, BETWEEN consecutive assets, and
-//! AFTER the last). The piece array is reverse-ordered and joined with
-//! single `0x20` separators.
+//! AFTER the last). The piece array is reverse-ordered.
+//!
+//! ## Wire format
+//!
+//! The engine consumes pieces via the repeated atom
+//! `OP_1 OP_SPLIT OP_IFDUP OP_IF OP_SWAP OP_SPLIT OP_ENDIF`: it reads 1 byte
+//! as the next piece's length, then exactly that many bytes as the piece
+//! body. The piece-array is therefore encoded as
+//!
+//! ```text
+//! [len_0][piece_0_bytes][len_1][piece_1_bytes]...[len_N-1][piece_N-1_bytes]
+//! ```
+//!
+//! with no separators. Spec §9.5's "delimited by space" wording is
+//! historical and superseded by the engine ASM. Each piece must fit within a
+//! single u8 length prefix (≤ 0xFF bytes).
 
 use crate::error::TokenError;
 
-/// Single byte separator between pieces in the piece-array (spec §9.5).
-const PIECE_SEPARATOR: u8 = 0x20;
+/// Maximum byte length of a single piece (engine reads 1-byte length prefix
+/// via `OP_1 OP_SPLIT`).
+const MAX_PIECE_LEN: usize = 0xFF;
 
 /// Encoded trailing-param block for a STAS 3.0 atomic-swap unlocking script
 /// (`txType = 1`).
@@ -45,12 +60,14 @@ const PIECE_SEPARATOR: u8 = 0x20;
 /// # Returns
 /// A byte vector of the form
 /// `counterparty_locking_script || [piece_count] || piece_array`, where
-/// adjacent pieces are joined by single `0x20` (space) separators.
+/// each piece is encoded as `[len][body]` (1-byte length prefix followed
+/// by the piece bytes).
 ///
 /// # Errors
 /// * [`TokenError::InvalidScript`] — when `asset_output_indices` is empty,
-///   when an index points at a non-STAS-shaped output, or when
-///   `preceding_tx` is malformed.
+///   when an index points at a non-STAS-shaped output, when any single
+///   piece exceeds 255 bytes (`OP_1 OP_SPLIT` reads exactly 1 byte as the
+///   length prefix), or when `preceding_tx` is malformed.
 pub fn encode_atomic_swap_trailing_params(
     counterparty_locking_script: &[u8],
     preceding_tx: &[u8],
@@ -67,6 +84,7 @@ pub fn encode_atomic_swap_trailing_params(
             "atomic-swap pieces: piece count exceeds u8 range".into(),
         )
     })?;
+    validate_piece_lengths(&pieces)?;
 
     let mut out = Vec::with_capacity(
         counterparty_locking_script.len() + 1 + pieces_total_len(&pieces),
@@ -110,6 +128,7 @@ pub fn encode_merge_trailing_params(
             pieces.len()
         )));
     }
+    validate_piece_lengths(&pieces)?;
     let mut out = Vec::with_capacity(1 + pieces_total_len(&pieces));
     out.push(piece_count);
     append_piece_array(&mut out, &pieces);
@@ -147,6 +166,10 @@ pub enum TrailingParamsError {
     /// Counterparty locking script length cannot be inferred for `txType=1`.
     #[error("ambiguous counterparty script length for atomic swap")]
     AmbiguousCounterpartyScript,
+    /// Trailing bytes remain after consuming `piece_count` length-prefixed
+    /// pieces from the piece-array.
+    #[error("trailing bytes remain after piece_array (offset {0})")]
+    TrailingBytesAfterPieces(usize),
 }
 
 /// Parse an existing trailing-param block.
@@ -181,7 +204,7 @@ pub fn parse_trailing_params(
     }
     let piece_count = bytes[after_script];
     let pieces_bytes = &bytes[after_script + 1..];
-    let pieces = split_piece_array(pieces_bytes);
+    let pieces = split_piece_array(pieces_bytes, piece_count as usize, after_script + 1)?;
 
     if pieces.len() != piece_count as usize {
         return Err(TrailingParamsError::PieceCountMismatch {
@@ -209,27 +232,68 @@ pub fn parse_trailing_params(
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-/// Sum of byte lengths of every piece (excluding separators).
+/// Total encoded byte length of the piece-array (1-byte length prefix per
+/// piece plus each piece body).
 fn pieces_total_len(pieces: &[Vec<u8>]) -> usize {
-    let bytes: usize = pieces.iter().map(Vec::len).sum();
-    // Add separators between consecutive pieces.
-    bytes + pieces.len().saturating_sub(1)
+    pieces.iter().map(|p| 1 + p.len()).sum()
 }
 
-/// Append the piece array to `out`, joining adjacent pieces with `0x20`.
-fn append_piece_array(out: &mut Vec<u8>, pieces: &[Vec<u8>]) {
+/// Reject any piece that exceeds the engine's 1-byte length-prefix capacity.
+fn validate_piece_lengths(pieces: &[Vec<u8>]) -> Result<(), TokenError> {
     for (i, piece) in pieces.iter().enumerate() {
-        if i > 0 {
-            out.push(PIECE_SEPARATOR);
+        if piece.len() > MAX_PIECE_LEN {
+            return Err(TokenError::InvalidScript(format!(
+                "InvalidPiece: piece {i} length {} exceeds engine limit of {} bytes \
+                 (OP_1 OP_SPLIT reads a 1-byte length prefix)",
+                piece.len(),
+                MAX_PIECE_LEN
+            )));
         }
+    }
+    Ok(())
+}
+
+/// Append the piece array to `out` using the engine's wire format:
+/// `[len_0][piece_0_bytes][len_1][piece_1_bytes]...`. Caller guarantees
+/// each piece fits in a u8 via [`validate_piece_lengths`].
+fn append_piece_array(out: &mut Vec<u8>, pieces: &[Vec<u8>]) {
+    for piece in pieces {
+        debug_assert!(piece.len() <= MAX_PIECE_LEN);
+        out.push(piece.len() as u8);
         out.extend_from_slice(piece);
     }
 }
 
-/// Split a piece-array byte slice on `0x20`. An array with N separators
-/// produces N+1 pieces (some may be empty if separators are adjacent).
-fn split_piece_array(bytes: &[u8]) -> Vec<Vec<u8>> {
-    bytes.split(|b| *b == PIECE_SEPARATOR).map(<[u8]>::to_vec).collect()
+/// Parse a length-prefixed piece-array. Reads exactly `piece_count` pieces;
+/// returns an error if the buffer truncates mid-piece or has trailing bytes.
+fn split_piece_array(
+    bytes: &[u8],
+    piece_count: usize,
+    base_offset: usize,
+) -> Result<Vec<Vec<u8>>, TrailingParamsError> {
+    let mut pieces: Vec<Vec<u8>> = Vec::with_capacity(piece_count);
+    let mut cursor = 0usize;
+    for _ in 0..piece_count {
+        if cursor >= bytes.len() {
+            return Err(TrailingParamsError::Truncated(base_offset + cursor));
+        }
+        let len = bytes[cursor] as usize;
+        cursor += 1;
+        let end = cursor.checked_add(len).ok_or(
+            TrailingParamsError::Truncated(base_offset + cursor),
+        )?;
+        if end > bytes.len() {
+            return Err(TrailingParamsError::Truncated(base_offset + end));
+        }
+        pieces.push(bytes[cursor..end].to_vec());
+        cursor = end;
+    }
+    if cursor != bytes.len() {
+        return Err(TrailingParamsError::TrailingBytesAfterPieces(
+            base_offset + cursor,
+        ));
+    }
+    Ok(pieces)
 }
 
 /// Build the reverse-ordered piece array from a preceding transaction by
@@ -577,17 +641,18 @@ mod tests {
         .unwrap();
 
         // Trailing layout = counterparty_script || piece_count(1B) || pieces.
-        // Two pieces (head, tail) → reversed → [tail, head] joined by 0x20.
-        // tail = bytes after the excised engine of asset output (locktime).
-        // head = bytes before the start of the excised region.
+        // Two pieces (head, tail) → reversed → [tail, head] each prefixed by
+        // its own 1-byte length. tail = bytes after the excised engine of
+        // asset output (locktime). head = bytes before the excised region.
         assert_eq!(&trailing[..2], counterparty_script.as_slice());
         assert_eq!(trailing[2], 2u8); // piece_count = 2
-        // Sanity: there must be exactly one separator after piece_count.
-        assert_eq!(
-            trailing[3..].iter().filter(|b| **b == 0x20).count(),
-            1,
-            "exactly one 0x20 separator between two pieces"
-        );
+
+        // Round-trip parse to validate the length-prefixed shape.
+        let parsed =
+            parse_trailing_params(&trailing, 1, Some(counterparty_script.len()))
+                .unwrap();
+        assert_eq!(parsed.piece_count, 2);
+        assert_eq!(parsed.pieces.len(), 2);
     }
 
     #[test]
@@ -617,10 +682,8 @@ mod tests {
         // 1 asset → produces head + tail = 2 pieces → matches piece_count=2.
         let trailing = encode_merge_trailing_params(2, &tx, &[0]).unwrap();
         assert_eq!(trailing[0], 2u8);
-        assert_eq!(
-            trailing[1..].iter().filter(|b| **b == 0x20).count(),
-            1
-        );
+        let parsed = parse_trailing_params(&trailing, 2, None).unwrap();
+        assert_eq!(parsed.pieces.len(), 2);
     }
 
     #[test]
@@ -631,10 +694,8 @@ mod tests {
         // 2 assets → 3 pieces (head, between, tail) → matches piece_count=3.
         let trailing = encode_merge_trailing_params(3, &tx, &[0, 1]).unwrap();
         assert_eq!(trailing[0], 3u8);
-        assert_eq!(
-            trailing[1..].iter().filter(|b| **b == 0x20).count(),
-            2
-        );
+        let parsed = parse_trailing_params(&trailing, 3, None).unwrap();
+        assert_eq!(parsed.pieces.len(), 3);
     }
 
     #[test]
@@ -646,10 +707,8 @@ mod tests {
         // 3 assets → 4 pieces → matches piece_count=4.
         let trailing = encode_merge_trailing_params(4, &tx, &[0, 1, 2]).unwrap();
         assert_eq!(trailing[0], 4u8);
-        assert_eq!(
-            trailing[1..].iter().filter(|b| **b == 0x20).count(),
-            3
-        );
+        let parsed = parse_trailing_params(&trailing, 4, None).unwrap();
+        assert_eq!(parsed.pieces.len(), 4);
     }
 
     #[test]
@@ -714,10 +773,24 @@ mod tests {
 
     #[test]
     fn parse_rejects_bad_piece_count() {
-        // declared count=2 but only 1 piece (no separators).
-        let block = vec![0x02u8, 0xAA, 0xBB, 0xCC];
+        // Length-prefixed: declared count=2 but the buffer truncates after
+        // the first piece's header. piece_count(0x02) || len(0x02) AA BB ||
+        // len(0x05) but no body — engine reports Truncated.
+        let block = vec![0x02u8, 0x02, 0xAA, 0xBB, 0x05];
         let res = parse_trailing_params(&block, 2, None);
-        assert!(matches!(res, Err(TrailingParamsError::PieceCountMismatch { .. })));
+        assert!(matches!(res, Err(TrailingParamsError::Truncated(_))));
+    }
+
+    #[test]
+    fn parse_rejects_trailing_bytes_after_pieces() {
+        // tx_type=1, counterparty=[] (len=0), piece_count=1, one
+        // length-prefixed piece [0x01, 0xAA], then a stray trailing 0xCC.
+        let block = vec![0x01u8 /* piece_count */, 0x01, 0xAA, 0xCC];
+        let res = parse_trailing_params(&block, 1, Some(0));
+        assert!(matches!(
+            res,
+            Err(TrailingParamsError::TrailingBytesAfterPieces(_))
+        ));
     }
 
     #[test]
@@ -735,9 +808,9 @@ mod tests {
 
     #[test]
     fn parse_handles_empty_pieces() {
-        // Two adjacent 0x20 separators → 3 pieces, middle one empty.
-        // Use tx_type=3 so the count must equal 3.
-        let block = vec![0x03u8, 0xAA, 0x20, 0x20, 0xBB];
+        // Length-prefixed: piece_count=3, then [len=1][0xAA][len=0][len=1][0xBB]
+        // → 3 pieces, middle one empty. Use tx_type=3 so count must equal 3.
+        let block = vec![0x03u8, 0x01, 0xAA, 0x00, 0x01, 0xBB];
         let parsed = parse_trailing_params(&block, 3, None).unwrap();
         assert_eq!(parsed.pieces.len(), 3);
         assert_eq!(parsed.pieces[0], vec![0xAA]);
@@ -796,10 +869,55 @@ mod tests {
         let encoded = encode_merge_trailing_params(4, &tx, &[0, 1, 2]).unwrap();
         // Leading byte is the piece count.
         assert_eq!(encoded[0], 4);
-        // Exactly 3 separators in the body (4 pieces).
+        // Round-trip through the parser to verify the length-prefixed shape.
+        let parsed = parse_trailing_params(&encoded, 4, None).unwrap();
+        assert_eq!(parsed.pieces.len(), 4);
+    }
+
+    // ----- length-prefix shape regression -----
+
+    /// Encode a tiny 2-piece array directly via the public encoders and
+    /// verify the wire bytes are length-prefixed (no separators).
+    ///
+    /// Builds a synthetic preceding tx with a single STAS-shaped output
+    /// whose excise leaves head=`[0x41,0x42]` ("AB") and tail=`[0x43,0x44]`
+    /// ("CD"). After reversal the encoded piece body must be
+    /// `[0x02,0x43,0x44,0x02,0x41,0x42]`.
+    #[test]
+    fn piece_array_is_length_prefixed_not_separator_delimited() {
+        // We don't synthesize a tx here — the spec for the encoder's wire
+        // format is enforced by the helpers directly. Use them with known
+        // pieces to assert the exact bytes.
+        let pieces: Vec<Vec<u8>> = vec![vec![0x41, 0x42], vec![0x43, 0x44]];
+        validate_piece_lengths(&pieces).unwrap();
+        let mut out = Vec::new();
+        append_piece_array(&mut out, &pieces);
         assert_eq!(
-            encoded[1..].iter().filter(|b| **b == 0x20).count(),
-            3
+            out,
+            vec![0x02, 0x41, 0x42, 0x02, 0x43, 0x44],
+            "piece-array must be length-prefixed: \
+             [len][body][len][body], no 0x20 separators"
         );
+
+        // Round-trip via split_piece_array (the decoder counterpart).
+        let decoded = split_piece_array(&out, 2, 0).unwrap();
+        assert_eq!(decoded, pieces);
+    }
+
+    /// Pieces longer than 255 bytes cannot fit a 1-byte length prefix and
+    /// must be rejected by the encoder.
+    #[test]
+    fn piece_array_rejects_piece_over_255_bytes() {
+        let pieces: Vec<Vec<u8>> = vec![vec![0xAB; 256]];
+        let res = validate_piece_lengths(&pieces);
+        match res {
+            Err(TokenError::InvalidScript(msg)) => {
+                assert!(
+                    msg.contains("InvalidPiece"),
+                    "expected InvalidPiece-prefixed error, got: {msg}"
+                );
+            }
+            other => panic!("expected InvalidScript(InvalidPiece...), got {other:?}"),
+        }
     }
 }

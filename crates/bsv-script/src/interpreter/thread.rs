@@ -12,6 +12,46 @@ use super::scriptnum::*;
 use super::stack::*;
 use super::TxContext;
 
+// ---------------------------------------------------------------------------
+// Optional opcode tracing (diagnostic). Zero-cost when STAS3_TRACE is unset.
+// Activate by setting STAS3_TRACE=1 (or any non-empty value) in the
+// environment. Output goes to stderr (one line per executed step).
+// Format: TRACE step={N} script={S}:{O} op=0x{HH}({NAME}) depth={D} top5=[..]
+// ---------------------------------------------------------------------------
+fn stas3_trace_enabled() -> bool {
+    use std::sync::atomic::{AtomicU8, Ordering};
+    static CACHE: AtomicU8 = AtomicU8::new(0xff); // 0xff=uninit, 0=off, 1=on
+    let v = CACHE.load(Ordering::Relaxed);
+    if v != 0xff {
+        return v == 1;
+    }
+    let on = std::env::var("STAS3_TRACE").map(|s| !s.is_empty()).unwrap_or(false);
+    CACHE.store(if on { 1 } else { 0 }, Ordering::Relaxed);
+    on
+}
+
+fn fmt_top(stk: &[Vec<u8>], n: usize) -> String {
+    let len = stk.len();
+    let take = n.min(len);
+    let mut out = String::from("[");
+    // Bottom-of-window..top: print depth indices for clarity.
+    for i in 0..take {
+        let item = &stk[len - 1 - i]; // top = i=0
+        let hex: String = item.iter().map(|b| format!("{:02x}", b)).collect();
+        let display = if hex.len() > 64 {
+            format!("{}..(len={})", &hex[..64], item.len())
+        } else {
+            hex
+        };
+        if i > 0 {
+            out.push_str(", ");
+        }
+        out.push_str(&format!("@-{}={}", i, display));
+    }
+    out.push(']');
+    out
+}
+
 /// Conditional execution constants.
 const OP_COND_FALSE: i32 = 0;
 const OP_COND_TRUE: i32 = 1;
@@ -239,6 +279,25 @@ impl<'a> Thread<'a> {
         }
 
         let opcode = self.scripts[self.script_idx][self.script_off].clone();
+
+        // Diagnostic tracing (gated on STAS3_TRACE env var; cached).
+        if stas3_trace_enabled() {
+            use std::sync::atomic::{AtomicUsize, Ordering};
+            static STEP: AtomicUsize = AtomicUsize::new(0);
+            let step_no = STEP.fetch_add(1, Ordering::Relaxed);
+            eprintln!(
+                "TRACE step={} script={}:{} op=0x{:02x}({}) data_len={} depth={} astack={} top5={}",
+                step_no,
+                self.script_idx,
+                self.script_off,
+                opcode.opcode,
+                opcode.name(),
+                opcode.data.len(),
+                self.dstack.depth(),
+                self.astack.depth(),
+                fmt_top(&self.dstack.stk, 5),
+            );
+        }
 
         if let Err(e) = self.execute_opcode(&opcode) {
             if e.code == InterpreterErrorCode::Ok {

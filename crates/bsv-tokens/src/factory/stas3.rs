@@ -1063,7 +1063,7 @@ pub struct Stas3SwapPieceParams {
 ///   - `piece_count` — implicitly the number of pieces produced from
 ///     `pieces[i].preceding_tx` excising the asset script at
 ///     `pieces[i].asset_output_index`
-///   - `piece_array` — reverse-ordered, space-delimited
+///   - `piece_array` — reverse-ordered, length-prefixed (1-byte length, then body)
 ///
 /// `pieces.len()` MUST equal `config.token_inputs.len()` (i.e. 2).
 ///
@@ -1109,7 +1109,8 @@ pub fn build_stas3_swap_swap_tx_with_pieces(
         // concatenation of those bodies *without* push framing, so we
         // need to push them as separate items here.
         // The encoded layout is: counterparty_script || piece_count(1B)
-        //                       || piece_array (pieces joined by 0x20).
+        //                       || piece_array (each piece is 1-byte length
+        //                       prefix followed by piece body).
         let cp_len = counterparty_script.len();
         let cp_bytes = &trailing[..cp_len];
         let piece_count = trailing[cp_len];
