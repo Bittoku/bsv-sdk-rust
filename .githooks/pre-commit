@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Block commits that fail `cargo fmt --all -- --check`.
+# Mirrors the GitHub Actions CI fmt step (.github/workflows/ci.yml) so a
+# commit cannot be pushed if it would fail CI on formatting alone.
+#
+# Activate in a fresh clone with:
+#     git config core.hooksPath .githooks
+#
+# Bypass with `git commit --no-verify` only if you know what you're doing —
+# normally just run `cargo fmt --all` and re-stage instead.
+set -euo pipefail
+
+if ! command -v cargo >/dev/null 2>&1; then
+    echo "pre-commit: cargo not found on PATH; cannot run fmt check." >&2
+    exit 1
+fi
+
+if ! cargo fmt --all -- --check; then
+    echo
+    echo "pre-commit: cargo fmt check FAILED."
+    echo "  Run \`cargo fmt --all\` to fix, then re-stage and re-commit."
+    exit 1
+fi

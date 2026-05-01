@@ -86,6 +86,17 @@ let result = wallet.get_public_key(GetPublicKeyArgs {
 })?;
 ```
 
+## Development setup
+
+After cloning, point git at the versioned hooks directory so `cargo fmt`
+gets enforced before every commit (matching the CI fmt gate):
+
+```bash
+git config core.hooksPath .githooks
+```
+
+This only needs to be run once per clone.
+
 ## Building
 
 ```bash
