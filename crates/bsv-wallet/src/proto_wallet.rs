@@ -103,7 +103,9 @@ impl WalletInterface for ProtoWallet {
             for_self,
         )?;
 
-        Ok(GetPublicKeyResult { public_key: pub_key })
+        Ok(GetPublicKeyResult {
+            public_key: pub_key,
+        })
     }
 
     fn encrypt(&self, args: EncryptArgs) -> Result<EncryptResult, WalletError> {
@@ -115,7 +117,8 @@ impl WalletInterface for ProtoWallet {
             &counterparty,
         )?;
 
-        let ciphertext = key.encrypt(&args.plaintext)
+        let ciphertext = key
+            .encrypt(&args.plaintext)
             .map_err(|e| WalletError::General(format!("encryption failed: {}", e)))?;
 
         Ok(EncryptResult { ciphertext })
@@ -130,7 +133,8 @@ impl WalletInterface for ProtoWallet {
             &counterparty,
         )?;
 
-        let plaintext = key.decrypt(&args.ciphertext)
+        let plaintext = key
+            .decrypt(&args.ciphertext)
             .map_err(|e| WalletError::General(format!("decryption failed: {}", e)))?;
 
         Ok(DecryptResult { plaintext })
@@ -154,7 +158,8 @@ impl WalletInterface for ProtoWallet {
             &counterparty,
         )?;
 
-        let signature = priv_key.sign(&data_hash)
+        let signature = priv_key
+            .sign(&data_hash)
             .map_err(|e| WalletError::General(format!("signing failed: {}", e)))?;
 
         Ok(CreateSignatureResult { signature })

@@ -107,9 +107,11 @@ impl TransactionInput {
             TransactionError::SerializationError(format!("reading script length: {}", e))
         })?;
 
-        let script_bytes = reader.read_bytes(script_len.value() as usize).map_err(|e| {
-            TransactionError::SerializationError(format!("reading unlocking script: {}", e))
-        })?;
+        let script_bytes = reader
+            .read_bytes(script_len.value() as usize)
+            .map_err(|e| {
+                TransactionError::SerializationError(format!("reading unlocking script: {}", e))
+            })?;
 
         let sequence_number = reader.read_u32_le().map_err(|e| {
             TransactionError::SerializationError(format!("reading sequence number: {}", e))

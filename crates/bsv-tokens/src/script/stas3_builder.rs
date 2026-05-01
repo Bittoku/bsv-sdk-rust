@@ -3,7 +3,7 @@
 use bsv_script::Script;
 
 use crate::error::TokenError;
-use crate::types::{ActionData};
+use crate::types::ActionData;
 
 /// The compiled STAS3 base template bytes (hex-encoded).
 /// Extracted from dxs-stas-sdk `stas3-freeze-multisig-base.ts`.
@@ -53,9 +53,7 @@ pub fn build_stas3_locking_script(
                     // optional recursive `next` field (spec §6.3) is emitted
                     // correctly. Falls back to the 61-byte non-recursive form
                     // when `next` is `None`.
-                    let descriptor = data
-                        .as_swap_descriptor()
-                        .expect("ActionData::Swap matched");
+                    let descriptor = data.as_swap_descriptor().expect("ActionData::Swap matched");
                     descriptor.to_var2_bytes()
                 }
                 ActionData::Custom(b) => b.clone(),
@@ -276,9 +274,7 @@ fn decode_push_value(push: &[u8]) -> Result<Vec<u8>, TokenError> {
         0x01..=0x4b => {
             let len = opcode as usize;
             if push.len() < 1 + len {
-                return Err(TokenError::InvalidScript(
-                    "bare push truncated".into(),
-                ));
+                return Err(TokenError::InvalidScript("bare push truncated".into()));
             }
             Ok(push[1..1 + len].to_vec())
         }
@@ -306,8 +302,7 @@ fn decode_push_value(push: &[u8]) -> Result<Vec<u8>, TokenError> {
             if push.len() < 5 {
                 return Err(TokenError::InvalidScript("truncated OP_PUSHDATA4".into()));
             }
-            let len =
-                u32::from_le_bytes([push[1], push[2], push[3], push[4]]) as usize;
+            let len = u32::from_le_bytes([push[1], push[2], push[3], push[4]]) as usize;
             if push.len() < 5 + len {
                 return Err(TokenError::InvalidScript("OP_PUSHDATA4 truncated".into()));
             }
@@ -343,16 +338,9 @@ mod tests {
         let owner_pkh = [0xaa; 20];
         let redemption_pkh = [0xbb; 20];
 
-        let script = build_stas3_locking_script(
-            &owner_pkh,
-            &redemption_pkh,
-            None,
-            false,
-            true,
-            &[],
-            &[],
-        )
-        .unwrap();
+        let script =
+            build_stas3_locking_script(&owner_pkh, &redemption_pkh, None, false, true, &[], &[])
+                .unwrap();
 
         let parsed = read_locking_script(script.to_bytes());
         assert_eq!(parsed.script_type, ScriptType::Stas3);
@@ -368,16 +356,9 @@ mod tests {
         let owner_pkh = [0xcc; 20];
         let redemption_pkh = [0xdd; 20];
 
-        let script = build_stas3_locking_script(
-            &owner_pkh,
-            &redemption_pkh,
-            None,
-            true,
-            true,
-            &[],
-            &[],
-        )
-        .unwrap();
+        let script =
+            build_stas3_locking_script(&owner_pkh, &redemption_pkh, None, true, true, &[], &[])
+                .unwrap();
 
         let parsed = read_locking_script(script.to_bytes());
         assert_eq!(parsed.script_type, ScriptType::Stas3);
@@ -409,22 +390,27 @@ mod tests {
     /// is value-preserving but NOT byte-preserving on the opcode side: per
     /// spec §6.2 they must first be converted to pushdata form before
     /// freezing, and unfreeze leaves them in pushdata form.
-    fn freeze_case(label: &str, original: Vec<u8>, expected_frozen: Vec<u8>, expected_unfrozen: Vec<u8>) {
-        let frozen = freeze_var2_push(&original).unwrap_or_else(|e| {
-            panic!("freeze_var2_push({}) failed: {:?}", label, e)
-        });
+    fn freeze_case(
+        label: &str,
+        original: Vec<u8>,
+        expected_frozen: Vec<u8>,
+        expected_unfrozen: Vec<u8>,
+    ) {
+        let frozen = freeze_var2_push(&original)
+            .unwrap_or_else(|e| panic!("freeze_var2_push({}) failed: {:?}", label, e));
         assert_eq!(
-            frozen, expected_frozen,
+            frozen,
+            expected_frozen,
             "{}: freeze produced {} but expected {}",
             label,
             hex::encode(&frozen),
             hex::encode(&expected_frozen)
         );
-        let unfrozen = unfreeze_var2_push(&frozen).unwrap_or_else(|e| {
-            panic!("unfreeze_var2_push({}) failed: {:?}", label, e)
-        });
+        let unfrozen = unfreeze_var2_push(&frozen)
+            .unwrap_or_else(|e| panic!("unfreeze_var2_push({}) failed: {:?}", label, e));
         assert_eq!(
-            unfrozen, expected_unfrozen,
+            unfrozen,
+            expected_unfrozen,
             "{}: unfreeze produced {} but expected {}",
             label,
             hex::encode(&unfrozen),
@@ -494,7 +480,12 @@ mod tests {
         let mut expected_unfrozen = vec![0x4du8, 0x2C, 0x01];
         expected_unfrozen.extend_from_slice(&body);
 
-        freeze_case("PUSHDATA2_300", original, expected_frozen, expected_unfrozen);
+        freeze_case(
+            "PUSHDATA2_300",
+            original,
+            expected_frozen,
+            expected_unfrozen,
+        );
     }
 
     #[test]
@@ -503,23 +494,13 @@ mod tests {
         // pushdata form (push the value 0x01 = 1 as a single byte), then
         // prepend 0x02 → frozen body = [0x02, 0x01].
         // Unfreeze yields [0x01] re-encoded minimal = bare push [0x01, 0x01].
-        freeze_case(
-            "OP_1",
-            vec![0x51],
-            vec![0x02, 0x02, 0x01],
-            vec![0x01, 0x01],
-        );
+        freeze_case("OP_1", vec![0x51], vec![0x02, 0x02, 0x01], vec![0x01, 0x01]);
     }
 
     #[test]
     fn freeze_var2_op_3_to_pushdata_form() {
         // OP_3 (0x53) → push value 0x03 → frozen [0x02, 0x03] (2 bytes).
-        freeze_case(
-            "OP_3",
-            vec![0x53],
-            vec![0x02, 0x02, 0x03],
-            vec![0x01, 0x03],
-        );
+        freeze_case("OP_3", vec![0x53], vec![0x02, 0x02, 0x03], vec![0x01, 0x03]);
     }
 
     #[test]
@@ -549,7 +530,9 @@ mod tests {
     fn freeze_var2_table_driven_round_trip() {
         // Comprehensive table covering every OP_N in the spec.
         for n in 1u8..=16 {
-            if n == 2 { continue; } // OP_2 means frozen, not a freezable input
+            if n == 2 {
+                continue;
+            } // OP_2 means frozen, not a freezable input
             let opcode = 0x50 + n;
             let original = vec![opcode];
             let frozen = freeze_var2_push(&original).expect("freeze should work");

@@ -10,8 +10,8 @@ use bsv_script::opcodes::{OP_FALSE, OP_RETURN};
 use bsv_script::Script;
 use bsv_transaction::input::TransactionInput;
 use bsv_transaction::output::TransactionOutput;
-use bsv_transaction::template::{p2pkh, p2mpkh};
 use bsv_transaction::template::UnlockingScriptTemplate;
+use bsv_transaction::template::{p2mpkh, p2pkh};
 use bsv_transaction::transaction::Transaction;
 
 use crate::error::TokenError;
@@ -22,7 +22,7 @@ use crate::script::stas3_swap::{is_stas3_frozen, resolve_stas3_swap_mode};
 use crate::script_type::ScriptType;
 use crate::template::stas3 as stas3_template;
 use crate::template::stas3::{
-    Stas3UnlockWitness, Stas3WitnessChange, Stas3WitnessOutput, compute_input_preimage,
+    compute_input_preimage, Stas3UnlockWitness, Stas3WitnessChange, Stas3WitnessOutput,
 };
 use crate::types::{SigningKey, Stas3SpendType, Stas3SwapMode, Stas3TxType};
 
@@ -287,10 +287,8 @@ fn lock_from_signing_key(key: &SigningKey) -> Result<Script, TokenError> {
     match key {
         SigningKey::Single(pk) => {
             let pkh = bsv_primitives::hash::hash160(&pk.pub_key().to_compressed());
-            let addr = bsv_script::Address::from_public_key_hash(
-                &pkh,
-                bsv_script::Network::Mainnet,
-            );
+            let addr =
+                bsv_script::Address::from_public_key_hash(&pkh, bsv_script::Network::Mainnet);
             Ok(p2pkh::lock(&addr)?)
         }
         SigningKey::Multi { multisig, .. } => Ok(p2mpkh::lock(multisig)?),
@@ -490,8 +488,8 @@ fn derive_witness_for_input(
     let funding_input = resolve_funding_input(tx, input_index, funding_input_index);
 
     // Slot 19: BIP-143 preimage.
-    let sighash_preimage = compute_input_preimage(tx, input_index, sighash_flag)
-        .map_err(TokenError::Transaction)?;
+    let sighash_preimage =
+        compute_input_preimage(tx, input_index, sighash_flag).map_err(TokenError::Transaction)?;
 
     Ok(Stas3UnlockWitness {
         stas_outputs,
@@ -579,8 +577,7 @@ fn extract_op_return_payload(script: &[u8]) -> Option<Vec<u8>> {
             if after + 2 >= script.len() {
                 return None;
             }
-            let len =
-                u16::from_le_bytes([script[after + 1], script[after + 2]]) as usize;
+            let len = u16::from_le_bytes([script[after + 1], script[after + 2]]) as usize;
             let end = after + 3 + len;
             if end > script.len() {
                 return None;
@@ -1017,9 +1014,7 @@ pub fn build_stas3_transfer_swap_tx(
 ///
 /// Outputs can be 2–4: principal swap legs (ownership exchanged) plus
 /// optional remainder outputs for fractional-rate swaps.
-pub fn build_stas3_swap_swap_tx(
-    config: &mut Stas3BaseConfig,
-) -> Result<Transaction, TokenError> {
+pub fn build_stas3_swap_swap_tx(config: &mut Stas3BaseConfig) -> Result<Transaction, TokenError> {
     validate_swap_inputs(config)?;
     // Spec §9.5: atomic swap execution uses spendType = 1 (Transfer) on
     // both inputs. Cancellation (spendType = 4) is a separate factory —
@@ -1088,8 +1083,9 @@ pub fn build_stas3_swap_swap_tx_with_pieces(
     use crate::script::stas3_pieces::encode_atomic_swap_trailing_params;
     for i in 0..config.token_inputs.len() {
         let counterparty_idx = 1 - i;
-        let counterparty_script =
-            config.token_inputs[counterparty_idx].locking_script.to_bytes();
+        let counterparty_script = config.token_inputs[counterparty_idx]
+            .locking_script
+            .to_bytes();
         let trailing = encode_atomic_swap_trailing_params(
             counterparty_script,
             &pieces[i].preceding_tx,
@@ -1208,13 +1204,13 @@ pub fn build_swap_remainder_output(
 
     Ok(Stas3OutputParams {
         satoshis,
-        owner_pkh: stas3.owner,                       // inherit owner
+        owner_pkh: stas3.owner, // inherit owner
         redemption_pkh,
         frozen: stas3.frozen,
         freezable,
         service_fields: vec![],
         optional_data: vec![],
-        action_data: stas3.action_data_parsed,        // inherit var2 (swap descriptor)
+        action_data: stas3.action_data_parsed, // inherit var2 (swap descriptor)
     })
 }
 
@@ -1329,8 +1325,7 @@ pub fn build_stas3_confiscate_tx(config: Stas3ConfiscateConfig) -> Result<Transa
     // any value 0..=7 is valid. The `Stas3TxType` enum covers 0..=7;
     // values outside that range are clamped to `Regular` so the witness
     // still encodes a valid byte.
-    let tx_type =
-        Stas3TxType::from_u8(config.tx_type).unwrap_or(Stas3TxType::Regular);
+    let tx_type = Stas3TxType::from_u8(config.tx_type).unwrap_or(Stas3TxType::Regular);
     build_stas3_base_tx_with_tx_type(&base, tx_type)
 }
 
@@ -1600,12 +1595,12 @@ pub fn build_stas3_redeem_tx(config: Stas3RedeemConfig) -> Result<Transaction, T
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scheme::{Authority, TokenScheme};
+    use crate::script::reader::read_locking_script;
+    use crate::token_id::TokenId;
+    use crate::ScriptType;
     use bsv_primitives::chainhash::Hash;
     use bsv_primitives::ec::PrivateKey;
-    use crate::scheme::{Authority, TokenScheme};
-    use crate::token_id::TokenId;
-    use crate::script::reader::read_locking_script;
-    use crate::ScriptType;
 
     fn test_key() -> PrivateKey {
         PrivateKey::new()
@@ -1632,7 +1627,9 @@ mod tests {
             is_divisible: true,
             authority: Authority {
                 m: 1,
-                public_keys: vec!["02abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890ab".into()],
+                public_keys: vec![
+                    "02abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890ab".into(),
+                ],
             },
         }
     }
@@ -1643,10 +1640,7 @@ mod tests {
 
     /// Build a STAS 3.0 locking script with both freezable and confiscatable
     /// flag bits set (flags = 0x03). Used by §9.3 confiscation tests.
-    fn make_stas3_confiscatable_locking(
-        owner_pkh: &[u8; 20],
-        redemption_pkh: &[u8; 20],
-    ) -> Script {
+    fn make_stas3_confiscatable_locking(owner_pkh: &[u8; 20], redemption_pkh: &[u8; 20]) -> Script {
         crate::script::stas3_builder::build_stas3_locking_script_with_flags(
             owner_pkh,
             redemption_pkh,
@@ -1850,7 +1844,7 @@ mod tests {
                     freezable: true,
                     service_fields: vec![],
                     optional_data: vec![],
-                action_data: None,
+                    action_data: None,
                 },
                 Stas3OutputParams {
                     satoshis: 6000,
@@ -1860,7 +1854,7 @@ mod tests {
                     freezable: true,
                     service_fields: vec![],
                     optional_data: vec![],
-                action_data: None,
+                    action_data: None,
                 },
             ],
             spend_type: Stas3SpendType::Transfer,
@@ -1869,7 +1863,12 @@ mod tests {
 
         let tx = build_stas3_base_tx(&config).unwrap();
         // Token outputs should sum to input
-        let token_out: u64 = tx.outputs.iter().filter(|o| !o.change).map(|o| o.satoshis).sum();
+        let token_out: u64 = tx
+            .outputs
+            .iter()
+            .filter(|o| !o.change)
+            .map(|o| o.satoshis)
+            .sum();
         assert_eq!(token_out, 10000);
     }
 
@@ -1940,9 +1939,27 @@ mod tests {
 
         let config = Stas3BaseConfig {
             token_inputs: vec![
-                TokenInput { txid: dummy_hash(), vout: 0, satoshis: 1000, locking_script: make_stas3_locking(&[0x11; 20], &[0x22; 20]), signing_key: SigningKey::Single(test_key()) },
-                TokenInput { txid: dummy_hash(), vout: 1, satoshis: 1000, locking_script: make_stas3_locking(&[0x11; 20], &[0x22; 20]), signing_key: SigningKey::Single(test_key()) },
-                TokenInput { txid: dummy_hash(), vout: 2, satoshis: 1000, locking_script: make_stas3_locking(&[0x11; 20], &[0x22; 20]), signing_key: SigningKey::Single(test_key()) },
+                TokenInput {
+                    txid: dummy_hash(),
+                    vout: 0,
+                    satoshis: 1000,
+                    locking_script: make_stas3_locking(&[0x11; 20], &[0x22; 20]),
+                    signing_key: SigningKey::Single(test_key()),
+                },
+                TokenInput {
+                    txid: dummy_hash(),
+                    vout: 1,
+                    satoshis: 1000,
+                    locking_script: make_stas3_locking(&[0x11; 20], &[0x22; 20]),
+                    signing_key: SigningKey::Single(test_key()),
+                },
+                TokenInput {
+                    txid: dummy_hash(),
+                    vout: 2,
+                    satoshis: 1000,
+                    locking_script: make_stas3_locking(&[0x11; 20], &[0x22; 20]),
+                    signing_key: SigningKey::Single(test_key()),
+                },
             ],
             fee_txid: dummy_hash(),
             fee_vout: 3,
@@ -2130,10 +2147,8 @@ mod tests {
         // Build input with freezable = false → flags byte = 0x00.
         let owner = [0x11; 20];
         let redemption = [0x22; 20];
-        let locking = build_stas3_locking_script(
-            &owner, &redemption, None, false, false, &[], &[],
-        )
-        .unwrap();
+        let locking =
+            build_stas3_locking_script(&owner, &redemption, None, false, false, &[], &[]).unwrap();
         let mut config = Stas3BaseConfig {
             token_inputs: vec![TokenInput {
                 txid: dummy_hash(),
@@ -2239,7 +2254,7 @@ mod tests {
                     freezable: true,
                     service_fields: vec![],
                     optional_data: vec![],
-                action_data: None,
+                    action_data: None,
                 },
                 Stas3OutputParams {
                     satoshis: 7000,
@@ -2249,7 +2264,7 @@ mod tests {
                     freezable: true,
                     service_fields: vec![],
                     optional_data: vec![],
-                action_data: None,
+                    action_data: None,
                 },
             ],
             spend_type: Stas3SpendType::SwapCancellation, // will be overridden
@@ -2293,7 +2308,7 @@ mod tests {
                     freezable: true,
                     service_fields: vec![],
                     optional_data: vec![],
-                action_data: None,
+                    action_data: None,
                 },
                 Stas3OutputParams {
                     satoshis: 6000,
@@ -2303,7 +2318,7 @@ mod tests {
                     freezable: true,
                     service_fields: vec![],
                     optional_data: vec![],
-                action_data: None,
+                    action_data: None,
                 },
             ],
             fee_rate: 500,
@@ -2341,10 +2356,46 @@ mod tests {
             fee_locking_script: test_p2pkh_script(&fee_key),
             fee_private_key: fee_key,
             destinations: vec![
-                Stas3OutputParams { satoshis: 2500, owner_pkh: [0x33; 20], redemption_pkh, frozen: false, freezable: true, service_fields: vec![], optional_data: vec![], action_data: None },
-                Stas3OutputParams { satoshis: 2500, owner_pkh: [0x44; 20], redemption_pkh, frozen: false, freezable: true, service_fields: vec![], optional_data: vec![], action_data: None },
-                Stas3OutputParams { satoshis: 2500, owner_pkh: [0x55; 20], redemption_pkh, frozen: false, freezable: true, service_fields: vec![], optional_data: vec![], action_data: None },
-                Stas3OutputParams { satoshis: 2500, owner_pkh: [0x66; 20], redemption_pkh, frozen: false, freezable: true, service_fields: vec![], optional_data: vec![], action_data: None },
+                Stas3OutputParams {
+                    satoshis: 2500,
+                    owner_pkh: [0x33; 20],
+                    redemption_pkh,
+                    frozen: false,
+                    freezable: true,
+                    service_fields: vec![],
+                    optional_data: vec![],
+                    action_data: None,
+                },
+                Stas3OutputParams {
+                    satoshis: 2500,
+                    owner_pkh: [0x44; 20],
+                    redemption_pkh,
+                    frozen: false,
+                    freezable: true,
+                    service_fields: vec![],
+                    optional_data: vec![],
+                    action_data: None,
+                },
+                Stas3OutputParams {
+                    satoshis: 2500,
+                    owner_pkh: [0x55; 20],
+                    redemption_pkh,
+                    frozen: false,
+                    freezable: true,
+                    service_fields: vec![],
+                    optional_data: vec![],
+                    action_data: None,
+                },
+                Stas3OutputParams {
+                    satoshis: 2500,
+                    owner_pkh: [0x66; 20],
+                    redemption_pkh,
+                    frozen: false,
+                    freezable: true,
+                    service_fields: vec![],
+                    optional_data: vec![],
+                    action_data: None,
+                },
             ],
             fee_rate: 500,
         };
@@ -2392,7 +2443,7 @@ mod tests {
             freezable: true,
             service_fields: vec![],
             optional_data: vec![],
-                action_data: None,
+            action_data: None,
         };
 
         let config = Stas3SplitConfig {
@@ -2513,8 +2564,20 @@ mod tests {
 
         let config = Stas3MergeConfig {
             token_inputs: [
-                TokenInput { txid: dummy_hash(), vout: 0, satoshis: 3000, locking_script: make_stas3_locking(&[0x11; 20], &redemption_pkh), signing_key: SigningKey::Single(test_key()) },
-                TokenInput { txid: dummy_hash(), vout: 1, satoshis: 7000, locking_script: make_stas3_locking(&[0x33; 20], &redemption_pkh), signing_key: SigningKey::Single(test_key()) },
+                TokenInput {
+                    txid: dummy_hash(),
+                    vout: 0,
+                    satoshis: 3000,
+                    locking_script: make_stas3_locking(&[0x11; 20], &redemption_pkh),
+                    signing_key: SigningKey::Single(test_key()),
+                },
+                TokenInput {
+                    txid: dummy_hash(),
+                    vout: 1,
+                    satoshis: 7000,
+                    locking_script: make_stas3_locking(&[0x33; 20], &redemption_pkh),
+                    signing_key: SigningKey::Single(test_key()),
+                },
             ],
             fee_txid: dummy_hash(),
             fee_vout: 2,
@@ -2541,13 +2604,25 @@ mod tests {
             freezable: true,
             service_fields: vec![],
             optional_data: vec![],
-                action_data: None,
+            action_data: None,
         };
 
         let config = Stas3MergeConfig {
             token_inputs: [
-                TokenInput { txid: dummy_hash(), vout: 0, satoshis: 5000, locking_script: make_stas3_locking(&[0x11; 20], &redemption_pkh), signing_key: SigningKey::Single(test_key()) },
-                TokenInput { txid: dummy_hash(), vout: 1, satoshis: 4000, locking_script: make_stas3_locking(&[0x33; 20], &redemption_pkh), signing_key: SigningKey::Single(test_key()) },
+                TokenInput {
+                    txid: dummy_hash(),
+                    vout: 0,
+                    satoshis: 5000,
+                    locking_script: make_stas3_locking(&[0x11; 20], &redemption_pkh),
+                    signing_key: SigningKey::Single(test_key()),
+                },
+                TokenInput {
+                    txid: dummy_hash(),
+                    vout: 1,
+                    satoshis: 4000,
+                    locking_script: make_stas3_locking(&[0x33; 20], &redemption_pkh),
+                    signing_key: SigningKey::Single(test_key()),
+                },
             ],
             fee_txid: dummy_hash(),
             fee_vout: 2,
@@ -2568,8 +2643,20 @@ mod tests {
 
         let config = Stas3MergeConfig {
             token_inputs: [
-                TokenInput { txid: dummy_hash(), vout: 0, satoshis: 3000, locking_script: make_stas3_locking(&[0x11; 20], &redemption_pkh), signing_key: SigningKey::Single(test_key()) },
-                TokenInput { txid: dummy_hash(), vout: 1, satoshis: 7000, locking_script: make_stas3_locking(&[0x33; 20], &redemption_pkh), signing_key: SigningKey::Single(test_key()) },
+                TokenInput {
+                    txid: dummy_hash(),
+                    vout: 0,
+                    satoshis: 3000,
+                    locking_script: make_stas3_locking(&[0x11; 20], &redemption_pkh),
+                    signing_key: SigningKey::Single(test_key()),
+                },
+                TokenInput {
+                    txid: dummy_hash(),
+                    vout: 1,
+                    satoshis: 7000,
+                    locking_script: make_stas3_locking(&[0x33; 20], &redemption_pkh),
+                    signing_key: SigningKey::Single(test_key()),
+                },
             ],
             fee_txid: dummy_hash(),
             fee_vout: 2,
@@ -2697,10 +2784,7 @@ mod tests {
                     txid: dummy_hash(),
                     vout: 0,
                     satoshis: 5000,
-                    locking_script: make_stas3_confiscatable_locking(
-                        &[0x11; 20],
-                        &redemption_pkh,
-                    ),
+                    locking_script: make_stas3_confiscatable_locking(&[0x11; 20], &redemption_pkh),
                     signing_key: SigningKey::Single(token_key.clone()),
                 }],
                 fee_txid: dummy_hash(),
@@ -2832,11 +2916,10 @@ mod tests {
         remaining: Vec<Stas3OutputParams>,
         frozen: bool,
     ) -> Stas3RedeemConfig {
-        let issuer_pkh =
-            bsv_primitives::hash::hash160(&issuer_key.pub_key().to_compressed());
-        let locking = build_stas3_locking_script(
-            &issuer_pkh, &issuer_pkh, None, frozen, true, &[], &[],
-        ).unwrap();
+        let issuer_pkh = bsv_primitives::hash::hash160(&issuer_key.pub_key().to_compressed());
+        let locking =
+            build_stas3_locking_script(&issuer_pkh, &issuer_pkh, None, frozen, true, &[], &[])
+                .unwrap();
 
         Stas3RedeemConfig {
             token_input: TokenInput {
@@ -2883,8 +2966,7 @@ mod tests {
     fn redeem_partial_with_remaining() {
         let issuer_key = test_key();
         let fee_key = test_key();
-        let issuer_pkh =
-            bsv_primitives::hash::hash160(&issuer_key.pub_key().to_compressed());
+        let issuer_pkh = bsv_primitives::hash::hash160(&issuer_key.pub_key().to_compressed());
 
         let remaining = vec![Stas3OutputParams {
             satoshis: 4000,
@@ -2894,7 +2976,7 @@ mod tests {
             freezable: true,
             service_fields: vec![],
             optional_data: vec![],
-                action_data: None,
+            action_data: None,
         }];
 
         let config = make_redeem_config(&issuer_key, &fee_key, 10000, 6000, remaining, false);
@@ -2922,13 +3004,12 @@ mod tests {
         let non_issuer_key = test_key();
         let fee_key = test_key();
 
-        let issuer_pkh =
-            bsv_primitives::hash::hash160(&issuer_key.pub_key().to_compressed());
+        let issuer_pkh = bsv_primitives::hash::hash160(&issuer_key.pub_key().to_compressed());
 
         // Token is owned by non_issuer but redemption_pkh is the issuer
-        let locking = build_stas3_locking_script(
-            &[0x99; 20], &issuer_pkh, None, false, true, &[], &[],
-        ).unwrap();
+        let locking =
+            build_stas3_locking_script(&[0x99; 20], &issuer_pkh, None, false, true, &[], &[])
+                .unwrap();
 
         let config = Stas3RedeemConfig {
             token_input: TokenInput {
@@ -2966,15 +3047,17 @@ mod tests {
         let result = build_stas3_redeem_tx(config);
 
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), TokenError::AmountMismatch { .. }));
+        assert!(matches!(
+            result.unwrap_err(),
+            TokenError::AmountMismatch { .. }
+        ));
     }
 
     #[test]
     fn redeem_zero_amount_rejected() {
         let issuer_key = test_key();
         let fee_key = test_key();
-        let issuer_pkh =
-            bsv_primitives::hash::hash160(&issuer_key.pub_key().to_compressed());
+        let issuer_pkh = bsv_primitives::hash::hash160(&issuer_key.pub_key().to_compressed());
 
         let remaining = vec![Stas3OutputParams {
             satoshis: 10000,
@@ -2984,7 +3067,7 @@ mod tests {
             freezable: true,
             service_fields: vec![],
             optional_data: vec![],
-                action_data: None,
+            action_data: None,
         }];
 
         let config = make_redeem_config(&issuer_key, &fee_key, 10000, 0, remaining, false);
@@ -3005,20 +3088,20 @@ mod tests {
         swap_data: &ActionData,
     ) -> Script {
         build_stas3_locking_script(
-            owner_pkh, redemption_pkh, Some(swap_data), false, true, &[], &[],
+            owner_pkh,
+            redemption_pkh,
+            Some(swap_data),
+            false,
+            true,
+            &[],
+            &[],
         )
         .unwrap()
     }
 
     /// Build a frozen STAS3 locking script (no action data).
-    fn make_stas3_frozen_locking(
-        owner_pkh: &[u8; 20],
-        redemption_pkh: &[u8; 20],
-    ) -> Script {
-        build_stas3_locking_script(
-            owner_pkh, redemption_pkh, None, true, true, &[], &[],
-        )
-        .unwrap()
+    fn make_stas3_frozen_locking(owner_pkh: &[u8; 20], redemption_pkh: &[u8; 20]) -> Script {
+        build_stas3_locking_script(owner_pkh, redemption_pkh, None, true, true, &[], &[]).unwrap()
     }
 
     fn test_swap_data() -> ActionData {
@@ -3234,7 +3317,10 @@ mod tests {
         let parsed = read_locking_script(tx.outputs[2].locking_script.to_bytes());
         assert_eq!(parsed.script_type, ScriptType::Stas3);
         let stas3 = parsed.stas3.unwrap();
-        assert!(matches!(stas3.action_data_parsed, Some(ActionData::Swap { .. })));
+        assert!(matches!(
+            stas3.action_data_parsed,
+            Some(ActionData::Swap { .. })
+        ));
     }
 
     #[test]
@@ -3737,15 +3823,14 @@ mod tests {
         let source_b_locking = make_stas3_swap_locking(&owner_b, &redemption, &swap_data_a);
 
         // Build the remainder output via the helper, which inherits owner + var2.
-        let remainder = build_swap_remainder_output(
-            source_a_locking.to_bytes(),
-            2000,
-            redemption,
-            true,
-        )
-        .unwrap();
+        let remainder =
+            build_swap_remainder_output(source_a_locking.to_bytes(), 2000, redemption, true)
+                .unwrap();
 
-        assert_eq!(remainder.owner_pkh, owner_a, "remainder must inherit source owner");
+        assert_eq!(
+            remainder.owner_pkh, owner_a,
+            "remainder must inherit source owner"
+        );
         assert!(
             matches!(remainder.action_data, Some(ActionData::Swap { .. })),
             "remainder must inherit source var2 (swap descriptor)"
@@ -3914,7 +3999,10 @@ mod tests {
         // sighashPreimage (slot 19). The full §7 witness body — including
         // the real BIP-143 preimage in slot 19 — is therefore emitted, and
         // ONLY the authz push (slot 21+) is replaced by a single OP_FALSE.
-        let unlock = tx.inputs[1].unlocking_script.as_ref().expect("must be signed");
+        let unlock = tx.inputs[1]
+            .unlocking_script
+            .as_ref()
+            .expect("must be signed");
         let chunks = unlock.chunks().expect("unlock script chunks parse");
         let last = chunks.last().expect("at least one push");
         assert!(
@@ -3943,7 +4031,10 @@ mod tests {
         );
 
         // Input 0 (regular) must be witness ‖ <sig> <pubkey> (much longer).
-        let unlock0 = tx.inputs[0].unlocking_script.as_ref().expect("must be signed");
+        let unlock0 = tx.inputs[0]
+            .unlocking_script
+            .as_ref()
+            .expect("must be signed");
         assert!(
             unlock0.to_bytes().len() > 70,
             "regular leg should be witness + sig + pubkey ({} bytes)",
@@ -3964,7 +4055,13 @@ mod tests {
         };
 
         let script = build_stas3_locking_script(
-            &owner, &redemption, Some(&swap_data), false, true, &[], &[],
+            &owner,
+            &redemption,
+            Some(&swap_data),
+            false,
+            true,
+            &[],
+            &[],
         )
         .unwrap();
 
@@ -3984,7 +4081,10 @@ mod tests {
                 assert_eq!(requested_pkh, [0xef; 20]);
                 assert_eq!(rate_numerator, 42);
                 assert_eq!(rate_denominator, 7);
-                assert!(next.is_none(), "non-recursive descriptor should have next = None");
+                assert!(
+                    next.is_none(),
+                    "non-recursive descriptor should have next = None"
+                );
             }
             other => panic!("expected Swap action data, got {:?}", other),
         }
@@ -4148,9 +4248,7 @@ mod tests {
     /// Walk a P2PKH-authz unlock and return slot pushes (1..=20) plus the
     /// trailing two authz pushes (sig + pubkey). Returns the full chunk
     /// list for callers that want to inspect raw shape too.
-    fn split_witness_and_authz_p2pkh(
-        unlock_bytes: &[u8],
-    ) -> Vec<bsv_script::ScriptChunk> {
+    fn split_witness_and_authz_p2pkh(unlock_bytes: &[u8]) -> Vec<bsv_script::ScriptChunk> {
         let script = bsv_script::Script::from_bytes(unlock_bytes);
         script.chunks().expect("unlock script chunks parse")
     }
@@ -4207,9 +4305,7 @@ mod tests {
     /// start of the witness. But we don't always know N here — instead
     /// we look for the txType byte from the END: spendType is the LAST
     /// witness chunk, preimage is second-from-last, txType is third.
-    fn extract_witness_tx_and_spend_types(
-        witness_chunks: &[bsv_script::ScriptChunk],
-    ) -> (u8, u8) {
+    fn extract_witness_tx_and_spend_types(witness_chunks: &[bsv_script::ScriptChunk]) -> (u8, u8) {
         assert!(
             witness_chunks.len() >= 3,
             "witness must contain at least txType+preimage+spendType"
@@ -4327,10 +4423,7 @@ mod tests {
                 txid: dummy_hash(),
                 vout: 0,
                 satoshis: 5000,
-                locking_script: make_stas3_confiscatable_locking(
-                    &[0x11; 20],
-                    &redemption_pkh,
-                ),
+                locking_script: make_stas3_confiscatable_locking(&[0x11; 20], &redemption_pkh),
                 signing_key: SigningKey::Single(token_key),
             }],
             fee_txid: dummy_hash(),
@@ -4406,7 +4499,10 @@ mod tests {
         let witness = assert_witness_shape_p2pkh(&chunks, 5000);
         let (tx_type, spend_type) = extract_witness_tx_and_spend_types(witness);
         assert_eq!(tx_type, 0, "swap-cancel tx_type = Regular");
-        assert_eq!(spend_type, 4, "swap-cancel spendType = SwapCancellation (4)");
+        assert_eq!(
+            spend_type, 4,
+            "swap-cancel spendType = SwapCancellation (4)"
+        );
     }
 
     #[test]
@@ -4470,10 +4566,7 @@ mod tests {
             let chunks = split_witness_and_authz_p2pkh(unlock.to_bytes());
             let witness = assert_witness_shape_p2pkh(&chunks, 5000);
             let (tx_type, spend_type) = extract_witness_tx_and_spend_types(witness);
-            assert_eq!(
-                tx_type, 1,
-                "atomic-swap input {i} tx_type = AtomicSwap (1)"
-            );
+            assert_eq!(tx_type, 1, "atomic-swap input {i} tx_type = AtomicSwap (1)");
             assert_eq!(
                 spend_type, 1,
                 "atomic-swap input {i} spendType = Transfer (1) per spec §9.5"

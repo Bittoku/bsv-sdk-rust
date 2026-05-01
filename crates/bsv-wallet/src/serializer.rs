@@ -47,18 +47,30 @@ pub fn write_request_frame(frame: &RequestFrame) -> Vec<u8> {
 /// Deserialize a request frame.
 pub fn read_request_frame(data: &[u8]) -> Result<RequestFrame, WalletError> {
     let mut r = BsvReader::new(data);
-    let call = r.read_u8().map_err(|e| WalletError::General(format!("read call: {}", e)))?;
-    let orig_len = r.read_u8().map_err(|e| WalletError::General(format!("read orig len: {}", e)))? as usize;
-    let orig_bytes = r.read_bytes(orig_len).map_err(|e| WalletError::General(format!("read orig: {}", e)))?;
+    let call = r
+        .read_u8()
+        .map_err(|e| WalletError::General(format!("read call: {}", e)))?;
+    let orig_len =
+        r.read_u8()
+            .map_err(|e| WalletError::General(format!("read orig len: {}", e)))? as usize;
+    let orig_bytes = r
+        .read_bytes(orig_len)
+        .map_err(|e| WalletError::General(format!("read orig: {}", e)))?;
     let originator = String::from_utf8(orig_bytes.to_vec())
         .map_err(|e| WalletError::General(format!("invalid originator utf8: {}", e)))?;
     let remaining = r.remaining();
     let params = if remaining > 0 {
-        r.read_bytes(remaining).map_err(|e| WalletError::General(format!("read params: {}", e)))?.to_vec()
+        r.read_bytes(remaining)
+            .map_err(|e| WalletError::General(format!("read params: {}", e)))?
+            .to_vec()
     } else {
         vec![]
     };
-    Ok(RequestFrame { call, originator, params })
+    Ok(RequestFrame {
+        call,
+        originator,
+        params,
+    })
 }
 
 /// Serialize a result frame (success).
@@ -85,15 +97,28 @@ pub fn write_result_frame_err(code: u8, message: &str, stack: &str) -> Vec<u8> {
 /// Read a result frame. Returns Ok(data) or Err with the error message.
 pub fn read_result_frame(data: &[u8]) -> Result<Vec<u8>, WalletError> {
     let mut r = BsvReader::new(data);
-    let error_byte = r.read_u8().map_err(|e| WalletError::General(format!("read error byte: {}", e)))?;
+    let error_byte = r
+        .read_u8()
+        .map_err(|e| WalletError::General(format!("read error byte: {}", e)))?;
 
     if error_byte != 0 {
-        let msg_len = r.read_varint().map_err(|e| WalletError::General(format!("read err msg len: {}", e)))?.0 as usize;
-        let msg_bytes = r.read_bytes(msg_len).map_err(|e| WalletError::General(format!("read err msg: {}", e)))?;
+        let msg_len = r
+            .read_varint()
+            .map_err(|e| WalletError::General(format!("read err msg len: {}", e)))?
+            .0 as usize;
+        let msg_bytes = r
+            .read_bytes(msg_len)
+            .map_err(|e| WalletError::General(format!("read err msg: {}", e)))?;
         let msg = String::from_utf8_lossy(msg_bytes).to_string();
-        let stack_len = r.read_varint().map_err(|e| WalletError::General(format!("read stack len: {}", e)))?.0 as usize;
+        let stack_len = r
+            .read_varint()
+            .map_err(|e| WalletError::General(format!("read stack len: {}", e)))?
+            .0 as usize;
         let _stack = r.read_bytes(stack_len).ok();
-        return Err(WalletError::General(format!("wire error (code {}): {}", error_byte, msg)));
+        return Err(WalletError::General(format!(
+            "wire error (code {}): {}",
+            error_byte, msg
+        )));
     }
 
     let remaining = r.remaining();
@@ -113,12 +138,18 @@ fn write_string(w: &mut BsvWriter, s: &str) {
 }
 
 fn read_string(r: &mut BsvReader) -> Result<String, WalletError> {
-    let len = r.read_varint().map_err(|e| WalletError::General(format!("read string len: {}", e)))?.0;
+    let len = r
+        .read_varint()
+        .map_err(|e| WalletError::General(format!("read string len: {}", e)))?
+        .0;
     if len == u64::MAX || len == 0 {
         return Ok(String::new());
     }
-    let bytes = r.read_bytes(len as usize).map_err(|e| WalletError::General(format!("read string: {}", e)))?;
-    String::from_utf8(bytes.to_vec()).map_err(|e| WalletError::General(format!("invalid utf8: {}", e)))
+    let bytes = r
+        .read_bytes(len as usize)
+        .map_err(|e| WalletError::General(format!("read string: {}", e)))?;
+    String::from_utf8(bytes.to_vec())
+        .map_err(|e| WalletError::General(format!("invalid utf8: {}", e)))
 }
 
 fn write_optional_bool(w: &mut BsvWriter, b: Option<bool>) {
@@ -130,7 +161,9 @@ fn write_optional_bool(w: &mut BsvWriter, b: Option<bool>) {
 }
 
 fn read_optional_bool(r: &mut BsvReader) -> Result<Option<bool>, WalletError> {
-    let b = r.read_u8().map_err(|e| WalletError::General(format!("read optional bool: {}", e)))?;
+    let b = r
+        .read_u8()
+        .map_err(|e| WalletError::General(format!("read optional bool: {}", e)))?;
     match b {
         0xFF => Ok(None),
         1 => Ok(Some(true)),
@@ -145,7 +178,9 @@ fn encode_counterparty(w: &mut BsvWriter, cp: &Counterparty) -> Result<(), Walle
         CounterpartyType::Anyone => w.write_u8(COUNTERPARTY_ANYONE),
         CounterpartyType::Other => {
             let pubkey = cp.counterparty.as_ref().ok_or_else(|| {
-                WalletError::InvalidCounterparty("counterparty pubkey required for type other".into())
+                WalletError::InvalidCounterparty(
+                    "counterparty pubkey required for type other".into(),
+                )
             })?;
             w.write_bytes(&pubkey.to_compressed());
         }
@@ -154,7 +189,9 @@ fn encode_counterparty(w: &mut BsvWriter, cp: &Counterparty) -> Result<(), Walle
 }
 
 fn decode_counterparty(r: &mut BsvReader) -> Result<Counterparty, WalletError> {
-    let flag = r.read_u8().map_err(|e| WalletError::General(format!("read counterparty flag: {}", e)))?;
+    let flag = r
+        .read_u8()
+        .map_err(|e| WalletError::General(format!("read counterparty flag: {}", e)))?;
     match flag {
         COUNTERPARTY_UNINITIALIZED => Ok(Counterparty {
             r#type: CounterpartyType::Uninitialized,
@@ -170,7 +207,9 @@ fn decode_counterparty(r: &mut BsvReader) -> Result<Counterparty, WalletError> {
         }),
         _ => {
             // flag is first byte of 33-byte compressed pubkey, read remaining 32
-            let rest = r.read_bytes(32).map_err(|e| WalletError::General(format!("read counterparty pubkey: {}", e)))?;
+            let rest = r
+                .read_bytes(32)
+                .map_err(|e| WalletError::General(format!("read counterparty pubkey: {}", e)))?;
             let mut full = vec![flag];
             full.extend_from_slice(rest);
             let pubkey = PublicKey::from_bytes(&full)
@@ -189,7 +228,9 @@ fn encode_protocol(w: &mut BsvWriter, protocol: &Protocol) {
 }
 
 fn decode_protocol(r: &mut BsvReader) -> Result<Protocol, WalletError> {
-    let level = r.read_u8().map_err(|e| WalletError::General(format!("read security level: {}", e)))?;
+    let level = r
+        .read_u8()
+        .map_err(|e| WalletError::General(format!("read security level: {}", e)))?;
     let name = read_string(r)?;
     Ok(Protocol {
         security_level: level as i32,
@@ -208,7 +249,9 @@ fn encode_privileged_params(w: &mut BsvWriter, privileged: Option<bool>, reason:
 
 fn decode_privileged_params(r: &mut BsvReader) -> Result<(Option<bool>, String), WalletError> {
     let privileged = read_optional_bool(r)?;
-    let b = r.read_u8().map_err(|e| WalletError::General(format!("read priv reason flag: {}", e)))?;
+    let b = r
+        .read_u8()
+        .map_err(|e| WalletError::General(format!("read priv reason flag: {}", e)))?;
     if b == NEGATIVE_ONE_BYTE {
         return Ok((privileged, String::new()));
     }
@@ -217,7 +260,9 @@ fn decode_privileged_params(r: &mut BsvReader) -> Result<(Option<bool>, String),
     // Reconstruct: prepend it and read.
     // Simple approach: the byte IS the varint length (for lengths < 253).
     if b < 253 {
-        let s_bytes = r.read_bytes(b as usize).map_err(|e| WalletError::General(format!("read priv reason: {}", e)))?;
+        let s_bytes = r
+            .read_bytes(b as usize)
+            .map_err(|e| WalletError::General(format!("read priv reason: {}", e)))?;
         let s = String::from_utf8(s_bytes.to_vec()).unwrap_or_default();
         Ok((privileged, s))
     } else {
@@ -229,11 +274,15 @@ fn decode_privileged_params(r: &mut BsvReader) -> Result<(Option<bool>, String),
             255 => 8,
             _ => unreachable!(),
         };
-        let extra_bytes = r.read_bytes(extra).map_err(|e| WalletError::General(format!("read priv reason varint: {}", e)))?;
+        let extra_bytes = r
+            .read_bytes(extra)
+            .map_err(|e| WalletError::General(format!("read priv reason varint: {}", e)))?;
         buf.extend_from_slice(extra_bytes);
         let (vi, _) = VarInt::from_bytes(&buf)
             .map_err(|e| WalletError::General(format!("varint decode: {}", e)))?;
-        let s_bytes = r.read_bytes(vi.0 as usize).map_err(|e| WalletError::General(format!("read priv reason str: {}", e)))?;
+        let s_bytes = r
+            .read_bytes(vi.0 as usize)
+            .map_err(|e| WalletError::General(format!("read priv reason str: {}", e)))?;
         let s = String::from_utf8(s_bytes.to_vec()).unwrap_or_default();
         Ok((privileged, s))
     }
@@ -302,8 +351,14 @@ pub fn serialize_encrypt_args(args: &EncryptArgs) -> Result<Vec<u8>, WalletError
 pub fn deserialize_encrypt_args(data: &[u8]) -> Result<EncryptArgs, WalletError> {
     let mut r = BsvReader::new(data);
     let params = decode_key_related_params(&mut r)?;
-    let pt_len = r.read_varint().map_err(|e| WalletError::General(format!("read pt len: {}", e)))?.0 as usize;
-    let plaintext = r.read_bytes(pt_len).map_err(|e| WalletError::General(format!("read pt: {}", e)))?.to_vec();
+    let pt_len = r
+        .read_varint()
+        .map_err(|e| WalletError::General(format!("read pt len: {}", e)))?
+        .0 as usize;
+    let plaintext = r
+        .read_bytes(pt_len)
+        .map_err(|e| WalletError::General(format!("read pt: {}", e)))?
+        .to_vec();
     let seek = read_optional_bool(&mut r)?.unwrap_or(false);
 
     Ok(EncryptArgs {
@@ -326,7 +381,9 @@ pub fn serialize_encrypt_result(result: &EncryptResult) -> Vec<u8> {
 
 /// Deserialize an encrypt result from wire format bytes.
 pub fn deserialize_encrypt_result(data: &[u8]) -> EncryptResult {
-    EncryptResult { ciphertext: data.to_vec() }
+    EncryptResult {
+        ciphertext: data.to_vec(),
+    }
 }
 
 /// Serialize decrypt arguments to wire format bytes.
@@ -350,8 +407,14 @@ pub fn serialize_decrypt_args(args: &DecryptArgs) -> Result<Vec<u8>, WalletError
 pub fn deserialize_decrypt_args(data: &[u8]) -> Result<DecryptArgs, WalletError> {
     let mut r = BsvReader::new(data);
     let params = decode_key_related_params(&mut r)?;
-    let ct_len = r.read_varint().map_err(|e| WalletError::General(format!("read ct len: {}", e)))?.0 as usize;
-    let ciphertext = r.read_bytes(ct_len).map_err(|e| WalletError::General(format!("read ct: {}", e)))?.to_vec();
+    let ct_len = r
+        .read_varint()
+        .map_err(|e| WalletError::General(format!("read ct len: {}", e)))?
+        .0 as usize;
+    let ciphertext = r
+        .read_bytes(ct_len)
+        .map_err(|e| WalletError::General(format!("read ct: {}", e)))?
+        .to_vec();
     let seek = read_optional_bool(&mut r)?.unwrap_or(false);
 
     Ok(DecryptArgs {
@@ -374,7 +437,9 @@ pub fn serialize_decrypt_result(result: &DecryptResult) -> Vec<u8> {
 
 /// Deserialize a decrypt result from wire format bytes.
 pub fn deserialize_decrypt_result(data: &[u8]) -> DecryptResult {
-    DecryptResult { plaintext: data.to_vec() }
+    DecryptResult {
+        plaintext: data.to_vec(),
+    }
 }
 
 // === GetPublicKey ===
@@ -384,7 +449,11 @@ pub fn serialize_get_public_key_args(args: &GetPublicKeyArgs) -> Result<Vec<u8>,
     let mut w = BsvWriter::new();
     if args.identity_key {
         w.write_u8(IDENTITY_KEY_FLAG);
-        encode_privileged_params(&mut w, Some(args.encryption_args.privileged), &args.encryption_args.privileged_reason);
+        encode_privileged_params(
+            &mut w,
+            Some(args.encryption_args.privileged),
+            &args.encryption_args.privileged_reason,
+        );
     } else {
         w.write_u8(0);
         let params = encode_key_related_params(&KeyRelatedParams {
@@ -404,7 +473,9 @@ pub fn serialize_get_public_key_args(args: &GetPublicKeyArgs) -> Result<Vec<u8>,
 /// Deserialize get-public-key arguments from wire format bytes.
 pub fn deserialize_get_public_key_args(data: &[u8]) -> Result<GetPublicKeyArgs, WalletError> {
     let mut r = BsvReader::new(data);
-    let ik_flag = r.read_u8().map_err(|e| WalletError::General(format!("read ik flag: {}", e)))?;
+    let ik_flag = r
+        .read_u8()
+        .map_err(|e| WalletError::General(format!("read ik flag: {}", e)))?;
     let identity_key = ik_flag == IDENTITY_KEY_FLAG;
 
     if identity_key {
@@ -412,7 +483,10 @@ pub fn deserialize_get_public_key_args(data: &[u8]) -> Result<GetPublicKeyArgs, 
         let seek = read_optional_bool(&mut r)?.unwrap_or(false);
         Ok(GetPublicKeyArgs {
             encryption_args: EncryptionArgs {
-                protocol_id: Protocol { security_level: 0, protocol: String::new() },
+                protocol_id: Protocol {
+                    security_level: 0,
+                    protocol: String::new(),
+                },
                 key_id: String::new(),
                 counterparty: Counterparty::default(),
                 privileged: privileged.unwrap_or(false),
@@ -485,18 +559,34 @@ pub fn deserialize_create_signature_args(data: &[u8]) -> Result<CreateSignatureA
     let mut r = BsvReader::new(data);
     let params = decode_key_related_params(&mut r)?;
 
-    let flag = r.read_u8().map_err(|e| WalletError::General(format!("read data flag: {}", e)))?;
+    let flag = r
+        .read_u8()
+        .map_err(|e| WalletError::General(format!("read data flag: {}", e)))?;
     let (sig_data, hash) = match flag {
         1 => {
-            let len = r.read_varint().map_err(|e| WalletError::General(format!("read data len: {}", e)))?.0 as usize;
-            let d = r.read_bytes(len).map_err(|e| WalletError::General(format!("read data: {}", e)))?.to_vec();
+            let len = r
+                .read_varint()
+                .map_err(|e| WalletError::General(format!("read data len: {}", e)))?
+                .0 as usize;
+            let d = r
+                .read_bytes(len)
+                .map_err(|e| WalletError::General(format!("read data: {}", e)))?
+                .to_vec();
             (d, vec![])
         }
         2 => {
-            let h = r.read_bytes(32).map_err(|e| WalletError::General(format!("read hash: {}", e)))?.to_vec();
+            let h = r
+                .read_bytes(32)
+                .map_err(|e| WalletError::General(format!("read hash: {}", e)))?
+                .to_vec();
             (vec![], h)
         }
-        _ => return Err(WalletError::General(format!("invalid data type flag: {}", flag))),
+        _ => {
+            return Err(WalletError::General(format!(
+                "invalid data type flag: {}",
+                flag
+            )))
+        }
     };
 
     let seek = read_optional_bool(&mut r)?.unwrap_or(false);
@@ -521,7 +611,9 @@ pub fn serialize_create_signature_result(result: &CreateSignatureResult) -> Vec<
 }
 
 /// Deserialize a create-signature result from DER-encoded bytes.
-pub fn deserialize_create_signature_result(data: &[u8]) -> Result<CreateSignatureResult, WalletError> {
+pub fn deserialize_create_signature_result(
+    data: &[u8],
+) -> Result<CreateSignatureResult, WalletError> {
     let sig = Signature::from_der(data)
         .map_err(|e| WalletError::General(format!("invalid signature: {}", e)))?;
     Ok(CreateSignatureResult { signature: sig })
@@ -550,8 +642,14 @@ pub fn serialize_create_hmac_args(args: &CreateHmacArgs) -> Result<Vec<u8>, Wall
 pub fn deserialize_create_hmac_args(data: &[u8]) -> Result<CreateHmacArgs, WalletError> {
     let mut r = BsvReader::new(data);
     let params = decode_key_related_params(&mut r)?;
-    let data_len = r.read_varint().map_err(|e| WalletError::General(format!("read data len: {}", e)))?.0 as usize;
-    let hmac_data = r.read_bytes(data_len).map_err(|e| WalletError::General(format!("read data: {}", e)))?.to_vec();
+    let data_len = r
+        .read_varint()
+        .map_err(|e| WalletError::General(format!("read data len: {}", e)))?
+        .0 as usize;
+    let hmac_data = r
+        .read_bytes(data_len)
+        .map_err(|e| WalletError::General(format!("read data: {}", e)))?
+        .to_vec();
     let seek = read_optional_bool(&mut r)?.unwrap_or(false);
 
     Ok(CreateHmacArgs {
@@ -575,7 +673,10 @@ pub fn serialize_create_hmac_result(result: &CreateHmacResult) -> Vec<u8> {
 /// Deserialize a create-HMAC result from raw 32-byte input.
 pub fn deserialize_create_hmac_result(data: &[u8]) -> Result<CreateHmacResult, WalletError> {
     if data.len() < 32 {
-        return Err(WalletError::General(format!("HMAC too short: expected 32, got {}", data.len())));
+        return Err(WalletError::General(format!(
+            "HMAC too short: expected 32, got {}",
+            data.len()
+        )));
     }
     let mut hmac = [0u8; 32];
     hmac.copy_from_slice(&data[..32]);
@@ -664,7 +765,10 @@ mod tests {
         let mut r = BsvReader::new(&bytes);
         let decoded = decode_key_related_params(&mut r).unwrap();
 
-        assert_eq!(decoded.protocol_id.security_level, params.protocol_id.security_level);
+        assert_eq!(
+            decoded.protocol_id.security_level,
+            params.protocol_id.security_level
+        );
         assert_eq!(decoded.protocol_id.protocol, params.protocol_id.protocol);
         assert_eq!(decoded.key_id, params.key_id);
         assert_eq!(decoded.counterparty.r#type, CounterpartyType::Other);
@@ -680,7 +784,10 @@ mod tests {
     #[test]
     fn test_key_related_params_minimal_roundtrip() {
         let params = KeyRelatedParams {
-            protocol_id: Protocol { security_level: 0, protocol: "default".into() },
+            protocol_id: Protocol {
+                security_level: 0,
+                protocol: "default".into(),
+            },
             key_id: String::new(),
             counterparty: Counterparty::default(),
             privileged: None,
@@ -753,7 +860,10 @@ mod tests {
         let decoded = deserialize_encrypt_args(&bytes).unwrap();
         assert_eq!(decoded.plaintext, b"hello world");
         assert_eq!(decoded.encryption_args.key_id, "enc-key");
-        assert_eq!(decoded.encryption_args.counterparty.r#type, CounterpartyType::Self_);
+        assert_eq!(
+            decoded.encryption_args.counterparty.r#type,
+            CounterpartyType::Self_
+        );
     }
 
     // === GetPublicKey round-trip ===
@@ -762,7 +872,10 @@ mod tests {
     fn test_get_public_key_identity_roundtrip() {
         let args = GetPublicKeyArgs {
             encryption_args: EncryptionArgs {
-                protocol_id: Protocol { security_level: 0, protocol: String::new() },
+                protocol_id: Protocol {
+                    security_level: 0,
+                    protocol: String::new(),
+                },
                 key_id: String::new(),
                 counterparty: Counterparty::default(),
                 privileged: false,

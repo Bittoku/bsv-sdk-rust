@@ -3,15 +3,13 @@
 //! Requires the `bundle` feature.
 
 pub mod planner;
-pub mod stas_bundle;
 pub mod stas3_bundle;
+pub mod stas_bundle;
 
-pub use planner::{PlannedOp, plan_operations};
-pub use stas_bundle::{PayoutBundle, StasBundleConfig, TokenUtxo, FundingUtxo, build_stas_bundle};
+pub use planner::{plan_operations, PlannedOp};
 pub use stas3_bundle::{
-    Stas3BundleFactory, BundleResult, BundleSpendType,
-    StasOutPoint, FundingOutPoint, FundingRequest, Recipient,
-    TransferOutput, TransferRequest,
-    LockingParamsArgs, LockingParamsResult,
-    AVG_FEE_FOR_STAS3_MERGE,
+    BundleResult, BundleSpendType, FundingOutPoint, FundingRequest, LockingParamsArgs,
+    LockingParamsResult, Recipient, Stas3BundleFactory, StasOutPoint, TransferOutput,
+    TransferRequest, AVG_FEE_FOR_STAS3_MERGE,
 };
+pub use stas_bundle::{build_stas_bundle, FundingUtxo, PayoutBundle, StasBundleConfig, TokenUtxo};

@@ -4,11 +4,11 @@
 //! matching Bitcoin's convention for transaction IDs and block hashes.
 //! Ported from the Go BSV SDK (`chainhash` package).
 
-use std::fmt;
-use std::str::FromStr;
-use serde::{Serialize, Deserialize, Serializer, Deserializer};
 use crate::hash::sha256;
 use crate::PrimitivesError;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::fmt;
+use std::str::FromStr;
 
 /// Size of a Hash in bytes.
 pub const HASH_SIZE: usize = 32;
@@ -46,9 +46,11 @@ impl Hash {
     /// `Ok(Hash)` if the slice is 32 bytes, or an error otherwise.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, PrimitivesError> {
         if bytes.len() != HASH_SIZE {
-            return Err(PrimitivesError::InvalidHash(
-                format!("invalid hash length of {}, want {}", bytes.len(), HASH_SIZE)
-            ));
+            return Err(PrimitivesError::InvalidHash(format!(
+                "invalid hash length of {}, want {}",
+                bytes.len(),
+                HASH_SIZE
+            )));
         }
         let mut arr = [0u8; HASH_SIZE];
         arr.copy_from_slice(bytes);
@@ -71,9 +73,10 @@ impl Hash {
             return Ok(Hash::default());
         }
         if hex_str.len() > MAX_HASH_STRING_SIZE {
-            return Err(PrimitivesError::InvalidHash(
-                format!("max hash string length is {} bytes", MAX_HASH_STRING_SIZE)
-            ));
+            return Err(PrimitivesError::InvalidHash(format!(
+                "max hash string length is {} bytes",
+                MAX_HASH_STRING_SIZE
+            )));
         }
 
         // Pad to even length if needed.
@@ -115,9 +118,11 @@ impl Hash {
     /// `Ok(())` on success, or an error if the length is wrong.
     pub fn set_bytes(&mut self, bytes: &[u8]) -> Result<(), PrimitivesError> {
         if bytes.len() != HASH_SIZE {
-            return Err(PrimitivesError::InvalidHash(
-                format!("invalid hash length of {}, want {}", bytes.len(), HASH_SIZE)
-            ));
+            return Err(PrimitivesError::InvalidHash(format!(
+                "invalid hash length of {}, want {}",
+                bytes.len(),
+                HASH_SIZE
+            )));
         }
         self.0.copy_from_slice(bytes);
         Ok(())
@@ -225,10 +230,9 @@ mod tests {
 
     /// Genesis block hash bytes in internal (little-endian) order.
     const MAIN_NET_GENESIS_HASH: Hash = Hash([
-        0x6f, 0xe2, 0x8c, 0x0a, 0xb6, 0xf1, 0xb3, 0x72,
-        0xc1, 0xa6, 0xa2, 0x46, 0xae, 0x63, 0xf7, 0x4f,
-        0x93, 0x1e, 0x83, 0x65, 0xe1, 0x5a, 0x08, 0x9c,
-        0x68, 0xd6, 0x19, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x6f, 0xe2, 0x8c, 0x0a, 0xb6, 0xf1, 0xb3, 0x72, 0xc1, 0xa6, 0xa2, 0x46, 0xae, 0x63, 0xf7,
+        0x4f, 0x93, 0x1e, 0x83, 0x65, 0xe1, 0x5a, 0x08, 0x9c, 0x68, 0xd6, 0x19, 0x00, 0x00, 0x00,
+        0x00, 0x00,
     ]);
 
     #[test]
@@ -239,10 +243,9 @@ mod tests {
 
         // Hash of block 234440 as raw bytes.
         let buf: [u8; 32] = [
-            0x79, 0xa6, 0x1a, 0xdb, 0xc6, 0xe5, 0xa2, 0xe1,
-            0x39, 0xd2, 0x71, 0x3a, 0x54, 0x6e, 0xc7, 0xc8,
-            0x75, 0x63, 0x2e, 0x75, 0xf1, 0xdf, 0x9c, 0x3f,
-            0xa6, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x79, 0xa6, 0x1a, 0xdb, 0xc6, 0xe5, 0xa2, 0xe1, 0x39, 0xd2, 0x71, 0x3a, 0x54, 0x6e,
+            0xc7, 0xc8, 0x75, 0x63, 0x2e, 0x75, 0xf1, 0xdf, 0x9c, 0x3f, 0xa6, 0x01, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00,
         ];
 
         let hash = Hash::from_bytes(&buf).unwrap();
@@ -277,10 +280,9 @@ mod tests {
     fn test_hash_string() {
         // Block 100000 hash in internal byte order.
         let hash = Hash::new([
-            0x06, 0xe5, 0x33, 0xfd, 0x1a, 0xda, 0x86, 0x39,
-            0x1f, 0x3f, 0x6c, 0x34, 0x32, 0x04, 0xb0, 0xd2,
-            0x78, 0xd4, 0xaa, 0xec, 0x1c, 0x0b, 0x20, 0xaa,
-            0x27, 0xba, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x06, 0xe5, 0x33, 0xfd, 0x1a, 0xda, 0x86, 0x39, 0x1f, 0x3f, 0x6c, 0x34, 0x32, 0x04,
+            0xb0, 0xd2, 0x78, 0xd4, 0xaa, 0xec, 0x1c, 0x0b, 0x20, 0xaa, 0x27, 0xba, 0x03, 0x00,
+            0x00, 0x00, 0x00, 0x00,
         ]);
         assert_eq!(
             hash.to_string(),
@@ -291,15 +293,14 @@ mod tests {
     #[test]
     fn test_new_hash_from_hex() {
         // Genesis hash from hex string.
-        let result = Hash::from_hex(
-            "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f"
-        ).unwrap();
+        let result =
+            Hash::from_hex("000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f")
+                .unwrap();
         assert_eq!(result, MAIN_NET_GENESIS_HASH);
 
         // Genesis hash with stripped leading zeros.
-        let result = Hash::from_hex(
-            "19d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f"
-        ).unwrap();
+        let result =
+            Hash::from_hex("19d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f").unwrap();
         assert_eq!(result, MAIN_NET_GENESIS_HASH);
 
         // Empty string -> zero hash.
@@ -309,29 +310,24 @@ mod tests {
         // Single digit.
         let result = Hash::from_hex("1").unwrap();
         let expected = Hash::new([
-            0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00,
         ]);
         assert_eq!(result, expected);
 
         // Block 203707 with stripped leading zeros.
-        let result = Hash::from_hex(
-            "3264bc2ac36a60840790ba1d475d01367e7c723da941069e9dc"
-        ).unwrap();
+        let result = Hash::from_hex("3264bc2ac36a60840790ba1d475d01367e7c723da941069e9dc").unwrap();
         let expected = Hash::new([
-            0xdc, 0xe9, 0x69, 0x10, 0x94, 0xda, 0x23, 0xc7,
-            0xe7, 0x67, 0x13, 0xd0, 0x75, 0xd4, 0xa1, 0x0b,
-            0x79, 0x40, 0x08, 0xa6, 0x36, 0xac, 0xc2, 0x4b,
-            0x26, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0xdc, 0xe9, 0x69, 0x10, 0x94, 0xda, 0x23, 0xc7, 0xe7, 0x67, 0x13, 0xd0, 0x75, 0xd4,
+            0xa1, 0x0b, 0x79, 0x40, 0x08, 0xa6, 0x36, 0xac, 0xc2, 0x4b, 0x26, 0x03, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00,
         ]);
         assert_eq!(result, expected);
 
         // String too long.
-        let result = Hash::from_hex(
-            "01234567890123456789012345678901234567890123456789012345678912345"
-        );
+        let result =
+            Hash::from_hex("01234567890123456789012345678901234567890123456789012345678912345");
         assert!(result.is_err());
 
         // Invalid hex character.

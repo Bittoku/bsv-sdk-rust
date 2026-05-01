@@ -16,8 +16,8 @@ use bsv_transaction::template::UnlockingScriptTemplate;
 use bsv_transaction::transaction::Transaction;
 
 use crate::error::TokenError;
-use crate::script::stas_builder::build_stas_locking_script;
 use crate::script::stas_btg_builder::build_stas_btg_locking_script;
+use crate::script::stas_builder::build_stas_locking_script;
 use crate::template::stas as stas_template;
 use crate::template::stas_btg as stas_btg_template;
 use crate::types::{Destination, Payment, SigningKey};
@@ -244,11 +244,8 @@ pub fn build_issue_tx(config: &IssueConfig) -> Result<Transaction, TokenError> {
 
     // STAS token outputs
     for dest in &config.destinations {
-        let locking_script = build_stas_locking_script(
-            &dest.address,
-            &config.redemption_pkh,
-            config.splittable,
-        )?;
+        let locking_script =
+            build_stas_locking_script(&dest.address, &config.redemption_pkh, config.splittable)?;
         tx.add_output(TransactionOutput {
             satoshis: dest.satoshis,
             locking_script,
@@ -260,7 +257,8 @@ pub fn build_issue_tx(config: &IssueConfig) -> Result<Transaction, TokenError> {
     add_change_output(&mut tx, &config.funding, config.fee_rate)?;
 
     // Sign: input 0 with contract key, input 1 with funding key.
-    let unlocker0 = stas_template::unlock_from_signing_key(&config.contract_utxo.signing_key, None)?;
+    let unlocker0 =
+        stas_template::unlock_from_signing_key(&config.contract_utxo.signing_key, None)?;
     let script0 = unlocker0.sign(&tx, 0)?;
     tx.inputs[0].unlocking_script = Some(script0);
 
@@ -416,7 +414,12 @@ pub fn build_merge_tx(config: &MergeConfig) -> Result<Transaction, TokenError> {
 
     let token_keys: Vec<&SigningKey> = config.token_utxos.iter().map(|u| &u.signing_key).collect();
     let funding_index = config.token_utxos.len() as u32;
-    sign_inputs(&mut tx, &token_keys, &config.funding.signing_key, funding_index)?;
+    sign_inputs(
+        &mut tx,
+        &token_keys,
+        &config.funding.signing_key,
+        funding_index,
+    )?;
 
     Ok(tx)
 }
@@ -556,12 +559,8 @@ fn sign_btg_inputs(
     for (i, (key, prev_raw, prev_vout)) in token_btg_data.iter().enumerate() {
         match key {
             SigningKey::Single(pk) => {
-                let unlocker = stas_btg_template::unlock_btg(
-                    pk.clone(),
-                    None,
-                    prev_raw.to_vec(),
-                    *prev_vout,
-                );
+                let unlocker =
+                    stas_btg_template::unlock_btg(pk.clone(), None, prev_raw.to_vec(), *prev_vout);
                 let script = unlocker.sign(tx, i as u32)?;
                 tx.inputs[i].unlocking_script = Some(script);
             }
@@ -762,7 +761,12 @@ pub fn build_btg_merge_tx(config: &BtgMergeConfig) -> Result<Transaction, TokenE
         })
         .collect();
     let funding_index = config.token_utxos.len() as u32;
-    sign_btg_inputs(&mut tx, &btg_data, &config.funding.signing_key, funding_index)?;
+    sign_btg_inputs(
+        &mut tx,
+        &btg_data,
+        &config.funding.signing_key,
+        funding_index,
+    )?;
 
     Ok(tx)
 }
@@ -848,16 +852,14 @@ pub fn build_btg_checkpoint_tx(config: &BtgCheckpointConfig) -> Result<Transacti
             ));
         }
     };
-    let checkpoint_unlocker = stas_btg_template::unlock_btg_checkpoint(
-        owner_pk,
-        config.issuer_private_key.clone(),
-        None,
-    );
+    let checkpoint_unlocker =
+        stas_btg_template::unlock_btg_checkpoint(owner_pk, config.issuer_private_key.clone(), None);
     let checkpoint_script = checkpoint_unlocker.sign(&tx, 0)?;
     tx.inputs[0].unlocking_script = Some(checkpoint_script);
 
     // Sign input 1 with funding key.
-    let funding_unlocker = stas_template::unlock_from_signing_key(&config.funding.signing_key, None)?;
+    let funding_unlocker =
+        stas_template::unlock_from_signing_key(&config.funding.signing_key, None)?;
     let funding_script = funding_unlocker.sign(&tx, 1)?;
     tx.inputs[1].unlocking_script = Some(funding_script);
 
@@ -1669,7 +1671,10 @@ mod tests {
         };
 
         let result = build_btg_checkpoint_tx(&config);
-        assert!(result.is_err(), "BTG checkpoint should reject P2MPKH token key");
+        assert!(
+            result.is_err(),
+            "BTG checkpoint should reject P2MPKH token key"
+        );
         let err_msg = result.unwrap_err().to_string();
         assert!(
             err_msg.contains("P2MPKH") || err_msg.contains("multisig"),

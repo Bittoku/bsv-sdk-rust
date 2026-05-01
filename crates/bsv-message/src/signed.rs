@@ -83,14 +83,18 @@ pub fn verify(
 
     // Sender public key (33 bytes)
     if sig.len() < counter + 33 {
-        return Err(MessageError::General("signature too short for sender pubkey".to_string()));
+        return Err(MessageError::General(
+            "signature too short for sender pubkey".to_string(),
+        ));
     }
     let signer = PublicKey::from_bytes(&sig[counter..counter + 33])?;
     counter += 33;
 
     // Verifier: first byte determines mode
     if sig.len() < counter + 1 {
-        return Err(MessageError::General("signature too short for verifier".to_string()));
+        return Err(MessageError::General(
+            "signature too short for verifier".to_string(),
+        ));
     }
 
     let anyone_key;
@@ -115,7 +119,9 @@ pub fn verify(
         // Specific recipient mode
         counter += 1;
         if sig.len() < counter + 32 {
-            return Err(MessageError::General("signature too short for verifier pubkey".to_string()));
+            return Err(MessageError::General(
+                "signature too short for verifier pubkey".to_string(),
+            ));
         }
         let verifier_rest = &sig[counter..counter + 32];
         counter += 32;
@@ -142,7 +148,9 @@ pub fn verify(
 
     // Key ID (32 bytes)
     if sig.len() < counter + 32 {
-        return Err(MessageError::General("signature too short for key ID".to_string()));
+        return Err(MessageError::General(
+            "signature too short for key ID".to_string(),
+        ));
     }
     let key_id = &sig[counter..counter + 32];
     counter += 32;
@@ -204,7 +212,11 @@ mod tests {
 
         let err = verify(&message, &signature, Some(&recipient)).unwrap_err();
         let err_str = err.to_string();
-        assert!(err_str.contains("message version mismatch"), "got: {}", err_str);
+        assert!(
+            err_str.contains("message version mismatch"),
+            "got: {}",
+            err_str
+        );
         assert!(err_str.contains("42423301"), "got: {}", err_str);
         assert!(err_str.contains("01423301"), "got: {}", err_str);
     }
@@ -222,7 +234,9 @@ mod tests {
         assert!(result.is_err());
         let err_str = result.unwrap_err().to_string();
         assert!(
-            err_str.contains("this signature can only be verified with knowledge of a specific private key"),
+            err_str.contains(
+                "this signature can only be verified with knowledge of a specific private key"
+            ),
             "got: {}",
             err_str
         );

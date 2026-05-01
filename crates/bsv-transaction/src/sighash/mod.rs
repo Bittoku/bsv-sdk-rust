@@ -65,9 +65,11 @@ pub fn signature_hash(
     satoshis: u64,
 ) -> Result<[u8; 32], TransactionError> {
     if input_index >= tx.inputs.len() {
-        return Err(TransactionError::InvalidTransaction(
-            format!("input index {} out of range (tx has {} inputs)", input_index, tx.inputs.len()),
-        ));
+        return Err(TransactionError::InvalidTransaction(format!(
+            "input index {} out of range (tx has {} inputs)",
+            input_index,
+            tx.inputs.len()
+        )));
     }
 
     let preimage = calc_preimage(tx, input_index, prev_output_script, sighash_type, satoshis)?;
@@ -105,9 +107,11 @@ pub fn calc_preimage(
     satoshis: u64,
 ) -> Result<Vec<u8>, TransactionError> {
     if input_index >= tx.inputs.len() {
-        return Err(TransactionError::InvalidTransaction(
-            format!("input index {} out of range (tx has {} inputs)", input_index, tx.inputs.len()),
-        ));
+        return Err(TransactionError::InvalidTransaction(format!(
+            "input index {} out of range (tx has {} inputs)",
+            input_index,
+            tx.inputs.len()
+        )));
     }
 
     let input = &tx.inputs[input_index];

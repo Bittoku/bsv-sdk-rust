@@ -9,16 +9,15 @@ fn arb_merkle_path() -> impl Strategy<Value = MerklePath> {
 
     // Generate 1..=8 levels, each with 1..=3 leaves
     let arb_level = prop::collection::vec(
-        (0u64..256, arb_hash, any::<bool>()).prop_map(|(offset, hash, is_txid)| {
-            PathElement {
-                offset,
-                hash: Some(hash),
-                txid: if is_txid { Some(true) } else { None },
-                duplicate: None,
-            }
+        (0u64..256, arb_hash, any::<bool>()).prop_map(|(offset, hash, is_txid)| PathElement {
+            offset,
+            hash: Some(hash),
+            txid: if is_txid { Some(true) } else { None },
+            duplicate: None,
         }),
         1..=3,
-    ).prop_map(|mut level| {
+    )
+    .prop_map(|mut level| {
         // Ensure unique offsets by deduplicating
         level.sort_by_key(|e| e.offset);
         level.dedup_by_key(|e| e.offset);

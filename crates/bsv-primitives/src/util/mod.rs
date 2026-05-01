@@ -44,8 +44,7 @@ impl VarInt {
                     return Err(PrimitivesError::UnexpectedEof);
                 }
                 let val = u64::from_le_bytes([
-                    data[1], data[2], data[3], data[4],
-                    data[5], data[6], data[7], data[8],
+                    data[1], data[2], data[3], data[4], data[5], data[6], data[7], data[8],
                 ]);
                 Ok((VarInt(val), 9))
             }
@@ -63,9 +62,7 @@ impl VarInt {
                 let val = u16::from_le_bytes([data[1], data[2]]) as u64;
                 Ok((VarInt(val), 3))
             }
-            b => {
-                Ok((VarInt(b as u64), 1))
-            }
+            b => Ok((VarInt(b as u64), 1)),
         }
     }
 
@@ -236,8 +233,7 @@ impl<'a> BsvReader<'a> {
     pub fn read_u64_le(&mut self) -> Result<u64, PrimitivesError> {
         let bytes = self.read_bytes(8)?;
         Ok(u64::from_le_bytes([
-            bytes[0], bytes[1], bytes[2], bytes[3],
-            bytes[4], bytes[5], bytes[6], bytes[7],
+            bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
         ]))
     }
 
@@ -302,7 +298,9 @@ impl BsvWriter {
     /// # Returns
     /// A `BsvWriter` with the given capacity.
     pub fn with_capacity(capacity: usize) -> Self {
-        BsvWriter { buf: Vec::with_capacity(capacity) }
+        BsvWriter {
+            buf: Vec::with_capacity(capacity),
+        }
     }
 
     /// Append raw bytes to the buffer.
@@ -456,14 +454,14 @@ mod tests {
 
     #[test]
     fn test_varint_byte_length() {
-        assert_eq!(VarInt(0).to_bytes().len(), 1);        // 1 byte lower
-        assert_eq!(VarInt(252).to_bytes().len(), 1);       // 1 byte upper
-        assert_eq!(VarInt(253).to_bytes().len(), 3);       // 3 byte lower
-        assert_eq!(VarInt(65535).to_bytes().len(), 3);     // 3 byte upper
-        assert_eq!(VarInt(65536).to_bytes().len(), 5);     // 5 byte lower
-        assert_eq!(VarInt(4294967295).to_bytes().len(), 5);// 5 byte upper
-        assert_eq!(VarInt(4294967296).to_bytes().len(), 9);// 9 byte lower
-        assert_eq!(VarInt(u64::MAX).to_bytes().len(), 9);  // 9 byte upper
+        assert_eq!(VarInt(0).to_bytes().len(), 1); // 1 byte lower
+        assert_eq!(VarInt(252).to_bytes().len(), 1); // 1 byte upper
+        assert_eq!(VarInt(253).to_bytes().len(), 3); // 3 byte lower
+        assert_eq!(VarInt(65535).to_bytes().len(), 3); // 3 byte upper
+        assert_eq!(VarInt(65536).to_bytes().len(), 5); // 5 byte lower
+        assert_eq!(VarInt(4294967295).to_bytes().len(), 5); // 5 byte upper
+        assert_eq!(VarInt(4294967296).to_bytes().len(), 9); // 9 byte lower
+        assert_eq!(VarInt(u64::MAX).to_bytes().len(), 9); // 9 byte upper
     }
 
     // -- VarInt size (length) tests --
@@ -490,8 +488,14 @@ mod tests {
             (65535, vec![0xfd, 0xff, 0xff]),
             (65536, vec![0xfe, 0x00, 0x00, 0x01, 0x00]),
             (4294967295, vec![0xfe, 0xff, 0xff, 0xff, 0xff]),
-            (4294967296, vec![0xff, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00]),
-            (u64::MAX, vec![0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff]),
+            (
+                4294967296,
+                vec![0xff, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00],
+            ),
+            (
+                u64::MAX,
+                vec![0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff],
+            ),
         ];
 
         for (value, expected) in cases {

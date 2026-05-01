@@ -74,7 +74,10 @@ pub fn decode_script(bytes: &[u8]) -> Result<Vec<ScriptChunk>, ScriptError> {
                 } else {
                     // Consume the rest of the script as data attached to OP_RETURN.
                     let data = bytes[pos..].to_vec();
-                    chunks.push(ScriptChunk { op, data: Some(data) });
+                    chunks.push(ScriptChunk {
+                        op,
+                        data: Some(data),
+                    });
                     pos = bytes.len();
                 }
             }
@@ -88,7 +91,10 @@ pub fn decode_script(bytes: &[u8]) -> Result<Vec<ScriptChunk>, ScriptError> {
                     return Err(ScriptError::DataTooSmall);
                 }
                 let data = bytes[pos..pos + length].to_vec();
-                chunks.push(ScriptChunk { op, data: Some(data) });
+                chunks.push(ScriptChunk {
+                    op,
+                    data: Some(data),
+                });
                 pos += length;
             }
             OP_PUSHDATA2 => {
@@ -101,7 +107,10 @@ pub fn decode_script(bytes: &[u8]) -> Result<Vec<ScriptChunk>, ScriptError> {
                     return Err(ScriptError::DataTooSmall);
                 }
                 let data = bytes[pos..pos + length].to_vec();
-                chunks.push(ScriptChunk { op, data: Some(data) });
+                chunks.push(ScriptChunk {
+                    op,
+                    data: Some(data),
+                });
                 pos += length;
             }
             OP_PUSHDATA4 => {
@@ -119,7 +128,10 @@ pub fn decode_script(bytes: &[u8]) -> Result<Vec<ScriptChunk>, ScriptError> {
                     return Err(ScriptError::DataTooSmall);
                 }
                 let data = bytes[pos..pos + length].to_vec();
-                chunks.push(ScriptChunk { op, data: Some(data) });
+                chunks.push(ScriptChunk {
+                    op,
+                    data: Some(data),
+                });
                 pos += length;
             }
             0x01..=0x4b => {
@@ -129,7 +141,10 @@ pub fn decode_script(bytes: &[u8]) -> Result<Vec<ScriptChunk>, ScriptError> {
                     return Err(ScriptError::DataTooSmall);
                 }
                 let data = bytes[pos + 1..pos + 1 + length].to_vec();
-                chunks.push(ScriptChunk { op, data: Some(data) });
+                chunks.push(ScriptChunk {
+                    op,
+                    data: Some(data),
+                });
                 pos += 1 + length;
             }
             _ => {
@@ -184,8 +199,7 @@ pub fn push_data_prefix(data_len: usize) -> Result<Vec<u8>, ScriptError> {
 pub fn encode_push_datas(parts: &[&[u8]]) -> Result<Vec<u8>, ScriptError> {
     let mut result = Vec::new();
     for (i, part) in parts.iter().enumerate() {
-        let prefix = push_data_prefix(part.len())
-            .map_err(|_| ScriptError::PartTooBig(i))?;
+        let prefix = push_data_prefix(part.len()).map_err(|_| ScriptError::PartTooBig(i))?;
         result.extend_from_slice(&prefix);
         result.extend_from_slice(part);
     }
@@ -225,10 +239,7 @@ mod tests {
         assert_eq!(parts.len(), 3);
 
         // Re-encode: gather the data from each chunk
-        let data_parts: Vec<&[u8]> = parts
-            .iter()
-            .filter_map(|p| p.data.as_deref())
-            .collect();
+        let data_parts: Vec<&[u8]> = parts.iter().filter_map(|p| p.data.as_deref()).collect();
         let encoded = encode_push_datas(&data_parts).expect("should encode");
         assert_eq!(hex::encode(&encoded), script_hex.to_lowercase());
     }

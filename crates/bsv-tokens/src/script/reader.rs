@@ -4,7 +4,6 @@ use crate::script::templates::*;
 use crate::types::{ActionData, SwapDescriptor};
 use crate::{ScriptType, TokenId};
 
-
 /// Result of parsing a locking script.
 #[derive(Debug)]
 pub struct ParsedScript {
@@ -236,9 +235,7 @@ fn try_parse_stas3(script: &[u8]) -> Option<Stas3Fields> {
     let flags = items.get(1).cloned().unwrap_or_default();
 
     // Determine frozen state from action data
-    let frozen = action_data_raw
-        .as_ref()
-        .is_some_and(|d| d == &[0x52]); // OP_2
+    let frozen = action_data_raw.as_ref().is_some_and(|d| d == &[0x52]); // OP_2
 
     // Parse action data
     let action_data_parsed = action_data_raw.as_ref().and_then(|raw| {
@@ -642,10 +639,8 @@ mod tests {
         use crate::script::stas3_builder::build_stas3_locking_script;
         let owner = [0x11; 20];
         let redemption = [0x22; 20];
-        let script = build_stas3_locking_script(
-            &owner, &redemption, None, false, true, &[], &[],
-        )
-        .unwrap();
+        let script =
+            build_stas3_locking_script(&owner, &redemption, None, false, true, &[], &[]).unwrap();
         let parsed = read_locking_script(script.to_bytes());
         assert_eq!(parsed.script_type, ScriptType::Stas3);
         let stas3 = parsed.stas3.unwrap();
@@ -875,8 +870,8 @@ mod tests {
     #[test]
     fn stas3_action_data_bare_1_byte() {
         let script = build_stas3_script(&[0x01, 0xDE]); // bare push 1 byte
-        let fields = try_parse_stas3(&script)
-            .expect("should parse STAS3 with bare 1-byte action data");
+        let fields =
+            try_parse_stas3(&script).expect("should parse STAS3 with bare 1-byte action data");
         assert_eq!(fields.action_data_raw.as_deref(), Some(&[0xDE][..]));
     }
 
@@ -885,57 +880,54 @@ mod tests {
         let mut action = vec![0x14]; // bare push 20 bytes
         action.extend_from_slice(&[0xEE; 20]);
         let script = build_stas3_script(&action);
-        let fields = try_parse_stas3(&script)
-            .expect("should parse STAS3 with bare 20-byte action data");
+        let fields =
+            try_parse_stas3(&script).expect("should parse STAS3 with bare 20-byte action data");
         assert_eq!(fields.action_data_raw.as_deref(), Some(&[0xEE; 20][..]));
     }
 
     #[test]
     fn stas3_action_data_pushdata1() {
         let script = build_stas3_script(&[0x4C, 0x02, 0xCA, 0xFE]); // OP_PUSHDATA1, len=2
-        let fields = try_parse_stas3(&script)
-            .expect("should parse STAS3 with OP_PUSHDATA1 action data");
+        let fields =
+            try_parse_stas3(&script).expect("should parse STAS3 with OP_PUSHDATA1 action data");
         assert_eq!(fields.action_data_raw.as_deref(), Some(&[0xCA, 0xFE][..]));
     }
 
     #[test]
     fn stas3_action_data_pushdata2() {
         let script = build_stas3_script(&[0x4D, 0x02, 0x00, 0xCA, 0xFE]); // OP_PUSHDATA2, len=2
-        let fields = try_parse_stas3(&script)
-            .expect("should parse STAS3 with OP_PUSHDATA2 action data");
+        let fields =
+            try_parse_stas3(&script).expect("should parse STAS3 with OP_PUSHDATA2 action data");
         assert_eq!(fields.action_data_raw.as_deref(), Some(&[0xCA, 0xFE][..]));
     }
 
     #[test]
     fn stas3_action_data_pushdata4() {
-        let script =
-            build_stas3_script(&[0x4E, 0x02, 0x00, 0x00, 0x00, 0xCA, 0xFE]); // OP_PUSHDATA4, len=2
-        let fields = try_parse_stas3(&script)
-            .expect("should parse STAS3 with OP_PUSHDATA4 action data");
+        let script = build_stas3_script(&[0x4E, 0x02, 0x00, 0x00, 0x00, 0xCA, 0xFE]); // OP_PUSHDATA4, len=2
+        let fields =
+            try_parse_stas3(&script).expect("should parse STAS3 with OP_PUSHDATA4 action data");
         assert_eq!(fields.action_data_raw.as_deref(), Some(&[0xCA, 0xFE][..]));
     }
 
     #[test]
     fn stas3_action_data_op_1negate() {
         let script = build_stas3_script(&[0x4F]); // OP_1NEGATE
-        let fields = try_parse_stas3(&script)
-            .expect("should parse STAS3 with OP_1NEGATE action data");
+        let fields =
+            try_parse_stas3(&script).expect("should parse STAS3 with OP_1NEGATE action data");
         assert_eq!(fields.action_data_raw.as_deref(), Some(&[0x4F][..]));
     }
 
     #[test]
     fn stas3_action_data_op_1() {
         let script = build_stas3_script(&[0x51]); // OP_1
-        let fields =
-            try_parse_stas3(&script).expect("should parse STAS3 with OP_1 action data");
+        let fields = try_parse_stas3(&script).expect("should parse STAS3 with OP_1 action data");
         assert_eq!(fields.action_data_raw.as_deref(), Some(&[0x51][..]));
     }
 
     #[test]
     fn stas3_action_data_op_2_frozen() {
         let script = build_stas3_script(&[0x52]); // OP_2 — frozen flag
-        let fields =
-            try_parse_stas3(&script).expect("should parse STAS3 with OP_2 action data");
+        let fields = try_parse_stas3(&script).expect("should parse STAS3 with OP_2 action data");
         assert_eq!(fields.action_data_raw.as_deref(), Some(&[0x52][..]));
         assert!(fields.frozen, "OP_2 action data should set frozen = true");
     }
@@ -943,16 +935,14 @@ mod tests {
     #[test]
     fn stas3_action_data_op_3() {
         let script = build_stas3_script(&[0x53]); // OP_3
-        let fields =
-            try_parse_stas3(&script).expect("should parse STAS3 with OP_3 action data");
+        let fields = try_parse_stas3(&script).expect("should parse STAS3 with OP_3 action data");
         assert_eq!(fields.action_data_raw.as_deref(), Some(&[0x53][..]));
     }
 
     #[test]
     fn stas3_action_data_op_16() {
         let script = build_stas3_script(&[0x60]); // OP_16
-        let fields =
-            try_parse_stas3(&script).expect("should parse STAS3 with OP_16 action data");
+        let fields = try_parse_stas3(&script).expect("should parse STAS3 with OP_16 action data");
         assert_eq!(fields.action_data_raw.as_deref(), Some(&[0x60][..]));
     }
 }

@@ -1,7 +1,7 @@
 //! Tests for utility functions.
 
-use bsv_auth::utils::{certifier_in_slice, random_base64, validate_requested_certificate_set};
 use bsv_auth::types::RequestedCertificateSet;
+use bsv_auth::utils::{certifier_in_slice, random_base64, validate_requested_certificate_set};
 use bsv_primitives::ec::private_key::PrivateKey;
 use std::collections::HashMap;
 

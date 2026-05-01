@@ -80,15 +80,12 @@ pub fn encode_atomic_swap_trailing_params(
     }
     let pieces = build_pieces_from_tx(preceding_tx, asset_output_indices)?;
     let piece_count: u8 = pieces.len().try_into().map_err(|_| {
-        TokenError::InvalidScript(
-            "atomic-swap pieces: piece count exceeds u8 range".into(),
-        )
+        TokenError::InvalidScript("atomic-swap pieces: piece count exceeds u8 range".into())
     })?;
     validate_piece_lengths(&pieces)?;
 
-    let mut out = Vec::with_capacity(
-        counterparty_locking_script.len() + 1 + pieces_total_len(&pieces),
-    );
+    let mut out =
+        Vec::with_capacity(counterparty_locking_script.len() + 1 + pieces_total_len(&pieces));
     out.extend_from_slice(counterparty_locking_script);
     out.push(piece_count);
     append_piece_array(&mut out, &pieces);
@@ -189,8 +186,8 @@ pub fn parse_trailing_params(
     }
 
     let (counterparty_locking_script, after_script) = if tx_type == 1 {
-        let len = counterparty_script_len
-            .ok_or(TrailingParamsError::AmbiguousCounterpartyScript)?;
+        let len =
+            counterparty_script_len.ok_or(TrailingParamsError::AmbiguousCounterpartyScript)?;
         if bytes.len() < len {
             return Err(TrailingParamsError::Truncated(len));
         }
@@ -279,9 +276,9 @@ fn split_piece_array(
         }
         let len = bytes[cursor] as usize;
         cursor += 1;
-        let end = cursor.checked_add(len).ok_or(
-            TrailingParamsError::Truncated(base_offset + cursor),
-        )?;
+        let end = cursor
+            .checked_add(len)
+            .ok_or(TrailingParamsError::Truncated(base_offset + cursor))?;
         if end > bytes.len() {
             return Err(TrailingParamsError::Truncated(base_offset + end));
         }
@@ -382,22 +379,19 @@ fn locate_asset_excise_ranges(
         let (script_len, n) = read_varint(preceding_tx, cursor)?;
         cursor += n;
         let script_start = cursor;
-        let script_end =
-            checked_advance(cursor, script_len as usize, preceding_tx.len())?;
+        let script_end = checked_advance(cursor, script_len as usize, preceding_tx.len())?;
         cursor = script_end;
 
-        if next_target_pos < sorted_indices.len()
-            && sorted_indices[next_target_pos] == vout as u32
+        if next_target_pos < sorted_indices.len() && sorted_indices[next_target_pos] == vout as u32
         {
             // Within this script, excise everything past `[OP_DATA_20 + 20B owner][var2]`.
-            let excise_start =
-                excise_offset_in_script(&preceding_tx[script_start..script_end])
-                    .map(|o| script_start + o)
-                    .ok_or_else(|| {
-                        TokenError::InvalidScript(format!(
-                            "output {vout} is not STAS-shaped (missing OP_DATA_20 owner + var2)"
-                        ))
-                    })?;
+            let excise_start = excise_offset_in_script(&preceding_tx[script_start..script_end])
+                .map(|o| script_start + o)
+                .ok_or_else(|| {
+                    TokenError::InvalidScript(format!(
+                        "output {vout} is not STAS-shaped (missing OP_DATA_20 owner + var2)"
+                    ))
+                })?;
             output_excises.push((excise_start, script_end));
             next_target_pos += 1;
         }
@@ -471,8 +465,7 @@ fn skip_push_offset(script: &[u8], offset: usize) -> Option<usize> {
             if offset + 2 >= script.len() {
                 return None;
             }
-            let len =
-                u16::from_le_bytes([script[offset + 1], script[offset + 2]]) as usize;
+            let len = u16::from_le_bytes([script[offset + 1], script[offset + 2]]) as usize;
             let end = offset + 3 + len;
             if end > script.len() {
                 None
@@ -609,7 +602,7 @@ mod tests {
         let mut tx = Vec::new();
         tx.extend_from_slice(&1u32.to_le_bytes()); // version
         tx.extend(varint(1)); // input_count
-        // dummy input
+                              // dummy input
         tx.extend_from_slice(&[0u8; 32]); // prev_txid
         tx.extend_from_slice(&0u32.to_le_bytes()); // prev_vout
         tx.extend(varint(0)); // empty scriptSig
@@ -633,12 +626,7 @@ mod tests {
         let tx = fake_tx(&[other.clone(), asset_a.clone()]);
 
         let counterparty_script = vec![0xCC, 0xCC];
-        let trailing = encode_atomic_swap_trailing_params(
-            &counterparty_script,
-            &tx,
-            &[1],
-        )
-        .unwrap();
+        let trailing = encode_atomic_swap_trailing_params(&counterparty_script, &tx, &[1]).unwrap();
 
         // Trailing layout = counterparty_script || piece_count(1B) || pieces.
         // Two pieces (head, tail) → reversed → [tail, head] each prefixed by
@@ -648,9 +636,7 @@ mod tests {
         assert_eq!(trailing[2], 2u8); // piece_count = 2
 
         // Round-trip parse to validate the length-prefixed shape.
-        let parsed =
-            parse_trailing_params(&trailing, 1, Some(counterparty_script.len()))
-                .unwrap();
+        let parsed = parse_trailing_params(&trailing, 1, Some(counterparty_script.len())).unwrap();
         assert_eq!(parsed.piece_count, 2);
         assert_eq!(parsed.pieces.len(), 2);
     }
@@ -742,11 +728,12 @@ mod tests {
         let tx = fake_tx(&[asset_a.clone()]);
         let counterparty = vec![0xCAu8, 0xFE, 0xBA, 0xBE];
 
-        let encoded =
-            encode_atomic_swap_trailing_params(&counterparty, &tx, &[0]).unwrap();
-        let parsed =
-            parse_trailing_params(&encoded, 1, Some(counterparty.len())).unwrap();
-        assert_eq!(parsed.counterparty_locking_script.as_deref(), Some(&counterparty[..]));
+        let encoded = encode_atomic_swap_trailing_params(&counterparty, &tx, &[0]).unwrap();
+        let parsed = parse_trailing_params(&encoded, 1, Some(counterparty.len())).unwrap();
+        assert_eq!(
+            parsed.counterparty_locking_script.as_deref(),
+            Some(&counterparty[..])
+        );
         assert_eq!(parsed.piece_count, 2);
         assert_eq!(parsed.pieces.len(), 2);
         // Reconstruct: pieces.reverse() then join the original by stitching
@@ -824,15 +811,12 @@ mod tests {
             let counterparty = vec![0xAB; cp_len];
             let asset = fake_stas_script(0x11, 0xAA, &[0xE1]);
             let tx = fake_tx(&[asset]);
-            let encoded = encode_atomic_swap_trailing_params(
-                &counterparty,
-                &tx,
-                &[0],
-            )
-            .unwrap();
-            let parsed =
-                parse_trailing_params(&encoded, 1, Some(cp_len)).unwrap();
-            assert_eq!(parsed.counterparty_locking_script.as_deref(), Some(&counterparty[..]));
+            let encoded = encode_atomic_swap_trailing_params(&counterparty, &tx, &[0]).unwrap();
+            let parsed = parse_trailing_params(&encoded, 1, Some(cp_len)).unwrap();
+            assert_eq!(
+                parsed.counterparty_locking_script.as_deref(),
+                Some(&counterparty[..])
+            );
             assert_eq!(parsed.piece_count, 2);
         }
     }
@@ -849,8 +833,7 @@ mod tests {
         let asset = fake_stas_script(0x77, 0x55, &[0xE1, 0xE2, 0xE3]);
         let tx = fake_tx(&[asset]);
         let counterparty = vec![0x99u8];
-        let encoded =
-            encode_atomic_swap_trailing_params(&counterparty, &tx, &[0]).unwrap();
+        let encoded = encode_atomic_swap_trailing_params(&counterparty, &tx, &[0]).unwrap();
 
         // Required leading bytes: 0x99 (counterparty) || 0x02 (piece_count).
         assert_eq!(encoded[0], 0x99);

@@ -4,11 +4,11 @@
 //! authenticated encryption/decryption. Uses AES-256-GCM with a 32-byte
 //! initialization vector.
 
-use aes_gcm::{AeadInPlace, KeyInit};
+use aes::Aes256;
 use aes_gcm::aead::generic_array::typenum::U32;
 use aes_gcm::aead::generic_array::GenericArray;
 use aes_gcm::AesGcm;
-use aes::Aes256;
+use aes_gcm::{AeadInPlace, KeyInit};
 use rand::RngCore;
 
 use crate::PrimitivesError;
@@ -49,7 +49,9 @@ impl SymmetricKey {
         } else {
             padded.copy_from_slice(&key[..32]);
         }
-        SymmetricKey { key: zeroize::Zeroizing::new(padded) }
+        SymmetricKey {
+            key: zeroize::Zeroizing::new(padded),
+        }
     }
 
     /// Generate a random 32-byte symmetric key.
@@ -59,7 +61,9 @@ impl SymmetricKey {
     pub fn new_random() -> Self {
         let mut key = [0u8; 32];
         rand::rngs::OsRng.fill_bytes(&mut key);
-        SymmetricKey { key: zeroize::Zeroizing::new(key) }
+        SymmetricKey {
+            key: zeroize::Zeroizing::new(key),
+        }
     }
 
     /// Create a SymmetricKey from a Base64-encoded string.
@@ -176,8 +180,7 @@ impl SymmetricKey {
     /// `Ok(String)` containing the decrypted string.
     pub fn decrypt_string(&self, message: &[u8]) -> Result<String, PrimitivesError> {
         let plaintext = self.decrypt(message)?;
-        String::from_utf8(plaintext)
-            .map_err(|e| PrimitivesError::DecryptionError(e.to_string()))
+        String::from_utf8(plaintext).map_err(|e| PrimitivesError::DecryptionError(e.to_string()))
     }
 
     /// Get the raw key bytes.

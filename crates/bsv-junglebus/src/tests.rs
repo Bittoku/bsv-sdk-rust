@@ -185,9 +185,7 @@ async fn test_server_error_handling() {
 
     Mock::given(method("GET"))
         .and(path("/v1/transaction/get/abc123"))
-        .respond_with(
-            ResponseTemplate::new(500).set_body_string("internal server error"),
-        )
+        .respond_with(ResponseTemplate::new(500).set_body_string("internal server error"))
         .mount(&server)
         .await;
 

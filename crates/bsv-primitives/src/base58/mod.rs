@@ -5,8 +5,8 @@
 //! double-SHA-256 checksum) used for WIF private keys and Bitcoin
 //! addresses.
 
-use crate::PrimitivesError;
 use crate::hash::sha256d;
+use crate::PrimitivesError;
 
 /// Bitcoin's modified Base58 alphabet.
 ///
@@ -24,7 +24,9 @@ const _ALPHABET: &[u8] = b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstu
 /// # Returns
 /// A Base58-encoded string.
 pub fn encode(data: &[u8]) -> String {
-    bs58::encode(data).with_alphabet(bs58::Alphabet::BITCOIN).into_string()
+    bs58::encode(data)
+        .with_alphabet(bs58::Alphabet::BITCOIN)
+        .into_string()
 }
 
 /// Decode a Base58 string to a byte vector.
@@ -74,7 +76,7 @@ pub fn check_decode(s: &str) -> Result<Vec<u8>, PrimitivesError> {
     let decoded = decode(s)?;
     if decoded.len() < 4 {
         return Err(PrimitivesError::InvalidBase58(
-            "data too short for checksum".to_string()
+            "data too short for checksum".to_string(),
         ));
     }
     let (payload, checksum) = decoded.split_at(decoded.len() - 4);

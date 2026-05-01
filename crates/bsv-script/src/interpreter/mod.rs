@@ -30,6 +30,11 @@ pub mod config;
 pub mod error;
 /// Script verification flags (bitmask).
 pub mod flags;
+mod ops_arithmetic;
+mod ops_crypto;
+mod ops_data;
+mod ops_flow;
+mod ops_stack;
 /// Parsed opcode representation and script parser.
 pub mod parsed_opcode;
 /// Script number arithmetic with Bitcoin consensus rules.
@@ -38,11 +43,6 @@ pub mod scriptnum;
 pub mod stack;
 /// Script execution thread — the core interpreter engine.
 pub mod thread;
-mod ops_arithmetic;
-mod ops_crypto;
-mod ops_data;
-mod ops_flow;
-mod ops_stack;
 
 pub use config::Config;
 pub use error::{InterpreterError, InterpreterErrorCode};
@@ -184,8 +184,8 @@ mod tests {
         // Standard P2PKH pattern (without actual sig verification)
         // Just test the hash path: push data, dup, hash160, push expected, equalverify, checksig would need tx
         // Simplified: push some bytes, OP_DUP, OP_HASH160, push expected_hash, OP_EQUALVERIFY, OP_1
-        use sha2::{Sha256, Digest as D2};
-        use ripemd::{Ripemd160, Digest};
+        use ripemd::{Digest, Ripemd160};
+        use sha2::{Digest as D2, Sha256};
 
         let pubkey = vec![0x04; 33]; // fake pubkey
         let sha = Sha256::digest(&pubkey);
@@ -205,7 +205,11 @@ mod tests {
         let lock = Script::from_bytes(&lock_bytes);
         let engine = Engine::new();
         let result = engine.execute(&unlock, &lock, ScriptFlags::NONE, None, 0);
-        assert!(result.is_ok(), "P2PKH-like hash verification should pass: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "P2PKH-like hash verification should pass: {:?}",
+            result.err()
+        );
     }
 
     #[test]
@@ -218,7 +222,11 @@ mod tests {
         let engine = Engine::new();
         let result = engine.execute(&unlock, &lock, ScriptFlags::NONE, None, 0);
         // Stack should have [2], which is truthy → success
-        assert!(result.is_ok(), "IF/ELSE/ENDIF should work: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "IF/ELSE/ENDIF should work: {:?}",
+            result.err()
+        );
     }
 
     #[test]
@@ -227,7 +235,10 @@ mod tests {
         let lock = Script::from_bytes(&[OP_0, OP_NOTIF, OP_1, OP_ELSE, OP_0, OP_ENDIF]);
         let engine = Engine::new();
         let result = engine.execute(&unlock, &lock, ScriptFlags::NONE, None, 0);
-        assert!(result.is_ok(), "NOTIF with false should execute first branch");
+        assert!(
+            result.is_ok(),
+            "NOTIF with false should execute first branch"
+        );
     }
 
     #[test]
@@ -244,14 +255,12 @@ mod tests {
         let unlock = Script::from_bytes(&[OP_1]);
         let lock = Script::from_bytes(&[OP_1, OP_RETURN, 0x01, 0x02, 0x03]);
         let engine = Engine::new();
-        let result = engine.execute(
-            &unlock,
-            &lock,
-            ScriptFlags::UTXO_AFTER_GENESIS,
-            None,
-            0,
+        let result = engine.execute(&unlock, &lock, ScriptFlags::UTXO_AFTER_GENESIS, None, 0);
+        assert!(
+            result.is_ok(),
+            "OP_RETURN after genesis with OP_1 before should succeed: {:?}",
+            result.err()
         );
-        assert!(result.is_ok(), "OP_RETURN after genesis with OP_1 before should succeed: {:?}", result.err());
     }
 
     #[test]
@@ -274,7 +283,11 @@ mod tests {
         let lock = Script::from_bytes(&[OP_SIZE, OP_3, OP_EQUALVERIFY, OP_1]);
         let engine = Engine::new();
         let result = engine.execute(&unlock, &lock, ScriptFlags::NONE, None, 0);
-        assert!(result.is_ok(), "SIZE of 3-byte element should be 3: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "SIZE of 3-byte element should be 3: {:?}",
+            result.err()
+        );
     }
 
     #[test]
@@ -283,13 +296,7 @@ mod tests {
         let unlock = Script::from_bytes(&[0x01, 0xaa, 0x01, 0xbb]);
         let lock = Script::from_bytes(&[OP_CAT, 0x02, 0xaa, 0xbb, OP_EQUAL]);
         let engine = Engine::new();
-        let result = engine.execute(
-            &unlock,
-            &lock,
-            ScriptFlags::UTXO_AFTER_GENESIS,
-            None,
-            0,
-        );
+        let result = engine.execute(&unlock, &lock, ScriptFlags::UTXO_AFTER_GENESIS, None, 0);
         assert!(result.is_ok(), "CAT should concatenate: {:?}", result.err());
     }
 
@@ -297,15 +304,10 @@ mod tests {
     fn test_op_split() {
         // Split [aa, bb] at position 1
         let unlock = Script::from_bytes(&[0x02, 0xaa, 0xbb, OP_1]);
-        let lock = Script::from_bytes(&[OP_SPLIT, 0x01, 0xbb, OP_EQUALVERIFY, 0x01, 0xaa, OP_EQUAL]);
+        let lock =
+            Script::from_bytes(&[OP_SPLIT, 0x01, 0xbb, OP_EQUALVERIFY, 0x01, 0xaa, OP_EQUAL]);
         let engine = Engine::new();
-        let result = engine.execute(
-            &unlock,
-            &lock,
-            ScriptFlags::UTXO_AFTER_GENESIS,
-            None,
-            0,
-        );
+        let result = engine.execute(&unlock, &lock, ScriptFlags::UTXO_AFTER_GENESIS, None, 0);
         assert!(result.is_ok(), "SPLIT should work: {:?}", result.err());
     }
 
@@ -316,7 +318,11 @@ mod tests {
         let lock = Script::from_bytes(&[OP_NEGATE, OP_1NEGATE, OP_EQUAL]);
         let engine = Engine::new();
         let result = engine.execute(&unlock, &lock, ScriptFlags::NONE, None, 0);
-        assert!(result.is_ok(), "NEGATE(1) should equal -1: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "NEGATE(1) should equal -1: {:?}",
+            result.err()
+        );
     }
 
     #[test]
@@ -336,7 +342,11 @@ mod tests {
         let lock = Script::from_bytes(&[OP_NOT]);
         let engine = Engine::new();
         let result = engine.execute(&unlock, &lock, ScriptFlags::NONE, None, 0);
-        assert!(result.is_ok(), "NOT(0) should be 1 (truthy): {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "NOT(0) should be 1 (truthy): {:?}",
+            result.err()
+        );
     }
 
     #[test]
@@ -346,7 +356,11 @@ mod tests {
         let lock = Script::from_bytes(&[OP_WITHIN]);
         let engine = Engine::new();
         let result = engine.execute(&unlock, &lock, ScriptFlags::NONE, None, 0);
-        assert!(result.is_ok(), "3 WITHIN [2,5) should be true: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "3 WITHIN [2,5) should be true: {:?}",
+            result.err()
+        );
     }
 
     #[test]
@@ -355,13 +369,7 @@ mod tests {
         let unlock = Script::from_bytes(&[OP_3, OP_4]);
         let lock = Script::from_bytes(&[OP_MUL, OP_12, OP_EQUAL]);
         let engine = Engine::new();
-        let result = engine.execute(
-            &unlock,
-            &lock,
-            ScriptFlags::UTXO_AFTER_GENESIS,
-            None,
-            0,
-        );
+        let result = engine.execute(&unlock, &lock, ScriptFlags::UTXO_AFTER_GENESIS, None, 0);
         assert!(result.is_ok(), "3 * 4 should equal 12: {:?}", result.err());
     }
 
@@ -371,13 +379,7 @@ mod tests {
         let unlock = Script::from_bytes(&[OP_6, OP_3]);
         let lock = Script::from_bytes(&[OP_DIV, OP_2, OP_EQUAL]);
         let engine = Engine::new();
-        let result = engine.execute(
-            &unlock,
-            &lock,
-            ScriptFlags::UTXO_AFTER_GENESIS,
-            None,
-            0,
-        );
+        let result = engine.execute(&unlock, &lock, ScriptFlags::UTXO_AFTER_GENESIS, None, 0);
         assert!(result.is_ok(), "6 / 3 should equal 2: {:?}", result.err());
     }
 
@@ -386,13 +388,7 @@ mod tests {
         let unlock = Script::from_bytes(&[OP_6, OP_0]);
         let lock = Script::from_bytes(&[OP_DIV]);
         let engine = Engine::new();
-        let result = engine.execute(
-            &unlock,
-            &lock,
-            ScriptFlags::UTXO_AFTER_GENESIS,
-            None,
-            0,
-        );
+        let result = engine.execute(&unlock, &lock, ScriptFlags::UTXO_AFTER_GENESIS, None, 0);
         assert!(result.is_err(), "Division by zero should fail");
         let err = result.unwrap_err();
         assert_eq!(err.code, InterpreterErrorCode::DivideByZero);
@@ -404,13 +400,7 @@ mod tests {
         let unlock = Script::from_bytes(&[OP_7, OP_3]);
         let lock = Script::from_bytes(&[OP_MOD, OP_1, OP_EQUAL]);
         let engine = Engine::new();
-        let result = engine.execute(
-            &unlock,
-            &lock,
-            ScriptFlags::UTXO_AFTER_GENESIS,
-            None,
-            0,
-        );
+        let result = engine.execute(&unlock, &lock, ScriptFlags::UTXO_AFTER_GENESIS, None, 0);
         assert!(result.is_ok(), "7 % 3 should equal 1: {:?}", result.err());
     }
 
@@ -435,7 +425,9 @@ mod tests {
         let unlock = Script::from_bytes(&[OP_5, OP_5]);
         let lock = Script::from_bytes(&[OP_NUMEQUAL]);
         let engine = Engine::new();
-        assert!(engine.execute(&unlock, &lock, ScriptFlags::NONE, None, 0).is_ok());
+        assert!(engine
+            .execute(&unlock, &lock, ScriptFlags::NONE, None, 0)
+            .is_ok());
     }
 
     #[test]
@@ -443,7 +435,9 @@ mod tests {
         let unlock = Script::from_bytes(&[OP_3, OP_5]);
         let lock = Script::from_bytes(&[OP_LESSTHAN]);
         let engine = Engine::new();
-        assert!(engine.execute(&unlock, &lock, ScriptFlags::NONE, None, 0).is_ok());
+        assert!(engine
+            .execute(&unlock, &lock, ScriptFlags::NONE, None, 0)
+            .is_ok());
     }
 
     #[test]
@@ -453,17 +447,34 @@ mod tests {
         let lock = Script::from_bytes(&[OP_SHA256, OP_SIZE, 0x01, 0x20, OP_EQUALVERIFY, OP_1]);
         let engine = Engine::new();
         let result = engine.execute(&unlock, &lock, ScriptFlags::NONE, None, 0);
-        assert!(result.is_ok(), "SHA256 should produce 32 bytes: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "SHA256 should produce 32 bytes: {:?}",
+            result.err()
+        );
     }
 
     #[test]
     fn test_op_pick_roll() {
         // PICK: [1, 2, 3], PICK(2) -> [1, 2, 3, 1]
         let unlock = Script::from_bytes(&[OP_1, OP_2, OP_3, OP_2]);
-        let lock = Script::from_bytes(&[OP_PICK, OP_1, OP_EQUALVERIFY, OP_3, OP_EQUALVERIFY, OP_2, OP_EQUALVERIFY, OP_1]);
+        let lock = Script::from_bytes(&[
+            OP_PICK,
+            OP_1,
+            OP_EQUALVERIFY,
+            OP_3,
+            OP_EQUALVERIFY,
+            OP_2,
+            OP_EQUALVERIFY,
+            OP_1,
+        ]);
         let engine = Engine::new();
         let result = engine.execute(&unlock, &lock, ScriptFlags::NONE, None, 0);
-        assert!(result.is_ok(), "PICK should copy element: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "PICK should copy element: {:?}",
+            result.err()
+        );
     }
 
     #[test]
@@ -472,7 +483,11 @@ mod tests {
         let lock = Script::from_bytes(&[OP_TOALTSTACK, OP_FROMALTSTACK, OP_5, OP_EQUAL]);
         let engine = Engine::new();
         let result = engine.execute(&unlock, &lock, ScriptFlags::NONE, None, 0);
-        assert!(result.is_ok(), "TOALTSTACK/FROMALTSTACK: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "TOALTSTACK/FROMALTSTACK: {:?}",
+            result.err()
+        );
     }
 
     #[test]
@@ -482,7 +497,10 @@ mod tests {
         let engine = Engine::new();
         let result = engine.execute(&unlock, &lock, ScriptFlags::NONE, None, 0);
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err().code, InterpreterErrorCode::DisabledOpcode);
+        assert_eq!(
+            result.unwrap_err().code,
+            InterpreterErrorCode::DisabledOpcode
+        );
     }
 
     #[test]
@@ -491,14 +509,12 @@ mod tests {
         let unlock = Script::from_bytes(&[0x01, 0x00]);
         let lock = Script::from_bytes(&[OP_INVERT, 0x01, 0xff, OP_EQUAL]);
         let engine = Engine::new();
-        let result = engine.execute(
-            &unlock,
-            &lock,
-            ScriptFlags::UTXO_AFTER_GENESIS,
-            None,
-            0,
+        let result = engine.execute(&unlock, &lock, ScriptFlags::UTXO_AFTER_GENESIS, None, 0);
+        assert!(
+            result.is_ok(),
+            "INVERT should flip bits: {:?}",
+            result.err()
         );
-        assert!(result.is_ok(), "INVERT should flip bits: {:?}", result.err());
     }
 
     #[test]
@@ -507,35 +523,23 @@ mod tests {
         let unlock = Script::from_bytes(&[0x01, 0xff, 0x01, 0x0f]);
         let lock = Script::from_bytes(&[OP_AND, 0x01, 0x0f, OP_EQUAL]);
         let engine = Engine::new();
-        assert!(engine.execute(
-            &unlock,
-            &lock,
-            ScriptFlags::UTXO_AFTER_GENESIS,
-            None,
-            0,
-        ).is_ok());
+        assert!(engine
+            .execute(&unlock, &lock, ScriptFlags::UTXO_AFTER_GENESIS, None, 0,)
+            .is_ok());
 
         // OR: 0xf0 OR 0x0f = 0xff
         let unlock2 = Script::from_bytes(&[0x01, 0xf0, 0x01, 0x0f]);
         let lock2 = Script::from_bytes(&[OP_OR, 0x01, 0xff, OP_EQUAL]);
-        assert!(engine.execute(
-            &unlock2,
-            &lock2,
-            ScriptFlags::UTXO_AFTER_GENESIS,
-            None,
-            0,
-        ).is_ok());
+        assert!(engine
+            .execute(&unlock2, &lock2, ScriptFlags::UTXO_AFTER_GENESIS, None, 0,)
+            .is_ok());
 
         // XOR: 0xff XOR 0xff = 0x00
         let unlock3 = Script::from_bytes(&[0x01, 0xff, 0x01, 0xff]);
         let lock3 = Script::from_bytes(&[OP_XOR, 0x01, 0x00, OP_EQUAL]);
-        assert!(engine.execute(
-            &unlock3,
-            &lock3,
-            ScriptFlags::UTXO_AFTER_GENESIS,
-            None,
-            0,
-        ).is_ok());
+        assert!(engine
+            .execute(&unlock3, &lock3, ScriptFlags::UTXO_AFTER_GENESIS, None, 0,)
+            .is_ok());
     }
 
     #[test]
@@ -544,9 +548,12 @@ mod tests {
         let unlock = Script::from_bytes(&[OP_1, OP_2, OP_3]);
         let lock = Script::from_bytes(&[
             OP_ROT,
-            OP_1, OP_EQUALVERIFY,   // top was 3, after ROT top is 1
-            OP_3, OP_EQUALVERIFY,
-            OP_2,OP_EQUAL,
+            OP_1,
+            OP_EQUALVERIFY, // top was 3, after ROT top is 1
+            OP_3,
+            OP_EQUALVERIFY,
+            OP_2,
+            OP_EQUAL,
         ]);
         let engine = Engine::new();
         let result = engine.execute(&unlock, &lock, ScriptFlags::NONE, None, 0);
@@ -559,9 +566,12 @@ mod tests {
         let unlock = Script::from_bytes(&[OP_1, OP_2]);
         let lock = Script::from_bytes(&[
             OP_TUCK,
-            OP_2, OP_EQUALVERIFY,
-            OP_1, OP_EQUALVERIFY,
-            OP_2, OP_EQUAL,
+            OP_2,
+            OP_EQUALVERIFY,
+            OP_1,
+            OP_EQUALVERIFY,
+            OP_2,
+            OP_EQUAL,
         ]);
         let engine = Engine::new();
         let result = engine.execute(&unlock, &lock, ScriptFlags::NONE, None, 0);
@@ -573,25 +583,25 @@ mod tests {
         let unlock = Script::from_bytes(&[OP_1, OP_2]);
         let lock = Script::from_bytes(&[
             OP_2DUP,
-            OP_2, OP_EQUALVERIFY,
-            OP_1, OP_EQUALVERIFY,
-            OP_2, OP_EQUALVERIFY,
-            OP_1, OP_EQUAL,
+            OP_2,
+            OP_EQUALVERIFY,
+            OP_1,
+            OP_EQUALVERIFY,
+            OP_2,
+            OP_EQUALVERIFY,
+            OP_1,
+            OP_EQUAL,
         ]);
         let engine = Engine::new();
-        assert!(engine.execute(&unlock, &lock, ScriptFlags::NONE, None, 0).is_ok());
+        assert!(engine
+            .execute(&unlock, &lock, ScriptFlags::NONE, None, 0)
+            .is_ok());
     }
 
     #[test]
     fn test_empty_both_scripts() {
         let engine = Engine::new();
-        let result = engine.execute(
-            &Script::new(),
-            &Script::new(),
-            ScriptFlags::NONE,
-            None,
-            0,
-        );
+        let result = engine.execute(&Script::new(), &Script::new(), ScriptFlags::NONE, None, 0);
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().code, InterpreterErrorCode::EvalFalse);
     }
@@ -601,7 +611,9 @@ mod tests {
         let unlock = Script::from_bytes(&[OP_5, OP_3]);
         let lock = Script::from_bytes(&[OP_GREATERTHAN]);
         let engine = Engine::new();
-        assert!(engine.execute(&unlock, &lock, ScriptFlags::NONE, None, 0).is_ok());
+        assert!(engine
+            .execute(&unlock, &lock, ScriptFlags::NONE, None, 0)
+            .is_ok());
     }
 
     #[test]
@@ -610,12 +622,16 @@ mod tests {
         let unlock = Script::from_bytes(&[OP_3, OP_5]);
         let lock = Script::from_bytes(&[OP_MIN, OP_3, OP_EQUAL]);
         let engine = Engine::new();
-        assert!(engine.execute(&unlock, &lock, ScriptFlags::NONE, None, 0).is_ok());
+        assert!(engine
+            .execute(&unlock, &lock, ScriptFlags::NONE, None, 0)
+            .is_ok());
 
         // MAX(3, 5) = 5
         let unlock2 = Script::from_bytes(&[OP_3, OP_5]);
         let lock2 = Script::from_bytes(&[OP_MAX, OP_5, OP_EQUAL]);
-        assert!(engine.execute(&unlock2, &lock2, ScriptFlags::NONE, None, 0).is_ok());
+        assert!(engine
+            .execute(&unlock2, &lock2, ScriptFlags::NONE, None, 0)
+            .is_ok());
     }
 
     #[test]
@@ -657,7 +673,9 @@ mod tests {
         let unlock = Script::from_bytes(&[OP_1]);
         let lock = Script::from_bytes(&[OP_IFDUP, OP_EQUAL]);
         let engine = Engine::new();
-        assert!(engine.execute(&unlock, &lock, ScriptFlags::NONE, None, 0).is_ok());
+        assert!(engine
+            .execute(&unlock, &lock, ScriptFlags::NONE, None, 0)
+            .is_ok());
     }
 
     #[test]
@@ -682,13 +700,7 @@ mod tests {
         let unlock = Script::from_bytes(&[0x01, 0x01, OP_1]);
         let lock = Script::from_bytes(&[OP_LSHIFT, 0x01, 0x02, OP_EQUAL]);
         let engine = Engine::new();
-        let result = engine.execute(
-            &unlock,
-            &lock,
-            ScriptFlags::UTXO_AFTER_GENESIS,
-            None,
-            0,
-        );
+        let result = engine.execute(&unlock, &lock, ScriptFlags::UTXO_AFTER_GENESIS, None, 0);
         assert!(result.is_ok(), "LSHIFT should work: {:?}", result.err());
     }
 }

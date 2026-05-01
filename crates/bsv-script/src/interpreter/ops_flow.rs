@@ -32,7 +32,10 @@ impl<'a> Thread<'a> {
         ))
     }
 
-    pub(crate) fn op_ver_conditional(&mut self, pop: &ParsedOpcode) -> Result<(), InterpreterError> {
+    pub(crate) fn op_ver_conditional(
+        &mut self,
+        pop: &ParsedOpcode,
+    ) -> Result<(), InterpreterError> {
         if self.after_genesis && !self.should_exec(pop) {
             return Ok(());
         }
@@ -196,12 +199,8 @@ impl<'a> Thread<'a> {
         })?;
 
         let so = self.dstack.peek_byte_array(0)?;
-        let lock_time = ScriptNumber::from_bytes(
-            &so,
-            5,
-            self.dstack.verify_minimal_data,
-            self.after_genesis,
-        )?;
+        let lock_time =
+            ScriptNumber::from_bytes(&so, 5, self.dstack.verify_minimal_data, self.after_genesis)?;
 
         if lock_time.less_than_int(0) {
             return Err(InterpreterError::new(
@@ -242,12 +241,8 @@ impl<'a> Thread<'a> {
         })?;
 
         let so = self.dstack.peek_byte_array(0)?;
-        let stack_seq = ScriptNumber::from_bytes(
-            &so,
-            5,
-            self.dstack.verify_minimal_data,
-            self.after_genesis,
-        )?;
+        let stack_seq =
+            ScriptNumber::from_bytes(&so, 5, self.dstack.verify_minimal_data, self.after_genesis)?;
 
         if stack_seq.less_than_int(0) {
             return Err(InterpreterError::new(

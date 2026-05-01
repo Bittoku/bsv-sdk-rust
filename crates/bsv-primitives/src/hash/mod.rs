@@ -5,9 +5,9 @@
 //! These hash functions follow the conventions established by the
 //! Go BSV SDK (`go-sdk/primitives/hash`).
 
-use sha2::{Sha256, Sha512, Digest};
-use ripemd::Ripemd160;
 use hmac::{Hmac, Mac};
+use ripemd::Ripemd160;
+use sha2::{Digest, Sha256, Sha512};
 
 /// Compute SHA-256 hash of the input data.
 ///
@@ -91,8 +91,7 @@ pub fn sha512(data: &[u8]) -> [u8; 64] {
 /// A 32-byte HMAC-SHA256 tag.
 pub fn sha256_hmac(key: &[u8], data: &[u8]) -> [u8; 32] {
     type HmacSha256 = Hmac<Sha256>;
-    let mut mac = HmacSha256::new_from_slice(key)
-        .expect("HMAC accepts any key length");
+    let mut mac = HmacSha256::new_from_slice(key).expect("HMAC accepts any key length");
     mac.update(data);
     let result = mac.finalize();
     let mut output = [0u8; 32];
@@ -110,8 +109,7 @@ pub fn sha256_hmac(key: &[u8], data: &[u8]) -> [u8; 32] {
 /// A 64-byte HMAC-SHA512 tag.
 pub fn sha512_hmac(key: &[u8], data: &[u8]) -> [u8; 64] {
     type HmacSha512 = Hmac<Sha512>;
-    let mut mac = HmacSha512::new_from_slice(key)
-        .expect("HMAC accepts any key length");
+    let mut mac = HmacSha512::new_from_slice(key).expect("HMAC accepts any key length");
     mac.update(data);
     let result = mac.finalize();
     let mut output = [0u8; 64];
@@ -237,8 +235,9 @@ mod tests {
     fn test_sha256_hmac_nist_1() {
         let key = hex::decode(
             "000102030405060708090A0B0C0D0E0F101112131415161718191A1B1C1D1E1F\
-             202122232425262728292A2B2C2D2E2F303132333435363738393A3B3C3D3E3F"
-        ).unwrap();
+             202122232425262728292A2B2C2D2E2F303132333435363738393A3B3C3D3E3F",
+        )
+        .unwrap();
         let msg = b"Sample message for keylen=blocklen";
         let mac = sha256_hmac(&key, msg);
         assert_eq!(
@@ -249,9 +248,8 @@ mod tests {
 
     #[test]
     fn test_sha256_hmac_nist_2() {
-        let key = hex::decode(
-            "000102030405060708090A0B0C0D0E0F101112131415161718191A1B1C1D1E1F"
-        ).unwrap();
+        let key = hex::decode("000102030405060708090A0B0C0D0E0F101112131415161718191A1B1C1D1E1F")
+            .unwrap();
         let msg = b"Sample message for keylen<blocklen";
         let mac = sha256_hmac(&key, msg);
         assert_eq!(

@@ -22,41 +22,69 @@ pub struct Config {
 impl Config {
     /// Create a configuration with pre-genesis (legacy) limits.
     pub fn before_genesis() -> Self {
-        Config { after_genesis: false }
+        Config {
+            after_genesis: false,
+        }
     }
 
     /// Create a configuration with post-genesis (relaxed) limits.
     pub fn after_genesis() -> Self {
-        Config { after_genesis: true }
+        Config {
+            after_genesis: true,
+        }
     }
 
     /// Return the maximum number of non-push opcodes allowed per script.
     pub fn max_ops(&self) -> usize {
-        if self.after_genesis { i32::MAX as usize } else { MAX_OPS_BEFORE_GENESIS }
+        if self.after_genesis {
+            i32::MAX as usize
+        } else {
+            MAX_OPS_BEFORE_GENESIS
+        }
     }
 
     /// Return the maximum combined stack size (data + alt).
     pub fn max_stack_size(&self) -> usize {
-        if self.after_genesis { i32::MAX as usize } else { MAX_STACK_SIZE_BEFORE_GENESIS }
+        if self.after_genesis {
+            i32::MAX as usize
+        } else {
+            MAX_STACK_SIZE_BEFORE_GENESIS
+        }
     }
 
     /// Return the maximum script byte size.
     pub fn max_script_size(&self) -> usize {
-        if self.after_genesis { i32::MAX as usize } else { MAX_SCRIPT_SIZE_BEFORE_GENESIS }
+        if self.after_genesis {
+            i32::MAX as usize
+        } else {
+            MAX_SCRIPT_SIZE_BEFORE_GENESIS
+        }
     }
 
     /// Return the maximum byte size for a single data element.
     pub fn max_script_element_size(&self) -> usize {
-        if self.after_genesis { i32::MAX as usize } else { MAX_SCRIPT_ELEMENT_SIZE_BEFORE_GENESIS }
+        if self.after_genesis {
+            i32::MAX as usize
+        } else {
+            MAX_SCRIPT_ELEMENT_SIZE_BEFORE_GENESIS
+        }
     }
 
     /// Return the maximum byte length for numeric script values.
     pub fn max_script_number_length(&self) -> usize {
-        if self.after_genesis { 750 * 1000 } else { MAX_SCRIPT_NUMBER_LENGTH_BEFORE_GENESIS }
+        if self.after_genesis {
+            750 * 1000
+        } else {
+            MAX_SCRIPT_NUMBER_LENGTH_BEFORE_GENESIS
+        }
     }
 
     /// Return the maximum number of public keys in a multisig operation.
     pub fn max_pub_keys_per_multisig(&self) -> usize {
-        if self.after_genesis { i32::MAX as usize } else { MAX_PUB_KEYS_PER_MULTISIG_BEFORE_GENESIS }
+        if self.after_genesis {
+            i32::MAX as usize
+        } else {
+            MAX_PUB_KEYS_PER_MULTISIG_BEFORE_GENESIS
+        }
     }
 }

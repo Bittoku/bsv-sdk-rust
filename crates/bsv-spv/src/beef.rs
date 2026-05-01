@@ -116,9 +116,9 @@ impl Beef {
 
         let mut reader = BsvReader::new(reader_data);
 
-        let version = reader.read_u32_le().map_err(|e| {
-            SpvError::InvalidBeef(format!("reading version: {}", e))
-        })?;
+        let version = reader
+            .read_u32_le()
+            .map_err(|e| SpvError::InvalidBeef(format!("reading version: {}", e)))?;
 
         if version != BEEF_V1 && version != BEEF_V2 {
             return Err(SpvError::InvalidBeef(format!(
@@ -134,12 +134,19 @@ impl Beef {
             let mut beef_txs = HashMap::new();
             for (tx, bump_idx) in txs {
                 let txid = tx_id_hash(&tx);
-                beef_txs.insert(txid, BeefTx {
-                    data_format: if bump_idx.is_some() { DataFormat::RawTxAndBumpIndex } else { DataFormat::RawTx },
-                    known_txid: None,
-                    transaction: Some(tx),
-                    bump_index: bump_idx.unwrap_or(0),
-                });
+                beef_txs.insert(
+                    txid,
+                    BeefTx {
+                        data_format: if bump_idx.is_some() {
+                            DataFormat::RawTxAndBumpIndex
+                        } else {
+                            DataFormat::RawTx
+                        },
+                        known_txid: None,
+                        transaction: Some(tx),
+                        bump_index: bump_idx.unwrap_or(0),
+                    },
+                );
             }
             Ok(Beef {
                 version,
@@ -157,9 +164,9 @@ impl Beef {
     }
 
     fn read_bumps(reader: &mut BsvReader) -> Result<Vec<MerklePath>, SpvError> {
-        let n = reader.read_varint().map_err(|e| {
-            SpvError::InvalidBeef(format!("reading bump count: {}", e))
-        })?;
+        let n = reader
+            .read_varint()
+            .map_err(|e| SpvError::InvalidBeef(format!("reading bump count: {}", e)))?;
         let mut bumps = Vec::with_capacity(n.value() as usize);
         for _ in 0..n.value() {
             bumps.push(MerklePath::from_reader(reader)?);
@@ -171,43 +178,44 @@ impl Beef {
         reader: &mut BsvReader,
         _bumps: &[MerklePath],
     ) -> Result<HashMap<Hash, BeefTx>, SpvError> {
-        let n = reader.read_varint().map_err(|e| {
-            SpvError::InvalidBeef(format!("reading tx count: {}", e))
-        })?;
+        let n = reader
+            .read_varint()
+            .map_err(|e| SpvError::InvalidBeef(format!("reading tx count: {}", e)))?;
 
         let mut txs = HashMap::new();
         for _ in 0..n.value() {
-            let format_byte = reader.read_u8().map_err(|e| {
-                SpvError::InvalidBeef(format!("reading format byte: {}", e))
-            })?;
+            let format_byte = reader
+                .read_u8()
+                .map_err(|e| SpvError::InvalidBeef(format!("reading format byte: {}", e)))?;
             let data_format = DataFormat::try_from(format_byte)?;
 
             if data_format == DataFormat::TxIDOnly {
-                let hash_bytes = reader.read_bytes(32).map_err(|e| {
-                    SpvError::InvalidBeef(format!("reading txid: {}", e))
-                })?;
-                let txid = Hash::from_bytes(hash_bytes).map_err(|e| {
-                    SpvError::InvalidBeef(format!("invalid txid: {}", e))
-                })?;
-                txs.insert(txid, BeefTx {
-                    data_format,
-                    known_txid: Some(txid),
-                    transaction: None,
-                    bump_index: 0,
-                });
+                let hash_bytes = reader
+                    .read_bytes(32)
+                    .map_err(|e| SpvError::InvalidBeef(format!("reading txid: {}", e)))?;
+                let txid = Hash::from_bytes(hash_bytes)
+                    .map_err(|e| SpvError::InvalidBeef(format!("invalid txid: {}", e)))?;
+                txs.insert(
+                    txid,
+                    BeefTx {
+                        data_format,
+                        known_txid: Some(txid),
+                        transaction: None,
+                        bump_index: 0,
+                    },
+                );
             } else {
                 let bump_index = if data_format == DataFormat::RawTxAndBumpIndex {
-                    let idx = reader.read_varint().map_err(|e| {
-                        SpvError::InvalidBeef(format!("reading bump index: {}", e))
-                    })?;
+                    let idx = reader
+                        .read_varint()
+                        .map_err(|e| SpvError::InvalidBeef(format!("reading bump index: {}", e)))?;
                     idx.value() as usize
                 } else {
                     0
                 };
 
-                let tx = Transaction::read_from(reader).map_err(|e| {
-                    SpvError::InvalidBeef(format!("reading transaction: {}", e))
-                })?;
+                let tx = Transaction::read_from(reader)
+                    .map_err(|e| SpvError::InvalidBeef(format!("reading transaction: {}", e)))?;
 
                 let txid = tx_id_hash(&tx);
 
@@ -216,12 +224,15 @@ impl Beef {
                 //  so we skip source_transaction linking for now - BEEF format
                 //  stores txs in dependency order)
 
-                txs.insert(txid, BeefTx {
-                    data_format,
-                    known_txid: None,
-                    transaction: Some(tx),
-                    bump_index,
-                });
+                txs.insert(
+                    txid,
+                    BeefTx {
+                        data_format,
+                        known_txid: None,
+                        transaction: Some(tx),
+                        bump_index,
+                    },
+                );
             }
         }
 
@@ -233,27 +244,30 @@ impl Beef {
         reader: &mut BsvReader,
         bumps: &[MerklePath],
     ) -> Result<Vec<(Transaction, Option<usize>)>, SpvError> {
-        let n = reader.read_varint().map_err(|e| {
-            SpvError::InvalidBeef(format!("reading tx count: {}", e))
-        })?;
+        let n = reader
+            .read_varint()
+            .map_err(|e| SpvError::InvalidBeef(format!("reading tx count: {}", e)))?;
 
         let mut txs = Vec::new();
 
         for _ in 0..n.value() {
-            let tx = Transaction::read_from(reader).map_err(|e| {
-                SpvError::InvalidBeef(format!("reading transaction: {}", e))
-            })?;
+            let tx = Transaction::read_from(reader)
+                .map_err(|e| SpvError::InvalidBeef(format!("reading transaction: {}", e)))?;
 
-            let has_bump = reader.read_u8().map_err(|e| {
-                SpvError::InvalidBeef(format!("reading has_bump: {}", e))
-            })?;
+            let has_bump = reader
+                .read_u8()
+                .map_err(|e| SpvError::InvalidBeef(format!("reading has_bump: {}", e)))?;
 
             let bump_idx = if has_bump != 0 {
-                let path_index = reader.read_varint().map_err(|e| {
-                    SpvError::InvalidBeef(format!("reading path index: {}", e))
-                })?;
+                let path_index = reader
+                    .read_varint()
+                    .map_err(|e| SpvError::InvalidBeef(format!("reading path index: {}", e)))?;
                 let idx = path_index.value() as usize;
-                if idx < bumps.len() { Some(idx) } else { None }
+                if idx < bumps.len() {
+                    Some(idx)
+                } else {
+                    None
+                }
             } else {
                 None
             };
@@ -278,9 +292,13 @@ impl Beef {
             ordered: &mut Vec<Vec<u8>>,
         ) -> Result<(), SpvError> {
             let txid = if tx.data_format == DataFormat::TxIDOnly {
-                tx.known_txid.ok_or_else(|| SpvError::InvalidBeef("txid is nil".to_string()))?
+                tx.known_txid
+                    .ok_or_else(|| SpvError::InvalidBeef("txid is nil".to_string()))?
             } else {
-                let t = tx.transaction.as_ref().ok_or_else(|| SpvError::InvalidBeef("transaction is nil".to_string()))?;
+                let t = tx
+                    .transaction
+                    .as_ref()
+                    .ok_or_else(|| SpvError::InvalidBeef("transaction is nil".to_string()))?;
                 tx_id_hash(t)
             };
 
@@ -571,7 +589,8 @@ mod tests {
     #[test]
     fn test_find_transaction() {
         let beef = Beef::from_hex(BEEF_SET).unwrap();
-        let tx = beef.find_transaction("b1fc0f44ba629dbdffab9e34fcc4faf9dbde3560a7365c55c26fe4daab052aac");
+        let tx = beef
+            .find_transaction("b1fc0f44ba629dbdffab9e34fcc4faf9dbde3560a7365c55c26fe4daab052aac");
         // The txid is stored in internal byte order in the map key, so we search by iterating
         // This specific txid may or may not be found depending on byte order handling
         // Let's just verify the beef parsed correctly

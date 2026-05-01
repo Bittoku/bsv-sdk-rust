@@ -68,7 +68,8 @@ impl KeyDeriver {
             counterparty.clone()
         };
 
-        let derived_pub = self.derive_public_key(protocol, key_id, &effective_counterparty, false)?;
+        let derived_pub =
+            self.derive_public_key(protocol, key_id, &effective_counterparty, false)?;
         let derived_priv = self.derive_private_key(protocol, key_id, &effective_counterparty)?;
 
         // Shared secret between derived keys
@@ -96,7 +97,9 @@ impl KeyDeriver {
         let invoice_number = self.compute_invoice_number(protocol, key_id)?;
 
         if for_self {
-            let priv_key = self.root_key.derive_child(&counterparty_key, &invoice_number)?;
+            let priv_key = self
+                .root_key
+                .derive_child(&counterparty_key, &invoice_number)?;
             Ok(priv_key.pub_key())
         } else {
             let pub_key = counterparty_key.derive_child(&self.root_key, &invoice_number)?;
@@ -113,7 +116,9 @@ impl KeyDeriver {
     ) -> Result<PrivateKey, WalletError> {
         let counterparty_key = self.normalize_counterparty(counterparty)?;
         let invoice_number = self.compute_invoice_number(protocol, key_id)?;
-        let k = self.root_key.derive_child(&counterparty_key, &invoice_number)?;
+        let k = self
+            .root_key
+            .derive_child(&counterparty_key, &invoice_number)?;
         Ok(k)
     }
 
@@ -162,17 +167,17 @@ impl KeyDeriver {
     }
 
     /// Normalize counterparty to a public key.
-    fn normalize_counterparty(&self, counterparty: &Counterparty) -> Result<PublicKey, WalletError> {
+    fn normalize_counterparty(
+        &self,
+        counterparty: &Counterparty,
+    ) -> Result<PublicKey, WalletError> {
         match counterparty.r#type {
             CounterpartyType::Self_ => Ok(self.root_key.pub_key()),
-            CounterpartyType::Other => counterparty
-                .counterparty
-                .clone()
-                .ok_or_else(|| {
-                    WalletError::InvalidCounterparty(
-                        "counterparty public key required for other".into(),
-                    )
-                }),
+            CounterpartyType::Other => counterparty.counterparty.clone().ok_or_else(|| {
+                WalletError::InvalidCounterparty(
+                    "counterparty public key required for other".into(),
+                )
+            }),
             CounterpartyType::Anyone => Ok(anyone_key().1),
             CounterpartyType::Uninitialized => Err(WalletError::InvalidCounterparty(
                 "invalid counterparty, must be self, other, or anyone".into(),
@@ -254,14 +259,40 @@ mod tests {
     use super::*;
     use bsv_primitives::ec::private_key::PrivateKey;
 
-    fn test_keys() -> (PrivateKey, PublicKey, PrivateKey, PublicKey, PrivateKey, PublicKey) {
-        let root = PrivateKey::from_bytes(&[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 42]).unwrap();
+    fn test_keys() -> (
+        PrivateKey,
+        PublicKey,
+        PrivateKey,
+        PublicKey,
+        PrivateKey,
+        PublicKey,
+    ) {
+        let root = PrivateKey::from_bytes(&[
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 42,
+        ])
+        .unwrap();
         let root_pub = root.pub_key();
-        let counterparty = PrivateKey::from_bytes(&[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 69]).unwrap();
+        let counterparty = PrivateKey::from_bytes(&[
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 69,
+        ])
+        .unwrap();
         let counterparty_pub = counterparty.pub_key();
-        let anyone = PrivateKey::from_bytes(&[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]).unwrap();
+        let anyone = PrivateKey::from_bytes(&[
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 1,
+        ])
+        .unwrap();
         let anyone_pub = anyone.pub_key();
-        (root, root_pub, counterparty, counterparty_pub, anyone, anyone_pub)
+        (
+            root,
+            root_pub,
+            counterparty,
+            counterparty_pub,
+            anyone,
+            anyone_pub,
+        )
     }
 
     fn test_protocol() -> Protocol {
@@ -289,7 +320,9 @@ mod tests {
     fn test_compute_invoice_number() {
         let (root, ..) = test_keys();
         let kd = KeyDeriver::new(Some(root));
-        let inv = kd.compute_invoice_number(&test_protocol(), "12345").unwrap();
+        let inv = kd
+            .compute_invoice_number(&test_protocol(), "12345")
+            .unwrap();
         assert_eq!(inv, "0-testprotocol-12345");
     }
 
@@ -329,10 +362,7 @@ mod tests {
                 counterparty: Some(counterparty_pub.clone()),
             })
             .unwrap();
-        assert_eq!(
-            normalized.to_compressed(),
-            counterparty_pub.to_compressed()
-        );
+        assert_eq!(normalized.to_compressed(), counterparty_pub.to_compressed());
     }
 
     #[test]
@@ -509,14 +539,70 @@ mod tests {
 
         let cases = vec![
             // (protocol, key_id, should_error)
-            (Protocol { security_level: 2, protocol: "test".into() }, "long".to_string() + &"x".repeat(800), "long key ID"),
-            (Protocol { security_level: 2, protocol: "test".into() }, "".into(), "empty key ID"),
-            (Protocol { security_level: -3, protocol: "otherwise valid".into() }, key_id.into(), "invalid security level"),
-            (Protocol { security_level: 2, protocol: "double  space".into() }, key_id.into(), "double space"),
-            (Protocol { security_level: 0, protocol: "".into() }, key_id.into(), "empty protocol"),
-            (Protocol { security_level: 0, protocol: "long".to_string() + &"x".repeat(400) }, key_id.into(), "long protocol"),
-            (Protocol { security_level: 2, protocol: "redundant protocol protocol".into() }, key_id.into(), "redundant suffix"),
-            (Protocol { security_level: 2, protocol: "üñî√é®sål ©0på".into() }, key_id.into(), "invalid chars"),
+            (
+                Protocol {
+                    security_level: 2,
+                    protocol: "test".into(),
+                },
+                "long".to_string() + &"x".repeat(800),
+                "long key ID",
+            ),
+            (
+                Protocol {
+                    security_level: 2,
+                    protocol: "test".into(),
+                },
+                "".into(),
+                "empty key ID",
+            ),
+            (
+                Protocol {
+                    security_level: -3,
+                    protocol: "otherwise valid".into(),
+                },
+                key_id.into(),
+                "invalid security level",
+            ),
+            (
+                Protocol {
+                    security_level: 2,
+                    protocol: "double  space".into(),
+                },
+                key_id.into(),
+                "double space",
+            ),
+            (
+                Protocol {
+                    security_level: 0,
+                    protocol: "".into(),
+                },
+                key_id.into(),
+                "empty protocol",
+            ),
+            (
+                Protocol {
+                    security_level: 0,
+                    protocol: "long".to_string() + &"x".repeat(400),
+                },
+                key_id.into(),
+                "long protocol",
+            ),
+            (
+                Protocol {
+                    security_level: 2,
+                    protocol: "redundant protocol protocol".into(),
+                },
+                key_id.into(),
+                "redundant suffix",
+            ),
+            (
+                Protocol {
+                    security_level: 2,
+                    protocol: "üñî√é®sål ©0på".into(),
+                },
+                key_id.into(),
+                "invalid chars",
+            ),
         ];
 
         for (proto, kid, label) in cases {

@@ -167,8 +167,8 @@ fn test_is_not_coinbase() {
 /// Test that a valid 32-byte slice is accepted as a valid txid.
 #[test]
 fn test_is_valid_txid() {
-    let valid = hex::decode("fe77aa03d5563d3ec98455a76655ea3b58e19a4eb102baf7b2a47af37e94b295")
-        .unwrap();
+    let valid =
+        hex::decode("fe77aa03d5563d3ec98455a76655ea3b58e19a4eb102baf7b2a47af37e94b295").unwrap();
     assert_eq!(valid.len(), 32, "valid txid should be 32 bytes");
 
     let invalid =
@@ -231,8 +231,14 @@ fn test_empty_transaction_serialization() {
 fn test_output_satoshis() {
     let tx = Transaction::from_hex(SOURCE_RAW_TX).expect("should parse source tx");
 
-    assert_eq!(tx.outputs[0].satoshis, 1500, "first output should be 1500 sats");
-    assert_eq!(tx.outputs[1].satoshis, 3498, "second output should be 3498 sats");
+    assert_eq!(
+        tx.outputs[0].satoshis, 1500,
+        "first output should be 1500 sats"
+    );
+    assert_eq!(
+        tx.outputs[1].satoshis, 3498,
+        "second output should be 3498 sats"
+    );
     assert_eq!(
         tx.total_output_satoshis(),
         1500 + 3498,
@@ -351,7 +357,10 @@ fn test_calc_preimage_structure() {
         preimage[tail - 2],
         preimage[tail - 1],
     ]);
-    assert_eq!(shtype, sighash_type, "preimage should end with sighash type");
+    assert_eq!(
+        shtype, sighash_type,
+        "preimage should end with sighash type"
+    );
 }
 
 // -----------------------------------------------------------------------
@@ -396,10 +405,10 @@ fn test_transaction_display() {
 /// Ported from Go `TestLocalUnlocker_UnlockAllInputs`.
 #[test]
 fn test_p2pkh_sign_exact_match() {
-    use bsv_primitives::ec::PrivateKey;
+    use crate::output::TransactionOutput;
     use crate::template::p2pkh;
     use crate::template::UnlockingScriptTemplate;
-    use crate::output::TransactionOutput;
+    use bsv_primitives::ec::PrivateKey;
 
     let incomplete_tx_hex = "010000000193a35408b6068499e0d5abd799d3e827d9bfe70c9b75ebe209c91d25072326510000000000ffffffff02404b4c00000000001976a91404ff367be719efa79d76e4416ffb072cd53b208888acde94a905000000001976a91404d03f746652cfcb6cb55119ab473a045137d26588ac00000000";
     let mut tx = Transaction::from_hex(incomplete_tx_hex).expect("should parse unsigned tx");
@@ -443,9 +452,9 @@ fn test_p2pkh_sign_exact_match() {
 /// Ported from Go `TestLocalUnlocker_ValidSignature` - "valid signature 1".
 #[test]
 fn test_p2pkh_valid_signature_1() {
-    use bsv_primitives::ec::{PrivateKey, PublicKey, Signature};
     use crate::template::p2pkh;
     use crate::template::UnlockingScriptTemplate;
+    use bsv_primitives::ec::{PrivateKey, PublicKey, Signature};
 
     let mut tx = Transaction::new();
     tx.add_input_from(
@@ -486,13 +495,16 @@ fn test_p2pkh_valid_signature_1() {
         .expect("should decode chunks");
 
     let sig_bytes = chunks[0].data.as_ref().expect("sig chunk should have data");
-    let pubkey_bytes = chunks[1].data.as_ref().expect("pubkey chunk should have data");
+    let pubkey_bytes = chunks[1]
+        .data
+        .as_ref()
+        .expect("pubkey chunk should have data");
 
     // Parse and verify the signature.
     let public_key = PublicKey::from_bytes(pubkey_bytes).expect("should parse public key");
     // The last byte of sig_bytes is the sighash flag; the rest is DER signature.
-    let sig = Signature::from_der(&sig_bytes[..sig_bytes.len() - 1])
-        .expect("should parse DER signature");
+    let sig =
+        Signature::from_der(&sig_bytes[..sig_bytes.len() - 1]).expect("should parse DER signature");
 
     let sig_hash = tx
         .calc_input_signature_hash(0, sighash::SIGHASH_ALL_FORKID)
@@ -509,10 +521,10 @@ fn test_p2pkh_valid_signature_1() {
 /// Ported from Go `TestUnlockWithOptionalParameters`.
 #[test]
 fn test_p2pkh_with_set_source_output() {
-    use bsv_primitives::ec::PrivateKey;
+    use crate::output::TransactionOutput;
     use crate::template::p2pkh;
     use crate::template::UnlockingScriptTemplate;
-    use crate::output::TransactionOutput;
+    use bsv_primitives::ec::PrivateKey;
 
     let mut tx = Transaction::new();
     tx.add_input_from(
@@ -554,10 +566,10 @@ fn test_p2pkh_with_set_source_output() {
 /// Ported from Go `TestUnlockWithOptionalParameters` error case.
 #[test]
 fn test_p2pkh_error_without_source_info() {
-    use bsv_primitives::ec::PrivateKey;
+    use crate::output::TransactionOutput;
     use crate::template::p2pkh;
     use crate::template::UnlockingScriptTemplate;
-    use crate::output::TransactionOutput;
+    use bsv_primitives::ec::PrivateKey;
 
     let mut tx = Transaction::new();
     tx.add_input_from(
@@ -584,5 +596,8 @@ fn test_p2pkh_error_without_source_info() {
 
     let unlocker = p2pkh::unlock(priv_key, None);
     let result = unlocker.sign(&tx, 0);
-    assert!(result.is_err(), "signing should fail without source output info");
+    assert!(
+        result.is_err(),
+        "signing should fail without source output info"
+    );
 }

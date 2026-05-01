@@ -22,9 +22,8 @@ pub type OnGeneralMessageCallback =
 pub type OnCertificateReceivedCallback =
     Box<dyn Fn(&PublicKey, &[VerifiableCertificate]) -> Result<(), AuthError> + Send + Sync>;
 /// Callback invoked when a peer requests certificates.
-pub type OnCertificateRequestCallback = Box<
-    dyn Fn(&PublicKey, &RequestedCertificateSet) -> Result<(), AuthError> + Send + Sync,
->;
+pub type OnCertificateRequestCallback =
+    Box<dyn Fn(&PublicKey, &RequestedCertificateSet) -> Result<(), AuthError> + Send + Sync>;
 
 /// Callback type for initial response handling.
 type InitialResponseFn = Box<dyn Fn(&str) -> Result<(), AuthError> + Send + Sync>;
@@ -77,9 +76,7 @@ impl Peer {
             wallet: cfg.wallet,
             transport: cfg.transport,
             session_manager,
-            certificates_to_request: RwLock::new(
-                cfg.certificates_to_request.unwrap_or_default(),
-            ),
+            certificates_to_request: RwLock::new(cfg.certificates_to_request.unwrap_or_default()),
             general_message_callbacks: RwLock::new(HashMap::new()),
             certificate_received_callbacks: RwLock::new(HashMap::new()),
             certificate_request_callbacks: RwLock::new(HashMap::new()),
@@ -170,10 +167,7 @@ impl Peer {
     }
 
     /// Register a callback for when certificates are requested by a peer. Returns a listener ID.
-    pub fn listen_for_certificates_requested(
-        &self,
-        callback: OnCertificateRequestCallback,
-    ) -> i32 {
+    pub fn listen_for_certificates_requested(&self, callback: OnCertificateRequestCallback) -> i32 {
         let id = self.next_callback_id();
         self.certificate_request_callbacks
             .write()
@@ -198,15 +192,13 @@ impl Peer {
         message: &[u8],
         identity_key: Option<&PublicKey>,
     ) -> Result<(), AuthError> {
-        let ik = identity_key
-            .cloned()
-            .or_else(|| {
-                if self.auto_persist_last_session {
-                    self.last_interacted_peer.read().ok()?.clone()
-                } else {
-                    None
-                }
-            });
+        let ik = identity_key.cloned().or_else(|| {
+            if self.auto_persist_last_session {
+                self.last_interacted_peer.read().ok()?.clone()
+            } else {
+                None
+            }
+        });
 
         let peer_session = self.get_authenticated_session(ik.as_ref())?;
 
@@ -246,7 +238,11 @@ impl Peer {
         self.session_manager.update_session(updated);
 
         if self.auto_persist_last_session {
-            *self.last_interacted_peer.write().map_err(|_| AuthError::LockError("lock poisoned".into()))? = peer_session.peer_identity_key.clone();
+            *self
+                .last_interacted_peer
+                .write()
+                .map_err(|_| AuthError::LockError("lock poisoned".into()))? =
+                peer_session.peer_identity_key.clone();
         }
 
         self.transport.send(&general_message)
@@ -261,7 +257,11 @@ impl Peer {
             if let Ok(session) = self.session_manager.get_session(&ik.to_hex()) {
                 if session.is_authenticated {
                     if self.auto_persist_last_session {
-                        *self.last_interacted_peer.write().map_err(|_| AuthError::LockError("lock poisoned".into()))? = Some(ik.clone());
+                        *self
+                            .last_interacted_peer
+                            .write()
+                            .map_err(|_| AuthError::LockError("lock poisoned".into()))? =
+                            Some(ik.clone());
                     }
                     return Ok(session);
                 }
@@ -295,7 +295,11 @@ impl Peer {
 
         let my_identity_key = self.identity_key()?;
 
-        let certs_to_request = self.certificates_to_request.read().map_err(|_| AuthError::LockError("lock poisoned".into()))?.clone();
+        let certs_to_request = self
+            .certificates_to_request
+            .read()
+            .map_err(|_| AuthError::LockError("lock poisoned".into()))?
+            .clone();
 
         let initial_request = AuthMessage {
             version: AUTH_VERSION.to_string(),
@@ -317,12 +321,17 @@ impl Peer {
         let callback_id = self.next_callback_id();
         let session_nonce_clone = session_nonce.clone();
         {
-            let mut callbacks = self.initial_response_callbacks.lock().map_err(|_| AuthError::LockError("lock poisoned".into()))?;
+            let mut callbacks = self
+                .initial_response_callbacks
+                .lock()
+                .map_err(|_| AuthError::LockError("lock poisoned".into()))?;
             callbacks.insert(
                 callback_id,
                 InitialResponseCallback {
                     callback: Box::new(move |_peer_nonce| {
-                        *response_received_clone.lock().map_err(|_| AuthError::LockError("lock poisoned".into()))? = true;
+                        *response_received_clone
+                            .lock()
+                            .map_err(|_| AuthError::LockError("lock poisoned".into()))? = true;
                         Ok(())
                     }),
                     session_nonce: session_nonce_clone,
@@ -334,11 +343,16 @@ impl Peer {
 
         // For synchronous mock transport, the response is processed inline during send.
         // Check if we got a response.
-        let got_response = *response_received.lock().map_err(|_| AuthError::LockError("lock poisoned".into()))?;
+        let got_response = *response_received
+            .lock()
+            .map_err(|_| AuthError::LockError("lock poisoned".into()))?;
 
         // Clean up callback
         {
-            let mut callbacks = self.initial_response_callbacks.lock().map_err(|_| AuthError::LockError("lock poisoned".into()))?;
+            let mut callbacks = self
+                .initial_response_callbacks
+                .lock()
+                .map_err(|_| AuthError::LockError("lock poisoned".into()))?;
             callbacks.remove(&callback_id);
         }
 
@@ -388,7 +402,11 @@ impl Peer {
             },
         )?;
 
-        let certs_to_request = self.certificates_to_request.read().map_err(|_| AuthError::LockError("lock poisoned".into()))?.clone();
+        let certs_to_request = self
+            .certificates_to_request
+            .read()
+            .map_err(|_| AuthError::LockError("lock poisoned".into()))?
+            .clone();
         let needs_certs = certs_to_request.has_certificate_types();
 
         let session = PeerSession {
@@ -419,7 +437,8 @@ impl Peer {
         // Sign: data = initial_nonce_bytes || session_nonce_bytes
         let initial_nonce_bytes = BASE64.decode(&message.initial_nonce)?;
         let session_nonce_bytes = BASE64.decode(&session.session_nonce)?;
-        let mut sig_data = Vec::with_capacity(initial_nonce_bytes.len() + session_nonce_bytes.len());
+        let mut sig_data =
+            Vec::with_capacity(initial_nonce_bytes.len() + session_nonce_bytes.len());
         sig_data.extend_from_slice(&initial_nonce_bytes);
         sig_data.extend_from_slice(&session_nonce_bytes);
 
@@ -466,7 +485,8 @@ impl Peer {
         // Verify signature
         let session_nonce_bytes = BASE64.decode(&session.session_nonce)?;
         let initial_nonce_bytes = BASE64.decode(&message.initial_nonce)?;
-        let mut sig_data = Vec::with_capacity(session_nonce_bytes.len() + initial_nonce_bytes.len());
+        let mut sig_data =
+            Vec::with_capacity(session_nonce_bytes.len() + initial_nonce_bytes.len());
         sig_data.extend_from_slice(&session_nonce_bytes);
         sig_data.extend_from_slice(&initial_nonce_bytes);
 
@@ -498,7 +518,11 @@ impl Peer {
             return Err(AuthError::InvalidSignature);
         }
 
-        let certs_to_request = self.certificates_to_request.read().map_err(|_| AuthError::LockError("lock poisoned".into()))?.clone();
+        let certs_to_request = self
+            .certificates_to_request
+            .read()
+            .map_err(|_| AuthError::LockError("lock poisoned".into()))?
+            .clone();
         let needs_certs = certs_to_request.has_certificate_types();
 
         let mut updated = session.clone();
@@ -514,7 +538,10 @@ impl Peer {
             updated.is_authenticated = true;
 
             // Notify certificate listeners
-            let callbacks = self.certificate_received_callbacks.read().map_err(|_| AuthError::LockError("lock poisoned".into()))?;
+            let callbacks = self
+                .certificate_received_callbacks
+                .read()
+                .map_err(|_| AuthError::LockError("lock poisoned".into()))?;
             for callback in callbacks.values() {
                 callback(&message.identity_key, &message.certificates)?;
             }
@@ -522,11 +549,18 @@ impl Peer {
 
         self.session_manager.update_session(updated);
 
-        *self.last_interacted_peer.write().map_err(|_| AuthError::LockError("lock poisoned".into()))? = Some(message.identity_key.clone());
+        *self
+            .last_interacted_peer
+            .write()
+            .map_err(|_| AuthError::LockError("lock poisoned".into()))? =
+            Some(message.identity_key.clone());
 
         // Notify initial response callbacks
         let callbacks_snapshot: Vec<(i32, String)> = {
-            let callbacks = self.initial_response_callbacks.lock().map_err(|_| AuthError::LockError("lock poisoned".into()))?;
+            let callbacks = self
+                .initial_response_callbacks
+                .lock()
+                .map_err(|_| AuthError::LockError("lock poisoned".into()))?;
             callbacks
                 .iter()
                 .filter(|(_, cb)| cb.session_nonce == session.session_nonce)
@@ -536,12 +570,18 @@ impl Peer {
 
         for (id, _) in &callbacks_snapshot {
             let callback = {
-                let callbacks = self.initial_response_callbacks.lock().map_err(|_| AuthError::LockError("lock poisoned".into()))?;
+                let callbacks = self
+                    .initial_response_callbacks
+                    .lock()
+                    .map_err(|_| AuthError::LockError("lock poisoned".into()))?;
                 callbacks.get(id).map(|cb| &cb.callback as *const _)
             };
             if let Some(_callback_ptr) = callback {
                 // Safe because we hold the lock implicitly through the Arc
-                let callbacks = self.initial_response_callbacks.lock().map_err(|_| AuthError::LockError("lock poisoned".into()))?;
+                let callbacks = self
+                    .initial_response_callbacks
+                    .lock()
+                    .map_err(|_| AuthError::LockError("lock poisoned".into()))?;
                 if let Some(cb) = callbacks.get(id) {
                     let _ = (cb.callback)(&session.session_nonce);
                 }
@@ -550,7 +590,10 @@ impl Peer {
 
         // Remove triggered callbacks
         {
-            let mut callbacks = self.initial_response_callbacks.lock().map_err(|_| AuthError::LockError("lock poisoned".into()))?;
+            let mut callbacks = self
+                .initial_response_callbacks
+                .lock()
+                .map_err(|_| AuthError::LockError("lock poisoned".into()))?;
             for (id, _) in &callbacks_snapshot {
                 callbacks.remove(id);
             }
@@ -582,8 +625,9 @@ impl Peer {
         let session = self.session_manager.get_session(&message.your_nonce)?;
 
         // Verify signature over serialized requested certificates
-        let cert_request_data = serde_json::to_vec(&SerializableRequestedCerts(&message.requested_certificates))
-            .map_err(|e| AuthError::General(format!("serialize cert request: {}", e)))?;
+        let cert_request_data =
+            serde_json::to_vec(&SerializableRequestedCerts(&message.requested_certificates))
+                .map_err(|e| AuthError::General(format!("serialize cert request: {}", e)))?;
 
         let signature = Signature::from_der(&message.signature)
             .map_err(|e| AuthError::General(format!("failed to parse signature: {}", e)))?;
@@ -678,12 +722,19 @@ impl Peer {
         updated.last_update = Self::now_ms();
 
         if !message.certificates.is_empty() {
-            let certs_to_request = self.certificates_to_request.read().map_err(|_| AuthError::LockError("lock poisoned".into()))?.clone();
+            let certs_to_request = self
+                .certificates_to_request
+                .read()
+                .map_err(|_| AuthError::LockError("lock poisoned".into()))?
+                .clone();
             self.validate_received_certificates(message, &certs_to_request)?;
             updated.is_authenticated = true;
 
             // Notify certificate listeners
-            let callbacks = self.certificate_received_callbacks.read().map_err(|_| AuthError::LockError("lock poisoned".into()))?;
+            let callbacks = self
+                .certificate_received_callbacks
+                .read()
+                .map_err(|_| AuthError::LockError("lock poisoned".into()))?;
             for callback in callbacks.values() {
                 callback(&message.identity_key, &message.certificates)?;
             }
@@ -748,11 +799,18 @@ impl Peer {
         self.session_manager.update_session(updated);
 
         if self.auto_persist_last_session {
-            *self.last_interacted_peer.write().map_err(|_| AuthError::LockError("lock poisoned".into()))? = Some(message.identity_key.clone());
+            *self
+                .last_interacted_peer
+                .write()
+                .map_err(|_| AuthError::LockError("lock poisoned".into()))? =
+                Some(message.identity_key.clone());
         }
 
         // Notify listeners
-        let callbacks = self.general_message_callbacks.read().map_err(|_| AuthError::LockError("lock poisoned".into()))?;
+        let callbacks = self
+            .general_message_callbacks
+            .read()
+            .map_err(|_| AuthError::LockError("lock poisoned".into()))?;
         for callback in callbacks.values() {
             let _ = callback(&message.identity_key, &message.payload);
         }
@@ -762,10 +820,17 @@ impl Peer {
 
     fn send_certificates(&self, message: &AuthMessage) -> Result<(), AuthError> {
         // Check for custom callbacks first
-        let has_callbacks = !self.certificate_request_callbacks.read().map_err(|_| AuthError::LockError("lock poisoned".into()))?.is_empty();
+        let has_callbacks = !self
+            .certificate_request_callbacks
+            .read()
+            .map_err(|_| AuthError::LockError("lock poisoned".into()))?
+            .is_empty();
 
         if has_callbacks {
-            let callbacks = self.certificate_request_callbacks.read().map_err(|_| AuthError::LockError("lock poisoned".into()))?;
+            let callbacks = self
+                .certificate_request_callbacks
+                .read()
+                .map_err(|_| AuthError::LockError("lock poisoned".into()))?;
             for callback in callbacks.values() {
                 callback(&message.identity_key, &message.requested_certificates)?;
             }
@@ -858,7 +923,11 @@ impl Peer {
         self.session_manager.update_session(updated);
 
         if self.auto_persist_last_session {
-            *self.last_interacted_peer.write().map_err(|_| AuthError::LockError("lock poisoned".into()))? = Some(identity_key.clone());
+            *self
+                .last_interacted_peer
+                .write()
+                .map_err(|_| AuthError::LockError("lock poisoned".into()))? =
+                Some(identity_key.clone());
         }
 
         self.transport.send(&cert_request)
@@ -882,8 +951,7 @@ impl Peer {
 
         let my_identity_key = self.identity_key()?;
 
-        let mut cert_response =
-            AuthMessage::new(MessageType::CertificateResponse, my_identity_key);
+        let mut cert_response = AuthMessage::new(MessageType::CertificateResponse, my_identity_key);
         cert_response.nonce = response_nonce.clone();
         cert_response.your_nonce = peer_session.peer_nonce.clone();
         cert_response.certificates = certificates;
@@ -918,7 +986,11 @@ impl Peer {
         self.session_manager.update_session(updated);
 
         if self.auto_persist_last_session {
-            *self.last_interacted_peer.write().map_err(|_| AuthError::LockError("lock poisoned".into()))? = Some(identity_key.clone());
+            *self
+                .last_interacted_peer
+                .write()
+                .map_err(|_| AuthError::LockError("lock poisoned".into()))? =
+                Some(identity_key.clone());
         }
 
         self.transport.send(&cert_response)

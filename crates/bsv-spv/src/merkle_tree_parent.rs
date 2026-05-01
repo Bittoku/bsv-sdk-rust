@@ -60,9 +60,13 @@ mod tests {
 
     #[test]
     fn test_merkle_tree_parent_bytes() {
-        let left = hex::decode("d6c79a6ef05572f0cb8e9a450c561fc40b0a8a7d48faad95e20d93ddeb08c231").unwrap();
-        let right = hex::decode("b1ed931b79056438b990d8981ba46fae97e5574b142445a74a44b978af284f98").unwrap();
-        let expected = hex::decode("b0d537b3ee52e472507f453df3d69561720346118a5a8c4d85ca0de73bc792be").unwrap();
+        let left = hex::decode("d6c79a6ef05572f0cb8e9a450c561fc40b0a8a7d48faad95e20d93ddeb08c231")
+            .unwrap();
+        let right = hex::decode("b1ed931b79056438b990d8981ba46fae97e5574b142445a74a44b978af284f98")
+            .unwrap();
+        let expected =
+            hex::decode("b0d537b3ee52e472507f453df3d69561720346118a5a8c4d85ca0de73bc792be")
+                .unwrap();
         let parent = merkle_tree_parent_bytes(&left, &right);
         assert_eq!(expected, parent);
     }

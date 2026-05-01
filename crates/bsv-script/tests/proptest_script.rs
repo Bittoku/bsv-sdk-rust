@@ -1,7 +1,7 @@
 use proptest::prelude::*;
 
-use bsv_script::Script;
 use bsv_script::interpreter::ScriptNumber;
+use bsv_script::Script;
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(128))]

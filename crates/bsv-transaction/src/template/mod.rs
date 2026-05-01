@@ -4,12 +4,12 @@
 //! for creating locking and unlocking scripts during transaction signing.
 //! Ported from the Go BSV SDK (`transaction/template/p2pkh`).
 
-pub mod p2pkh;
 pub mod p2mpkh;
+pub mod p2pkh;
 
-use bsv_script::Script;
 use crate::transaction::Transaction;
 use crate::TransactionError;
+use bsv_script::Script;
 
 /// Trait for script templates that produce unlocking scripts.
 ///

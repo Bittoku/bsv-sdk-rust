@@ -215,7 +215,8 @@ pub struct Stas3BundleFactory {
     get_transactions:
         Box<dyn FnMut(&[Hash]) -> Result<std::collections::HashMap<Hash, Transaction>, TokenError>>,
     /// Callback: build locking parameters for each output.
-    build_locking_params: Box<dyn FnMut(LockingParamsArgs) -> Result<LockingParamsResult, TokenError>>,
+    build_locking_params:
+        Box<dyn FnMut(LockingParamsArgs) -> Result<LockingParamsResult, TokenError>>,
     /// Fee rate in satoshis per KB.
     fee_rate: u64,
 }
@@ -235,8 +236,10 @@ impl Stas3BundleFactory {
         stas_owner_pkh: [u8; 20],
         get_stas_utxo_set: impl FnMut(u64) -> Result<Vec<StasOutPoint>, TokenError> + 'static,
         get_funding_utxo: impl FnMut(FundingRequest) -> Result<FundingOutPoint, TokenError> + 'static,
-        get_transactions: impl FnMut(&[Hash]) -> Result<std::collections::HashMap<Hash, Transaction>, TokenError> + 'static,
-        build_locking_params: impl FnMut(LockingParamsArgs) -> Result<LockingParamsResult, TokenError> + 'static,
+        get_transactions: impl FnMut(&[Hash]) -> Result<std::collections::HashMap<Hash, Transaction>, TokenError>
+            + 'static,
+        build_locking_params: impl FnMut(LockingParamsArgs) -> Result<LockingParamsResult, TokenError>
+            + 'static,
     ) -> Self {
         Self {
             stas_private_key,
@@ -393,11 +396,7 @@ impl Stas3BundleFactory {
     // -------------------------------------------------------------------
 
     /// Estimate total transaction count for a bundle.
-    fn estimate_transactions_count(
-        &self,
-        stas_input_count: usize,
-        outputs_count: usize,
-    ) -> usize {
+    fn estimate_transactions_count(&self, stas_input_count: usize, outputs_count: usize) -> usize {
         self.estimate_merge_tx_count(stas_input_count)
             + estimate_final_transfer_tx_count(outputs_count)
     }
@@ -440,7 +439,8 @@ impl Stas3BundleFactory {
             + outputs_count as u64 * 160
             + 500)
             * self.fee_rate
-            * 3 / 2; // 1.5x safety margin
+            * 3
+            / 2; // 1.5x safety margin
         let fee = raw.div_ceil(1000);
         fee.max(1200)
     }
@@ -461,11 +461,8 @@ impl Stas3BundleFactory {
     ) -> Result<BundleResult, TokenError> {
         let utxo_ids: Vec<(Hash, u32)> = stas_utxos.iter().map(|u| (u.txid, u.vout)).collect();
         let tx_count = self.estimate_transactions_count(stas_utxos.len(), outputs.len());
-        let initial_fee = self.estimate_bundle_fee_upper_bound(
-            tx_count,
-            stas_utxos.len(),
-            outputs.len(),
-        );
+        let initial_fee =
+            self.estimate_bundle_fee_upper_bound(tx_count, stas_utxos.len(), outputs.len());
 
         let first_funding = (self.get_funding_utxo)(FundingRequest {
             utxo_ids: utxo_ids.clone(),
@@ -516,12 +513,22 @@ impl Stas3BundleFactory {
         let mut transactions = Vec::new();
 
         // Phase 1: Merge STAS UTXOs into a single consolidated UTXO
-        let (merge_stas, merge_fee) =
-            self.merge_stas_transactions(&mut transactions, stas_utxos, satoshis_to_send, fee_utxo)?;
+        let (merge_stas, merge_fee) = self.merge_stas_transactions(
+            &mut transactions,
+            stas_utxos,
+            satoshis_to_send,
+            fee_utxo,
+        )?;
 
         // Phase 2: Plan and build transfer transactions
-        let final_fee =
-            self.build_transfer_plan_transactions(&mut transactions, merge_stas, merge_fee, outputs, spend_type, note)?;
+        let final_fee = self.build_transfer_plan_transactions(
+            &mut transactions,
+            merge_stas,
+            merge_fee,
+            outputs,
+            spend_type,
+            note,
+        )?;
 
         // Calculate total fee paid
         let original_fee_sats = transactions
@@ -607,7 +614,10 @@ impl Stas3BundleFactory {
                     )?;
 
                     let tx = build_stas3_base_tx(&Stas3BaseConfig {
-                        token_inputs: vec![outpoint_to_token_input(outpoint, &self.stas_private_key)],
+                        token_inputs: vec![outpoint_to_token_input(
+                            outpoint,
+                            &self.stas_private_key,
+                        )],
                         fee_txid: fee_outpoint.txid,
                         fee_vout: fee_outpoint.vout,
                         fee_satoshis: fee_outpoint.satoshis,
@@ -647,7 +657,10 @@ impl Stas3BundleFactory {
                     let _ = i;
 
                     // On the final merge, if total > target, produce [target, remainder]
-                    let destinations = if is_last_merge && current_level.len() == 2 && input_satoshis != target_satoshis {
+                    let destinations = if is_last_merge
+                        && current_level.len() == 2
+                        && input_satoshis != target_satoshis
+                    {
                         vec![
                             self.build_self_output_params(
                                 outpoint1.txid,
@@ -732,11 +745,7 @@ impl Stas3BundleFactory {
         while cursor < outputs.len() {
             let remaining_count = outputs.len() - cursor;
             let is_final = remaining_count <= 4;
-            let batch_end = if is_final {
-                outputs.len()
-            } else {
-                cursor + 3
-            };
+            let batch_end = if is_final { outputs.len() } else { cursor + 3 };
             let transfer_outputs = &outputs[cursor..batch_end];
             let sent_satoshis: u64 = transfer_outputs.iter().map(|o| o.satoshis).sum();
 
@@ -780,7 +789,10 @@ impl Stas3BundleFactory {
 
             // Build the transaction
             let config = Stas3BaseConfig {
-                token_inputs: vec![outpoint_to_token_input(&current_stas, &self.stas_private_key)],
+                token_inputs: vec![outpoint_to_token_input(
+                    &current_stas,
+                    &self.stas_private_key,
+                )],
                 fee_txid: current_fee.txid,
                 fee_vout: current_fee.vout,
                 fee_satoshis: current_fee.satoshis,
@@ -970,7 +982,10 @@ fn fee_outpoint_from_tx(tx: &Transaction, fee_private_key: &PrivateKey) -> Fundi
 }
 
 /// Convert locking params result to Stas3OutputParams.
-fn locking_result_to_output_params(satoshis: u64, params: &LockingParamsResult) -> Stas3OutputParams {
+fn locking_result_to_output_params(
+    satoshis: u64,
+    params: &LockingParamsResult,
+) -> Stas3OutputParams {
     Stas3OutputParams {
         satoshis,
         owner_pkh: params.owner_pkh,
@@ -1056,7 +1071,11 @@ mod tests {
     }
 
     /// Create a test funding outpoint.
-    fn make_funding_outpoint(txid_seed: u8, satoshis: u64, private_key: &PrivateKey) -> FundingOutPoint {
+    fn make_funding_outpoint(
+        txid_seed: u8,
+        satoshis: u64,
+        private_key: &PrivateKey,
+    ) -> FundingOutPoint {
         let mut txid_bytes = [0u8; 32];
         txid_bytes[0] = txid_seed;
         let pkh = bsv_primitives::hash::hash160(&private_key.pub_key().to_compressed());
@@ -1076,20 +1095,17 @@ mod tests {
         crate::script::stas3_builder::build_stas3_locking_script(
             owner_pkh,
             &[0u8; 20], // redemption_pkh
-            None,        // action_data
-            false,       // frozen
-            true,        // freezable
-            &[],         // service_fields
-            &[],         // optional_data
+            None,       // action_data
+            false,      // frozen
+            true,       // freezable
+            &[],        // service_fields
+            &[],        // optional_data
         )
         .expect("valid locking script")
     }
 
     /// Create a factory with standard test callbacks.
-    fn make_test_factory(
-        stas_utxos: Vec<StasOutPoint>,
-        fee_satoshis: u64,
-    ) -> Stas3BundleFactory {
+    fn make_test_factory(stas_utxos: Vec<StasOutPoint>, fee_satoshis: u64) -> Stas3BundleFactory {
         let stas_key = test_private_key(1);
         let fee_key = test_private_key(2);
         let owner_pkh = bsv_primitives::hash::hash160(&stas_key.pub_key().to_compressed());
@@ -1328,11 +1344,26 @@ mod tests {
         let result = factory
             .transfer(TransferRequest {
                 outputs: vec![
-                    TransferOutput { recipient: Recipient { owner_pkh }, satoshis: 200 },
-                    TransferOutput { recipient: Recipient { owner_pkh }, satoshis: 200 },
-                    TransferOutput { recipient: Recipient { owner_pkh }, satoshis: 200 },
-                    TransferOutput { recipient: Recipient { owner_pkh }, satoshis: 200 },
-                    TransferOutput { recipient: Recipient { owner_pkh }, satoshis: 200 },
+                    TransferOutput {
+                        recipient: Recipient { owner_pkh },
+                        satoshis: 200,
+                    },
+                    TransferOutput {
+                        recipient: Recipient { owner_pkh },
+                        satoshis: 200,
+                    },
+                    TransferOutput {
+                        recipient: Recipient { owner_pkh },
+                        satoshis: 200,
+                    },
+                    TransferOutput {
+                        recipient: Recipient { owner_pkh },
+                        satoshis: 200,
+                    },
+                    TransferOutput {
+                        recipient: Recipient { owner_pkh },
+                        satoshis: 200,
+                    },
                 ],
                 spend_type: None,
                 note: Some(note_data),
@@ -1453,7 +1484,8 @@ mod tests {
             let fee_input_idx = txs[i].inputs.len() - 1;
             let fee_input_txid = txs[i].inputs[fee_input_idx].source_txid;
             assert_eq!(
-                fee_input_txid, prev_txid,
+                fee_input_txid,
+                prev_txid,
                 "tx {i} fee input should reference tx {}'s txid",
                 i - 1
             );
@@ -1554,7 +1586,10 @@ mod tests {
         // Merge tx should produce [1000, 200] (main + remainder)
         assert!(txs.len() >= 2, "should have merge + transfer txs");
         // The merge tx should have 2 STAS outputs (target + remainder) + 1 fee change
-        assert!(txs[0].outputs.len() >= 3, "merge tx should have target output + remainder + fee change");
+        assert!(
+            txs[0].outputs.len() >= 3,
+            "merge tx should have target output + remainder + fee change"
+        );
     }
 
     // -------------------------------------------------------------------
@@ -1679,6 +1714,9 @@ mod tests {
         let tx_count = factory.estimate_transactions_count(1, 1);
         let fee = factory.estimate_bundle_fee_upper_bound(tx_count, 1, 1);
         assert!(fee >= 1200, "minimum fee should be 1200, got {fee}");
-        assert!(fee < 50_000, "single tx fee should be reasonable, got {fee}");
+        assert!(
+            fee < 50_000,
+            "single tx fee should be reasonable, got {fee}"
+        );
     }
 }

@@ -104,32 +104,32 @@ impl MerklePath {
 
     /// Parse a MerklePath from a BsvReader.
     pub fn from_reader(reader: &mut BsvReader) -> Result<Self, SpvError> {
-        let block_height_vi = reader.read_varint().map_err(|e| {
-            SpvError::InvalidMerklePath(format!("reading block height: {}", e))
-        })?;
+        let block_height_vi = reader
+            .read_varint()
+            .map_err(|e| SpvError::InvalidMerklePath(format!("reading block height: {}", e)))?;
         let block_height = block_height_vi.value() as u32;
 
-        let tree_height = reader.read_u8().map_err(|e| {
-            SpvError::InvalidMerklePath(format!("reading tree height: {}", e))
-        })?;
+        let tree_height = reader
+            .read_u8()
+            .map_err(|e| SpvError::InvalidMerklePath(format!("reading tree height: {}", e)))?;
 
         let mut path = Vec::with_capacity(tree_height as usize);
 
         for _ in 0..tree_height {
-            let n_leaves = reader.read_varint().map_err(|e| {
-                SpvError::InvalidMerklePath(format!("reading leaf count: {}", e))
-            })?;
+            let n_leaves = reader
+                .read_varint()
+                .map_err(|e| SpvError::InvalidMerklePath(format!("reading leaf count: {}", e)))?;
 
             let mut level = Vec::with_capacity(n_leaves.value() as usize);
             for _ in 0..n_leaves.value() {
-                let offset_vi = reader.read_varint().map_err(|e| {
-                    SpvError::InvalidMerklePath(format!("reading offset: {}", e))
-                })?;
+                let offset_vi = reader
+                    .read_varint()
+                    .map_err(|e| SpvError::InvalidMerklePath(format!("reading offset: {}", e)))?;
                 let offset = offset_vi.value();
 
-                let flags = reader.read_u8().map_err(|e| {
-                    SpvError::InvalidMerklePath(format!("reading flags: {}", e))
-                })?;
+                let flags = reader
+                    .read_u8()
+                    .map_err(|e| SpvError::InvalidMerklePath(format!("reading flags: {}", e)))?;
 
                 let dup = (flags & 1) != 0;
                 let is_txid = (flags & 2) != 0;
@@ -144,9 +144,9 @@ impl MerklePath {
                 if dup {
                     elem.duplicate = Some(true);
                 } else {
-                    let hash_bytes = reader.read_bytes(32).map_err(|e| {
-                        SpvError::InvalidMerklePath(format!("reading hash: {}", e))
-                    })?;
+                    let hash_bytes = reader
+                        .read_bytes(32)
+                        .map_err(|e| SpvError::InvalidMerklePath(format!("reading hash: {}", e)))?;
                     elem.hash = Some(Hash::from_bytes(hash_bytes).map_err(|e| {
                         SpvError::InvalidMerklePath(format!("invalid hash: {}", e))
                     })?);
@@ -164,10 +164,7 @@ impl MerklePath {
             path.push(level);
         }
 
-        Ok(MerklePath {
-            block_height,
-            path,
-        })
+        Ok(MerklePath { block_height, path })
     }
 
     /// Serialize to BRC-74 binary format.
@@ -241,10 +238,7 @@ impl MerklePath {
             .iter()
             .find(|l| l.hash.as_ref().is_some_and(|h| *h == txid))
             .ok_or_else(|| {
-                SpvError::InvalidMerklePath(format!(
-                    "the BUMP does not contain the txid: {}",
-                    txid
-                ))
+                SpvError::InvalidMerklePath(format!("the BUMP does not contain the txid: {}", txid))
             })?;
 
         let mut working_hash = tx_leaf.hash.unwrap();
@@ -252,12 +246,14 @@ impl MerklePath {
 
         for height in 0..self.path.len() {
             let offset = (index >> height) ^ 1;
-            let leaf = indexed_path.get_offset_leaf(height, offset).ok_or_else(|| {
-                SpvError::InvalidMerklePath(format!(
-                    "we do not have a hash for this index at height: {}",
-                    height
-                ))
-            })?;
+            let leaf = indexed_path
+                .get_offset_leaf(height, offset)
+                .ok_or_else(|| {
+                    SpvError::InvalidMerklePath(format!(
+                        "we do not have a hash for this index at height: {}",
+                        height
+                    ))
+                })?;
 
             if leaf.duplicate == Some(true) {
                 working_hash = merkle_tree_parent(&working_hash, &working_hash);
@@ -282,9 +278,10 @@ impl MerklePath {
     /// Compute root from hex txid string.
     pub fn compute_root_hex(&self, txid_str: Option<&str>) -> Result<String, SpvError> {
         let txid = match txid_str {
-            Some(s) => Some(Hash::from_hex(s).map_err(|e| {
-                SpvError::InvalidMerklePath(format!("invalid txid hex: {}", e))
-            })?),
+            Some(s) => Some(
+                Hash::from_hex(s)
+                    .map_err(|e| SpvError::InvalidMerklePath(format!("invalid txid hex: {}", e)))?,
+            ),
             None => None,
         };
         let root = self.compute_root(txid.as_ref())?;
@@ -384,9 +381,7 @@ impl MerklePath {
                 let parent_offset = left_leaf.offset >> 1;
 
                 // Check if parent already exists at current level
-                let parent_exists = self.path[level]
-                    .iter()
-                    .any(|e| e.offset == parent_offset);
+                let parent_exists = self.path[level].iter().any(|e| e.offset == parent_offset);
                 if parent_exists {
                     continue;
                 }
@@ -513,24 +508,80 @@ mod tests {
 
     #[test]
     fn test_add_leaf_and_compute_missing_hashes() {
-        let leaf0 = Hash::from_hex("0000000000000000000000000000000000000000000000000000000000000001").unwrap();
-        let leaf1 = Hash::from_hex("0000000000000000000000000000000000000000000000000000000000000002").unwrap();
-        let leaf2 = Hash::from_hex("0000000000000000000000000000000000000000000000000000000000000003").unwrap();
-        let leaf3 = Hash::from_hex("0000000000000000000000000000000000000000000000000000000000000004").unwrap();
+        let leaf0 =
+            Hash::from_hex("0000000000000000000000000000000000000000000000000000000000000001")
+                .unwrap();
+        let leaf1 =
+            Hash::from_hex("0000000000000000000000000000000000000000000000000000000000000002")
+                .unwrap();
+        let leaf2 =
+            Hash::from_hex("0000000000000000000000000000000000000000000000000000000000000003")
+                .unwrap();
+        let leaf3 =
+            Hash::from_hex("0000000000000000000000000000000000000000000000000000000000000004")
+                .unwrap();
 
         let h01 = merkle_tree_parent(&leaf0, &leaf1);
         let h23 = merkle_tree_parent(&leaf2, &leaf3);
         let root = merkle_tree_parent(&h01, &h23);
 
         let mut mp = MerklePath::new(1000, vec![]);
-        mp.add_leaf(0, PathElement { offset: 0, hash: Some(leaf0), txid: None, duplicate: None });
-        mp.add_leaf(0, PathElement { offset: 1, hash: Some(leaf1), txid: None, duplicate: None });
-        mp.add_leaf(0, PathElement { offset: 2, hash: Some(leaf2), txid: Some(true), duplicate: None });
-        mp.add_leaf(0, PathElement { offset: 3, hash: Some(leaf3), txid: None, duplicate: None });
+        mp.add_leaf(
+            0,
+            PathElement {
+                offset: 0,
+                hash: Some(leaf0),
+                txid: None,
+                duplicate: None,
+            },
+        );
+        mp.add_leaf(
+            0,
+            PathElement {
+                offset: 1,
+                hash: Some(leaf1),
+                txid: None,
+                duplicate: None,
+            },
+        );
+        mp.add_leaf(
+            0,
+            PathElement {
+                offset: 2,
+                hash: Some(leaf2),
+                txid: Some(true),
+                duplicate: None,
+            },
+        );
+        mp.add_leaf(
+            0,
+            PathElement {
+                offset: 3,
+                hash: Some(leaf3),
+                txid: None,
+                duplicate: None,
+            },
+        );
 
         // Add empty levels
-        mp.add_leaf(1, PathElement { offset: 0, hash: None, txid: None, duplicate: None });
-        mp.add_leaf(2, PathElement { offset: 0, hash: None, txid: None, duplicate: None });
+        mp.add_leaf(
+            1,
+            PathElement {
+                offset: 0,
+                hash: None,
+                txid: None,
+                duplicate: None,
+            },
+        );
+        mp.add_leaf(
+            2,
+            PathElement {
+                offset: 0,
+                hash: None,
+                txid: None,
+                duplicate: None,
+            },
+        );
         mp.path[1].clear();
         mp.path[2].clear();
 
@@ -549,15 +600,53 @@ mod tests {
 
     #[test]
     fn test_duplicate_handling() {
-        let leaf0 = Hash::from_hex("0000000000000000000000000000000000000000000000000000000000000001").unwrap();
-        let leaf1 = Hash::from_hex("0000000000000000000000000000000000000000000000000000000000000002").unwrap();
-        let leaf2 = Hash::from_hex("0000000000000000000000000000000000000000000000000000000000000003").unwrap();
+        let leaf0 =
+            Hash::from_hex("0000000000000000000000000000000000000000000000000000000000000001")
+                .unwrap();
+        let leaf1 =
+            Hash::from_hex("0000000000000000000000000000000000000000000000000000000000000002")
+                .unwrap();
+        let leaf2 =
+            Hash::from_hex("0000000000000000000000000000000000000000000000000000000000000003")
+                .unwrap();
 
         let mut mp = MerklePath::new(1000, vec![Vec::new(), Vec::new(), Vec::new()]);
-        mp.add_leaf(0, PathElement { offset: 0, hash: Some(leaf0), txid: None, duplicate: None });
-        mp.add_leaf(0, PathElement { offset: 1, hash: Some(leaf1), txid: None, duplicate: None });
-        mp.add_leaf(0, PathElement { offset: 2, hash: Some(leaf2), txid: None, duplicate: None });
-        mp.add_leaf(0, PathElement { offset: 3, hash: None, txid: None, duplicate: Some(true) });
+        mp.add_leaf(
+            0,
+            PathElement {
+                offset: 0,
+                hash: Some(leaf0),
+                txid: None,
+                duplicate: None,
+            },
+        );
+        mp.add_leaf(
+            0,
+            PathElement {
+                offset: 1,
+                hash: Some(leaf1),
+                txid: None,
+                duplicate: None,
+            },
+        );
+        mp.add_leaf(
+            0,
+            PathElement {
+                offset: 2,
+                hash: Some(leaf2),
+                txid: None,
+                duplicate: None,
+            },
+        );
+        mp.add_leaf(
+            0,
+            PathElement {
+                offset: 3,
+                hash: None,
+                txid: None,
+                duplicate: Some(true),
+            },
+        );
 
         mp.compute_missing_hashes();
 
@@ -573,8 +662,18 @@ mod tests {
     #[test]
     fn test_grow_path() {
         let mut mp = MerklePath::new(1000, vec![]);
-        let leaf = Hash::from_hex("0000000000000000000000000000000000000000000000000000000000000001").unwrap();
-        mp.add_leaf(5, PathElement { offset: 0, hash: Some(leaf), txid: None, duplicate: None });
+        let leaf =
+            Hash::from_hex("0000000000000000000000000000000000000000000000000000000000000001")
+                .unwrap();
+        mp.add_leaf(
+            5,
+            PathElement {
+                offset: 0,
+                hash: Some(leaf),
+                txid: None,
+                duplicate: None,
+            },
+        );
         assert_eq!(mp.path.len(), 6);
         assert_eq!(mp.path[5].len(), 1);
     }
@@ -587,7 +686,8 @@ mod tests {
             "feb39d0c000c02fd340700ed4cb1fdd81916dabb69b63bcd378559cf40916205cd004e7f5381cc2b1ea6acfd350702957998e38434782b1c40c63a4aca0ffaf4d5d9bc3385f0e9e396f4dd3238f0df01fd9b030012f77e65627c341a3aaea3a0ed645c0082ef53995f446ab9901a27e4622fd1cc01fdcc010074026299a4ba40fbcf33cc0c64b384f0bb2fb17c61125609a666b546539c221c01e700730f99f8cf10fccd30730474449172c5f97cde6a6cf65163359e778463e9f2b9017200a202c78dee487cf96e1a6a04d51faec4debfad09eea28cc624483f2d6fa53d54013800b51ecabaa590b6bd1805baf4f19fc0eae0dedb533302603579d124059b374b1e011d00a0f36640f32a43d790bb4c3e7877011aa8ae25e433b2b83c952a16f8452b6b79010f005d68efab62c6c457ce0bb526194cc16b27f93f8a4899f6d59ffffdddc06e345c01060099f66a0ef693d151bbe9aeb10392ac5a7712243406f9e821219fd13d1865f569010200201fa17c98478675a96703ded42629a3c7bf32b45d0bff25f8be6849d02889ae010000367765c2d68e0c926d81ecdf9e3c86991ccf5a52e97c49ad5cf584c8ab030427010100237b58d3217709b6ebc3bdc093413ba788739f052a0b5b3a413e65444b146bc1",
         ];
         for hex_str in valid {
-            MerklePath::from_hex(hex_str).expect(&format!("should parse valid bump: {}", &hex_str[..20]));
+            MerklePath::from_hex(hex_str)
+                .expect(&format!("should parse valid bump: {}", &hex_str[..20]));
         }
     }
 
@@ -597,7 +697,10 @@ mod tests {
             "feb39d0c000c01fd9b030012f77e65627c341a3aaea3a0ed645c0082ef53995f446ab9901a27e4622fd1cc01fdcc010074026299a4ba40fbcf33cc0c64b384f0bb2fb17c61125609a666b546539c221c01e700730f99f8cf10fccd30730474449172c5f97cde6a6cf65163359e778463e9f2b9017200a202c78dee487cf96e1a6a04d51faec4debfad09eea28cc624483f2d6fa53d54013800b51ecabaa590b6bd1805baf4f19fc0eae0dedb533302603579d124059b374b1e011d00a0f36640f32a43d790bb4c3e7877011aa8ae25e433b2b83c952a16f8452b6b79010f005d68efab62c6c457ce0bb526194cc16b27f93f8a4899f6d59ffffdddc06e345c01060099f66a0ef693d151bbe9aeb10392ac5a7712243406f9e821219fd13d1865f569010200201fa17c98478675a96703ded42629a3c7bf32b45d0bff25f8be6849d02889ae010000367765c2d68e0c926d81ecdf9e3c86991ccf5a52e97c49ad5cf584c8ab030427010100237b58d3217709b6ebc3bdc093413ba788739f052a0b5b3a413e65444b146bc1",
         ];
         for hex_str in invalid {
-            assert!(MerklePath::from_hex(hex_str).is_err(), "should reject invalid bump");
+            assert!(
+                MerklePath::from_hex(hex_str).is_err(),
+                "should reject invalid bump"
+            );
         }
     }
 }

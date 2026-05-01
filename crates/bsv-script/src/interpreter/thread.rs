@@ -25,7 +25,9 @@ fn stas3_trace_enabled() -> bool {
     if v != 0xff {
         return v == 1;
     }
-    let on = std::env::var("STAS3_TRACE").map(|s| !s.is_empty()).unwrap_or(false);
+    let on = std::env::var("STAS3_TRACE")
+        .map(|s| !s.is_empty())
+        .unwrap_or(false);
     CACHE.store(if on { 1 } else { 0 }, Ordering::Relaxed);
     on
 }
@@ -495,7 +497,8 @@ impl<'a> Thread<'a> {
                 Ok(())
             }
             OP_1NEGATE => {
-                self.dstack.push_int(&ScriptNumber::new(-1, self.after_genesis));
+                self.dstack
+                    .push_int(&ScriptNumber::new(-1, self.after_genesis));
                 Ok(())
             }
             OP_RESERVED => self.op_reserved(pop),
@@ -529,7 +532,8 @@ impl<'a> Thread<'a> {
             OP_IFDUP => self.op_ifdup(),
             OP_DEPTH => {
                 let d = self.dstack.depth();
-                self.dstack.push_int(&ScriptNumber::new(d as i64, self.after_genesis));
+                self.dstack
+                    .push_int(&ScriptNumber::new(d as i64, self.after_genesis));
                 Ok(())
             }
             OP_DROP => self.dstack.drop_n(1),
@@ -559,14 +563,22 @@ impl<'a> Thread<'a> {
             OP_RESERVED1 | OP_RESERVED2 => self.op_reserved(pop),
 
             // Arithmetic
-            OP_1ADD => self.op_unary_int(|m| { m.incr(); }),
-            OP_1SUB => self.op_unary_int(|m| { m.decr(); }),
+            OP_1ADD => self.op_unary_int(|m| {
+                m.incr();
+            }),
+            OP_1SUB => self.op_unary_int(|m| {
+                m.decr();
+            }),
             OP_2MUL | OP_2DIV => Err(InterpreterError::new(
                 InterpreterErrorCode::DisabledOpcode,
                 format!("attempt to execute disabled opcode {}", pop.name()),
             )),
-            OP_NEGATE => self.op_unary_int(|m| { m.neg(); }),
-            OP_ABS => self.op_unary_int(|m| { m.abs(); }),
+            OP_NEGATE => self.op_unary_int(|m| {
+                m.neg();
+            }),
+            OP_ABS => self.op_unary_int(|m| {
+                m.abs();
+            }),
             OP_NOT => self.op_not(),
             OP_0NOTEQUAL => self.op_0notequal(),
             OP_ADD => self.op_add(),
@@ -605,8 +617,7 @@ impl<'a> Thread<'a> {
             OP_CHECKMULTISIGVERIFY => self.op_checkmultisigverify(pop),
 
             // NOP opcodes
-            OP_NOP1 | OP_NOP4 | OP_NOP5 | OP_NOP6 | OP_NOP7 | OP_NOP8 | OP_NOP9
-            | OP_NOP10 => {
+            OP_NOP1 | OP_NOP4 | OP_NOP5 | OP_NOP6 | OP_NOP7 | OP_NOP8 | OP_NOP9 | OP_NOP10 => {
                 if self.has_flag(ScriptFlags::DISCOURAGE_UPGRADABLE_NOPS) {
                     return Err(InterpreterError::new(
                         InterpreterErrorCode::DiscourageUpgradableNOPs,

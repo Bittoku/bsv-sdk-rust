@@ -1,8 +1,8 @@
 //! Parsed opcode representation and script parser.
 
+use super::error::{InterpreterError, InterpreterErrorCode};
 use crate::opcodes::*;
 use crate::Script;
-use super::error::{InterpreterError, InterpreterErrorCode};
 
 /// A parsed opcode with its data payload.
 #[derive(Debug, Clone)]
@@ -61,7 +61,10 @@ impl ParsedOpcode {
                 ),
             ));
         }
-        if data_len == 1 && (1..=16).contains(&self.data[0]) && self.opcode != OP_1 + self.data[0] - 1 {
+        if data_len == 1
+            && (1..=16).contains(&self.data[0])
+            && self.opcode != OP_1 + self.data[0] - 1
+        {
             return Err(InterpreterError::new(
                 InterpreterErrorCode::MinimalData,
                 format!(
@@ -143,7 +146,10 @@ impl ParsedOpcode {
     /// Serialize back to script bytes.
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut out = vec![self.opcode];
-        if self.opcode == 0 || (self.opcode >= OP_1NEGATE && self.opcode <= OP_16) || self.opcode > OP_PUSHDATA4 {
+        if self.opcode == 0
+            || (self.opcode >= OP_1NEGATE && self.opcode <= OP_16)
+            || self.opcode > OP_PUSHDATA4
+        {
             // No data for these opcodes (except OP_RETURN which has special handling)
             if self.opcode == OP_RETURN && !self.data.is_empty() {
                 out.extend_from_slice(&self.data);
@@ -279,8 +285,7 @@ pub fn parse_script(
                         "script truncated".to_string(),
                     ));
                 }
-                let data_len =
-                    u16::from_le_bytes([scr[i + 1], scr[i + 2]]) as usize;
+                let data_len = u16::from_le_bytes([scr[i + 1], scr[i + 2]]) as usize;
                 if i + 3 + data_len > scr.len() {
                     return Err(InterpreterError::new(
                         InterpreterErrorCode::MalformedPush,
@@ -297,12 +302,8 @@ pub fn parse_script(
                         "script truncated".to_string(),
                     ));
                 }
-                let data_len = u32::from_le_bytes([
-                    scr[i + 1],
-                    scr[i + 2],
-                    scr[i + 3],
-                    scr[i + 4],
-                ]) as usize;
+                let data_len =
+                    u32::from_le_bytes([scr[i + 1], scr[i + 2], scr[i + 3], scr[i + 4]]) as usize;
                 if i + 5 + data_len > scr.len() {
                     return Err(InterpreterError::new(
                         InterpreterErrorCode::MalformedPush,

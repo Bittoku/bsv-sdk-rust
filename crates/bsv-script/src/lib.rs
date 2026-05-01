@@ -16,19 +16,19 @@
 //! Provides the Bitcoin Script type, opcode definitions, script chunk parsing,
 //! address generation/validation, and a full script interpreter engine.
 
-/// Bitcoin Script type with serialization and template detection.
-pub mod script;
-/// Bitcoin Script opcode constant definitions.
-pub mod opcodes;
-/// Script chunk parsing for extracting data pushes and opcodes.
-pub mod chunk;
 /// Bitcoin address generation and validation (P2PKH, P2SH).
 pub mod address;
+/// Script chunk parsing for extracting data pushes and opcodes.
+pub mod chunk;
 /// Full Bitcoin script interpreter engine.
 pub mod interpreter;
+/// Bitcoin Script opcode constant definitions.
+pub mod opcodes;
+/// Bitcoin Script type with serialization and template detection.
+pub mod script;
 
 mod error;
-pub use error::ScriptError;
-pub use script::Script;
 pub use address::{Address, Network};
 pub use chunk::ScriptChunk;
+pub use error::ScriptError;
+pub use script::Script;

@@ -8,11 +8,11 @@ use bsv_primitives::chainhash::Hash;
 use bsv_primitives::ec::PrivateKey;
 use bsv_script::opcodes::{OP_FALSE, OP_RETURN};
 use bsv_script::Script;
+use bsv_transaction::input::TransactionInput;
+use bsv_transaction::output::TransactionOutput;
 use bsv_transaction::template::p2pkh;
 use bsv_transaction::template::UnlockingScriptTemplate;
 use bsv_transaction::transaction::Transaction;
-use bsv_transaction::output::TransactionOutput;
-use bsv_transaction::input::TransactionInput;
 
 use crate::error::TokenError;
 use crate::scheme::TokenScheme;

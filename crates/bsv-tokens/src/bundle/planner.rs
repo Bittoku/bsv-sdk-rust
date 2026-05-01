@@ -62,25 +62,35 @@ pub fn plan_operations(
     let mut utxos: Vec<(usize, u64)> = available.to_vec();
     utxos.sort_by(|a, b| b.1.cmp(&a.1));
 
-    let mut sorted_targets: Vec<(usize, u64)> = targets.iter().enumerate().map(|(i, &v)| (i, v)).collect();
+    let mut sorted_targets: Vec<(usize, u64)> =
+        targets.iter().enumerate().map(|(i, &v)| (i, v)).collect();
     sorted_targets.sort_by(|a, b| b.1.cmp(&a.1));
 
     let mut ops = Vec::new();
     let mut used = vec![false; utxos.len()];
     // Track which UTXOs need splitting (source_utxo_idx -> vec of target amounts)
-    let mut split_map: std::collections::HashMap<usize, Vec<(usize, u64)>> = std::collections::HashMap::new();
+    let mut split_map: std::collections::HashMap<usize, Vec<(usize, u64)>> =
+        std::collections::HashMap::new();
 
     for &(dest_idx, target) in &sorted_targets {
         // Try exact match first
-        let exact = utxos.iter().enumerate().find(|(i, (_, s))| !used[*i] && *s == target);
+        let exact = utxos
+            .iter()
+            .enumerate()
+            .find(|(i, (_, s))| !used[*i] && *s == target);
         if let Some((ui, _)) = exact {
             used[ui] = true;
-            ops.push(PlannedOp::Transfer { source: utxos[ui].0, dest_index: dest_idx });
+            ops.push(PlannedOp::Transfer {
+                source: utxos[ui].0,
+                dest_index: dest_idx,
+            });
             continue;
         }
 
         // Try smallest UTXO >= target
-        let mut candidates: Vec<(usize, u64)> = utxos.iter().enumerate()
+        let mut candidates: Vec<(usize, u64)> = utxos
+            .iter()
+            .enumerate()
             .filter(|(i, (_, s))| !used[*i] && *s >= target)
             .map(|(i, (_, s))| (i, *s))
             .collect();
@@ -92,7 +102,10 @@ pub fn plan_operations(
             if sats <= target + DUST_THRESHOLD {
                 // Close enough for direct transfer
                 used[ui] = true;
-                ops.push(PlannedOp::Transfer { source: utxos[ui].0, dest_index: dest_idx });
+                ops.push(PlannedOp::Transfer {
+                    source: utxos[ui].0,
+                    dest_index: dest_idx,
+                });
             } else {
                 // Need a split – accumulate targets for this UTXO
                 used[ui] = true;
@@ -119,12 +132,21 @@ pub fn plan_operations(
         used[a] = true;
         used[b] = true;
         let merged_sats = utxos[a].1 + utxos[b].1;
-        ops.push(PlannedOp::Merge { input_a: utxos[a].0, input_b: utxos[b].0 });
+        ops.push(PlannedOp::Merge {
+            input_a: utxos[a].0,
+            input_b: utxos[b].0,
+        });
 
         if merged_sats == target || merged_sats <= target + DUST_THRESHOLD {
-            ops.push(PlannedOp::Transfer { source: utxos[a].0, dest_index: dest_idx });
+            ops.push(PlannedOp::Transfer {
+                source: utxos[a].0,
+                dest_index: dest_idx,
+            });
         } else if merged_sats > target {
-            ops.push(PlannedOp::Split { source: utxos[a].0, amounts: vec![target, merged_sats - target] });
+            ops.push(PlannedOp::Split {
+                source: utxos[a].0,
+                amounts: vec![target, merged_sats - target],
+            });
         } else {
             return Err(TokenError::BundleError(
                 "merged UTXOs still insufficient for target".into(),
@@ -148,7 +170,10 @@ pub fn plan_operations(
                 true
             }
         });
-        ops.push(PlannedOp::Split { source: utxos[*ui].0, amounts });
+        ops.push(PlannedOp::Split {
+            source: utxos[*ui].0,
+            amounts,
+        });
     }
 
     Ok(ops)
@@ -164,7 +189,13 @@ mod tests {
         let targets = vec![1000];
         let ops = plan_operations(&available, &targets).unwrap();
         assert_eq!(ops.len(), 1);
-        assert!(matches!(ops[0], PlannedOp::Transfer { source: 0, dest_index: 0 }));
+        assert!(matches!(
+            ops[0],
+            PlannedOp::Transfer {
+                source: 0,
+                dest_index: 0
+            }
+        ));
     }
 
     #[test]
@@ -173,7 +204,9 @@ mod tests {
         let targets = vec![3000];
         let ops = plan_operations(&available, &targets).unwrap();
         // Should have a split
-        assert!(ops.iter().any(|op| matches!(op, PlannedOp::Split { source: 0, .. })));
+        assert!(ops
+            .iter()
+            .any(|op| matches!(op, PlannedOp::Split { source: 0, .. })));
         if let PlannedOp::Split { amounts, .. } = &ops[ops.len() - 1] {
             assert_eq!(amounts[0], 3000);
             assert_eq!(amounts[1], 2000);
@@ -194,7 +227,10 @@ mod tests {
         let targets = vec![1000, 500];
         let ops = plan_operations(&available, &targets).unwrap();
         // Both should be direct transfers
-        let transfers: Vec<_> = ops.iter().filter(|op| matches!(op, PlannedOp::Transfer { .. })).collect();
+        let transfers: Vec<_> = ops
+            .iter()
+            .filter(|op| matches!(op, PlannedOp::Transfer { .. }))
+            .collect();
         assert_eq!(transfers.len(), 2);
     }
 
@@ -204,7 +240,10 @@ mod tests {
         let targets = vec![500];
         let result = plan_operations(&available, &targets);
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), TokenError::InsufficientFunds { .. }));
+        assert!(matches!(
+            result.unwrap_err(),
+            TokenError::InsufficientFunds { .. }
+        ));
     }
 
     #[test]

@@ -3,7 +3,6 @@
 /// Scripts are used in transaction inputs (unlocking) and outputs (locking)
 /// to define spending conditions. The Script wraps a `Vec<u8>` and provides
 /// methods for construction, classification, serialization, and ASM output.
-
 use std::fmt;
 
 use crate::chunk::{decode_script, push_data_prefix, ScriptChunk};
@@ -35,8 +34,7 @@ impl Script {
     /// # Returns
     /// A `Script` wrapping the decoded bytes, or an error if the hex is invalid.
     pub fn from_hex(hex_str: &str) -> Result<Self, ScriptError> {
-        let bytes = hex::decode(hex_str)
-            ?;
+        let bytes = hex::decode(hex_str)?;
         Ok(Script(bytes))
     }
 
@@ -174,7 +172,8 @@ impl Script {
             if let Some(ref pubkey) = parts[0].data {
                 if !pubkey.is_empty() {
                     let version = pubkey[0];
-                    if (version == 0x04 || version == 0x06 || version == 0x07) && pubkey.len() == 65 {
+                    if (version == 0x04 || version == 0x06 || version == 0x07) && pubkey.len() == 65
+                    {
                         return true;
                     } else if (version == 0x03 || version == 0x02) && pubkey.len() == 33 {
                         return true;
@@ -193,10 +192,7 @@ impl Script {
     /// `true` if the script matches the P2SH pattern.
     pub fn is_p2sh(&self) -> bool {
         let b = &self.0;
-        b.len() == 23
-            && b[0] == OP_HASH160
-            && b[1] == OP_DATA_20
-            && b[22] == OP_EQUAL
+        b.len() == 23 && b[0] == OP_HASH160 && b[1] == OP_DATA_20 && b[22] == OP_EQUAL
     }
 
     /// Check if this is a data output script (OP_RETURN or OP_FALSE OP_RETURN).
@@ -302,8 +298,7 @@ impl Script {
     /// # Returns
     /// `Ok(())` on success, or an error if the hex is invalid or data too large.
     pub fn append_push_data_hex(&mut self, hex_str: &str) -> Result<(), ScriptError> {
-        let data = hex::decode(hex_str)
-            .map_err(|_| ScriptError::InvalidOpcodeData)?;
+        let data = hex::decode(hex_str).map_err(|_| ScriptError::InvalidOpcodeData)?;
         self.append_push_data(&data)
     }
 
@@ -371,7 +366,10 @@ impl Script {
                 }
                 let data = b[*pos..*pos + length].to_vec();
                 *pos += length;
-                Ok(ScriptChunk { op: OP_PUSHDATA1, data: Some(data) })
+                Ok(ScriptChunk {
+                    op: OP_PUSHDATA1,
+                    data: Some(data),
+                })
             }
             OP_PUSHDATA2 => {
                 if b.len() < *pos + 3 {
@@ -384,22 +382,28 @@ impl Script {
                 }
                 let data = b[*pos..*pos + length].to_vec();
                 *pos += length;
-                Ok(ScriptChunk { op: OP_PUSHDATA2, data: Some(data) })
+                Ok(ScriptChunk {
+                    op: OP_PUSHDATA2,
+                    data: Some(data),
+                })
             }
             OP_PUSHDATA4 => {
                 if b.len() < *pos + 5 {
                     return Err(ScriptError::DataTooSmall);
                 }
-                let length = u32::from_le_bytes([
-                    b[*pos + 1], b[*pos + 2], b[*pos + 3], b[*pos + 4],
-                ]) as usize;
+                let length =
+                    u32::from_le_bytes([b[*pos + 1], b[*pos + 2], b[*pos + 3], b[*pos + 4]])
+                        as usize;
                 *pos += 5;
                 if b.len() < *pos + length {
                     return Err(ScriptError::DataTooSmall);
                 }
                 let data = b[*pos..*pos + length].to_vec();
                 *pos += length;
-                Ok(ScriptChunk { op: OP_PUSHDATA4, data: Some(data) })
+                Ok(ScriptChunk {
+                    op: OP_PUSHDATA4,
+                    data: Some(data),
+                })
             }
             _ if op >= OP_DATA_1 && op < OP_PUSHDATA1 => {
                 let length = op as usize;
@@ -408,7 +412,10 @@ impl Script {
                 }
                 let data = b[*pos + 1..*pos + 1 + length].to_vec();
                 *pos += 1 + length;
-                Ok(ScriptChunk { op, data: Some(data) })
+                Ok(ScriptChunk {
+                    op,
+                    data: Some(data),
+                })
             }
             _ => {
                 *pos += 1;
@@ -519,7 +526,8 @@ mod tests {
     /// the expected hex output.
     #[test]
     fn test_from_asm_p2pkh() {
-        let asm = "OP_DUP OP_HASH160 e2a623699e81b291c0327f408fea765d534baa2a OP_EQUALVERIFY OP_CHECKSIG";
+        let asm =
+            "OP_DUP OP_HASH160 e2a623699e81b291c0327f408fea765d534baa2a OP_EQUALVERIFY OP_CHECKSIG";
         let script = Script::from_asm(asm).expect("valid ASM should parse");
         assert_eq!(
             script.to_hex(),
@@ -559,8 +567,8 @@ mod tests {
     /// Verify is_p2pkh returns false for a non-P2PKH script.
     #[test]
     fn test_is_p2pkh_false_for_p2sh() {
-        let script = Script::from_hex("a9149de5aeaff9c48431ba4dd6e8af73d51f38e451cb87")
-            .expect("valid hex");
+        let script =
+            Script::from_hex("a9149de5aeaff9c48431ba4dd6e8af73d51f38e451cb87").expect("valid hex");
         assert!(!script.is_p2pkh());
     }
 
@@ -585,8 +593,8 @@ mod tests {
     /// Verify is_p2sh returns true for a standard P2SH script.
     #[test]
     fn test_is_p2sh() {
-        let script = Script::from_hex("a9149de5aeaff9c48431ba4dd6e8af73d51f38e451cb87")
-            .expect("valid hex");
+        let script =
+            Script::from_hex("a9149de5aeaff9c48431ba4dd6e8af73d51f38e451cb87").expect("valid hex");
         assert!(script.is_p2sh());
     }
 
@@ -649,17 +657,23 @@ mod tests {
         let script = Script::from_hex("76a91404d03f746652cfcb6cb55119ab473a045137d26588ac")
             .expect("valid hex");
         let pkh = script.public_key_hash().expect("should extract PKH");
-        assert_eq!(hex::encode(&pkh), "04d03f746652cfcb6cb55119ab473a045137d265");
+        assert_eq!(
+            hex::encode(&pkh),
+            "04d03f746652cfcb6cb55119ab473a045137d265"
+        );
     }
 
     /// Verify public_key_hash from bytes matches the hex-constructed version.
     #[test]
     fn test_public_key_hash_from_bytes() {
-        let bytes = hex::decode("76a91404d03f746652cfcb6cb55119ab473a045137d26588ac")
-            .expect("valid hex");
+        let bytes =
+            hex::decode("76a91404d03f746652cfcb6cb55119ab473a045137d26588ac").expect("valid hex");
         let script = Script::from_bytes(&bytes);
         let pkh = script.public_key_hash().expect("should extract PKH");
-        assert_eq!(hex::encode(&pkh), "04d03f746652cfcb6cb55119ab473a045137d265");
+        assert_eq!(
+            hex::encode(&pkh),
+            "04d03f746652cfcb6cb55119ab473a045137d265"
+        );
     }
 
     /// Verify public_key_hash returns an error for an empty script.
@@ -786,8 +800,7 @@ mod tests {
     /// Verify Script serializes to a hex JSON string.
     #[test]
     fn test_serde_serialize() {
-        let script = Script::from_asm("OP_2 OP_2 OP_ADD OP_4 OP_EQUALVERIFY")
-            .expect("valid ASM");
+        let script = Script::from_asm("OP_2 OP_2 OP_ADD OP_4 OP_EQUALVERIFY").expect("valid ASM");
         let json_str = serde_json::to_string(&script).expect("should serialize");
         assert_eq!(json_str, r#""5252935488""#);
     }
@@ -854,8 +867,8 @@ mod tests {
     /// Verify from_bytes and len work as expected.
     #[test]
     fn test_from_bytes_len() {
-        let bytes = hex::decode("76a91403ececf2d12a7f614aef4c82ecf13c303bd9975d88ac")
-            .expect("valid hex");
+        let bytes =
+            hex::decode("76a91403ececf2d12a7f614aef4c82ecf13c303bd9975d88ac").expect("valid hex");
         let script = Script::from_bytes(&bytes);
         assert_eq!(script.len(), 25);
         assert!(!script.is_empty());

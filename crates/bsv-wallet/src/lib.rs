@@ -8,11 +8,11 @@
 mod error;
 pub use error::WalletError;
 
+pub mod key_deriver;
+pub mod proto_wallet;
 /// Core wallet types — Protocol, Counterparty, EncryptionArgs, and wire-format structs.
 pub mod types;
-pub mod key_deriver;
 pub mod wallet_trait;
-pub mod proto_wallet;
 
 pub use key_deriver::KeyDeriver;
 pub use proto_wallet::{ProtoWallet, ProtoWalletArgs, Wallet};

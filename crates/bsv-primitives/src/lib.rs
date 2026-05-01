@@ -9,11 +9,11 @@
 //! - Variable-length integer encoding
 //! - Base58 encoding/decoding
 
-pub mod hash;
-pub mod chainhash;
-pub mod util;
 pub mod base58;
+pub mod chainhash;
 pub mod ec;
+pub mod hash;
+pub mod util;
 
 mod error;
 pub use error::PrimitivesError;

@@ -77,7 +77,12 @@ impl Stack {
     /// Pop the top element and decode it as a script number.
     pub fn pop_int(&mut self) -> Result<ScriptNumber, InterpreterError> {
         let data = self.pop_byte_array()?;
-        ScriptNumber::from_bytes(&data, self.max_num_length, self.verify_minimal_data, self.after_genesis)
+        ScriptNumber::from_bytes(
+            &data,
+            self.max_num_length,
+            self.verify_minimal_data,
+            self.after_genesis,
+        )
     }
 
     /// Pop the top element and interpret it as a boolean.
@@ -101,7 +106,12 @@ impl Stack {
     /// Peek at a script number at the given depth index without removing it.
     pub fn peek_int(&self, idx: i32) -> Result<ScriptNumber, InterpreterError> {
         let data = self.peek_byte_array(idx)?;
-        ScriptNumber::from_bytes(&data, self.max_num_length, self.verify_minimal_data, self.after_genesis)
+        ScriptNumber::from_bytes(
+            &data,
+            self.max_num_length,
+            self.verify_minimal_data,
+            self.after_genesis,
+        )
     }
 
     /// Peek at a boolean at the given depth index without removing it.

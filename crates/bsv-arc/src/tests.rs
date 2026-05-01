@@ -3,8 +3,8 @@
 use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-use crate::types::{ArcConfig, ArcStatus};
 use crate::client::ArcClient;
+use crate::types::{ArcConfig, ArcStatus};
 
 fn test_config(base_url: &str) -> ArcConfig {
     ArcConfig {
@@ -170,7 +170,10 @@ async fn test_no_auth_header_when_no_api_key() {
     // Verify the request was received (no auth header crash)
     let requests = server.received_requests().await.unwrap();
     assert_eq!(requests.len(), 1);
-    assert!(!requests[0].headers.iter().any(|(name, _)| name == "authorization"));
+    assert!(!requests[0]
+        .headers
+        .iter()
+        .any(|(name, _)| name == "authorization"));
 }
 
 #[tokio::test]
@@ -198,8 +201,7 @@ async fn test_html_error_response() {
     Mock::given(method("POST"))
         .and(path("/tx"))
         .respond_with(
-            ResponseTemplate::new(502)
-                .set_body_string("<html><body>Bad Gateway</body></html>"),
+            ResponseTemplate::new(502).set_body_string("<html><body>Bad Gateway</body></html>"),
         )
         .mount(&server)
         .await;
@@ -295,11 +297,19 @@ async fn test_connection_refused() {
 #[tokio::test]
 async fn test_all_statuses_deserialize() {
     let statuses = [
-        "REJECTED", "QUEUED", "RECEIVED", "STORED",
-        "ANNOUNCED_TO_NETWORK", "REQUESTED_BY_NETWORK",
-        "SENT_TO_NETWORK", "ACCEPTED_BY_NETWORK",
-        "SEEN_ON_NETWORK", "MINED", "CONFIRMED",
-        "DOUBLE_SPEND_ATTEMPTED", "SEEN_IN_ORPHAN_MEMPOOL",
+        "REJECTED",
+        "QUEUED",
+        "RECEIVED",
+        "STORED",
+        "ANNOUNCED_TO_NETWORK",
+        "REQUESTED_BY_NETWORK",
+        "SENT_TO_NETWORK",
+        "ACCEPTED_BY_NETWORK",
+        "SEEN_ON_NETWORK",
+        "MINED",
+        "CONFIRMED",
+        "DOUBLE_SPEND_ATTEMPTED",
+        "SEEN_IN_ORPHAN_MEMPOOL",
     ];
     for s in statuses {
         let json = format!("\"{s}\"");

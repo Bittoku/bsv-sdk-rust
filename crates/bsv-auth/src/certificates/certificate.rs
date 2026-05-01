@@ -287,10 +287,7 @@ impl Certificate {
     }
 
     /// Get encryption protocol and key ID for certificate fields.
-    pub fn get_encryption_details(
-        field_name: &str,
-        serial_number: &str,
-    ) -> (Protocol, String) {
+    pub fn get_encryption_details(field_name: &str, serial_number: &str) -> (Protocol, String) {
         let protocol_id = Protocol {
             security_level: SECURITY_LEVEL_EVERY_APP_AND_COUNTERPARTY,
             protocol: "certificate field encryption".to_string(),

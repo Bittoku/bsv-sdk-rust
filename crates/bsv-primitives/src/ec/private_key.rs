@@ -11,7 +11,7 @@ use rand::rngs::OsRng;
 
 use crate::ec::public_key::PublicKey;
 use crate::ec::signature::Signature;
-use crate::hash::{sha256d, sha256_hmac};
+use crate::hash::{sha256_hmac, sha256d};
 use crate::PrimitivesError;
 
 /// A secp256k1 private key for signing and key derivation.
@@ -40,9 +40,7 @@ impl PrivateKey {
     /// A new randomly generated `PrivateKey`.
     pub fn new() -> Self {
         let signing_key = SigningKey::random(&mut OsRng);
-        PrivateKey {
-            inner: signing_key,
-        }
+        PrivateKey { inner: signing_key }
     }
 
     /// Create a private key from raw 32-byte scalar.
@@ -62,9 +60,7 @@ impl PrivateKey {
             )));
         }
         let signing_key = SigningKey::from_bytes(bytes.into())?;
-        Ok(PrivateKey {
-            inner: signing_key,
-        })
+        Ok(PrivateKey { inner: signing_key })
     }
 
     /// Create a private key from a hexadecimal string.
@@ -80,8 +76,7 @@ impl PrivateKey {
                 "private key hex is empty".to_string(),
             ));
         }
-        let bytes =
-            hex::decode(hex_str)?;
+        let bytes = hex::decode(hex_str)?;
         Self::from_bytes(&bytes)
     }
 
@@ -222,10 +217,7 @@ impl PrivateKey {
     /// # Returns
     /// `Ok(PublicKey)` representing the shared secret point, or an error if the
     /// public key is not on the curve.
-    pub fn derive_shared_secret(
-        &self,
-        pub_key: &PublicKey,
-    ) -> Result<PublicKey, PrimitivesError> {
+    pub fn derive_shared_secret(&self, pub_key: &PublicKey) -> Result<PublicKey, PrimitivesError> {
         let their_point = pub_key.to_projective_point()?;
         let scalar = self.to_scalar();
         let shared_point = their_point * scalar;
@@ -385,9 +377,13 @@ mod tests {
     #[test]
     fn test_private_key_from_invalid_wif() {
         // modified character
-        assert!(PrivateKey::from_wif("L401GXuUSHauk19f9Cfpm1qfSXZuGLBUAC2VZM6vdmfMxRxAYkWq").is_err());
+        assert!(
+            PrivateKey::from_wif("L401GXuUSHauk19f9Cfpm1qfSXZuGLBUAC2VZM6vdmfMxRxAYkWq").is_err()
+        );
         // truncated
-        assert!(PrivateKey::from_wif("L4o1GXuUSHauk19f9Cfpm1qfSXZuGLBUAC2VZM6vdmfMxRxAYkW").is_err());
+        assert!(
+            PrivateKey::from_wif("L4o1GXuUSHauk19f9Cfpm1qfSXZuGLBUAC2VZM6vdmfMxRxAYkW").is_err()
+        );
         // doubled
         assert!(PrivateKey::from_wif(
             "L4o1GXuUSHauk19f9Cfpm1qfSXZuGLBUAC2VZM6vdmfMxRxAYkWqL4o1GXuUSHauk19f9Cfpm1qfSXZuGLBUAC2VZM6vdmfMxRxAYkWq"
@@ -417,7 +413,8 @@ mod tests {
 
             let derived_hex = derived.to_hex();
             assert_eq!(
-                derived_hex, expected_priv_hex,
+                derived_hex,
+                expected_priv_hex,
                 "BRC42 private vector #{}: derived key mismatch",
                 i + 1
             );

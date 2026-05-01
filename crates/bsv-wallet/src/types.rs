@@ -655,8 +655,11 @@ pub struct GetVersionResult {
 
 /// Returns the special "anyone" private/public key pair (scalar = 1).
 pub fn anyone_key() -> (bsv_primitives::ec::private_key::PrivateKey, PublicKey) {
-    let priv_key = bsv_primitives::ec::private_key::PrivateKey::from_bytes(&[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1])
-        .expect("anyone key should always be valid");
+    let priv_key = bsv_primitives::ec::private_key::PrivateKey::from_bytes(&[
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 1,
+    ])
+    .expect("anyone key should always be valid");
     let pub_key = priv_key.pub_key();
     (priv_key, pub_key)
 }

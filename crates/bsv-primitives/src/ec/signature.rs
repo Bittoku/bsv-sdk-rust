@@ -13,16 +13,14 @@ use crate::PrimitivesError;
 /// The secp256k1 curve order N.
 /// N = FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141
 const CURVE_ORDER: [u8; 32] = [
-    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-    0xFE, 0xBA, 0xAE, 0xDC, 0xE6, 0xAF, 0x48, 0xA0, 0x3B, 0xBF, 0xD2, 0x5E, 0x8C, 0xD0, 0x36,
-    0x41, 0x41,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFE,
+    0xBA, 0xAE, 0xDC, 0xE6, 0xAF, 0x48, 0xA0, 0x3B, 0xBF, 0xD2, 0x5E, 0x8C, 0xD0, 0x36, 0x41, 0x41,
 ];
 
 /// Half of the secp256k1 curve order (N/2), used for low-S normalization.
 const HALF_ORDER: [u8; 32] = [
-    0x7F, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-    0xFF, 0x5D, 0x57, 0x6E, 0x73, 0x57, 0xA4, 0x50, 0x1D, 0xDF, 0xE9, 0x2F, 0x46, 0x68, 0x1B,
-    0x20, 0xA0,
+    0x7F, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0x5D, 0x57, 0x6E, 0x73, 0x57, 0xA4, 0x50, 0x1D, 0xDF, 0xE9, 0x2F, 0x46, 0x68, 0x1B, 0x20, 0xA0,
 ];
 
 /// An ECDSA signature with R and S components.
@@ -230,9 +228,7 @@ impl Signature {
     pub fn to_compact(&self, hash: &[u8], priv_key: &PrivateKey) -> Vec<u8> {
         // Use k256's recoverable signing to get the recovery ID
         let signing_key = priv_key.signing_key();
-        if let Ok((k256_sig, recovery_id)) =
-            signing_key.sign_prehash_recoverable(hash)
-        {
+        if let Ok((k256_sig, recovery_id)) = signing_key.sign_prehash_recoverable(hash) {
             let mut result = vec![0u8; 65];
             let recid_byte = 27 + recovery_id.to_byte() + 4; // +4 for compressed
             result[0] = recid_byte;
@@ -281,9 +277,7 @@ impl Signature {
         // Go's ecdsa package internally handles arbitrary-length hashes.
         let padded = Self::normalize_hash(hash);
 
-        let (k256_sig, _recovery_id) = signing_key
-            .sign_prehash_recoverable(&padded)
-            ?;
+        let (k256_sig, _recovery_id) = signing_key.sign_prehash_recoverable(&padded)?;
 
         let (r_bytes, s_bytes) = k256_sig.split_bytes();
         let mut r = [0u8; 32];
@@ -351,19 +345,12 @@ impl Signature {
         let k256_sig = ecdsa::Signature::from_scalars(
             *k256::FieldBytes::from_slice(&compact_sig[1..33]),
             *k256::FieldBytes::from_slice(&compact_sig[33..65]),
-        )
-        ?;
+        )?;
 
         let padded = Self::normalize_hash(hash);
-        let recovered_key =
-            VerifyingKey::recover_from_prehash(&padded, &k256_sig, recovery_id)
-                ?;
+        let recovered_key = VerifyingKey::recover_from_prehash(&padded, &k256_sig, recovery_id)?;
 
-        PublicKey::from_bytes(
-            recovered_key
-                .to_encoded_point(false)
-                .as_bytes(),
-        )
+        PublicKey::from_bytes(recovered_key.to_encoded_point(false).as_bytes())
     }
 }
 
@@ -523,12 +510,8 @@ mod tests {
     fn test_signature_serialize() {
         // "valid 1 - r and s most significant bits are zero"
         let sig = Signature::new(
-            hex_to_32(
-                "4e45e16932b8af514961a1d3a1a25fdf3f4f7732e9d624c6c61548ab5fb8cd41",
-            ),
-            hex_to_32(
-                "181522ec8eca07de4860a4acdd12909d831cc56cbbac4622082221a8768d1d09",
-            ),
+            hex_to_32("4e45e16932b8af514961a1d3a1a25fdf3f4f7732e9d624c6c61548ab5fb8cd41"),
+            hex_to_32("181522ec8eca07de4860a4acdd12909d831cc56cbbac4622082221a8768d1d09"),
         );
         let expected = hex::decode(
             "304402204e45e16932b8af514961a1d3a1a25fdf3f4f7732e9d624c6c61548ab5fb8cd41\
@@ -539,12 +522,8 @@ mod tests {
 
         // "valid 4 - s is bigger than half order" (low-S normalization)
         let sig = Signature::new(
-            hex_to_32(
-                "a196ed0e7ebcbe7b63fe1d8eecbdbde03a67ceba4fc8f6482bdcb9606a911404",
-            ),
-            hex_to_32(
-                "971729c7fa944b465b35250c6570a2f31acbb14b13d1565fab7330dcb2b3dfb1",
-            ),
+            hex_to_32("a196ed0e7ebcbe7b63fe1d8eecbdbde03a67ceba4fc8f6482bdcb9606a911404"),
+            hex_to_32("971729c7fa944b465b35250c6570a2f31acbb14b13d1565fab7330dcb2b3dfb1"),
         );
         let expected = hex::decode(
             "3045022100a196ed0e7ebcbe7b63fe1d8eecbdbde03a67ceba4fc8f6482bdcb9606a911404\
@@ -640,20 +619,12 @@ mod tests {
     #[test]
     fn test_signature_is_equal() {
         let sig1 = Signature::new(
-            hex_to_32(
-                "4e45e16932b8af514961a1d3a1a25fdf3f4f7732e9d624c6c61548ab5fb8cd41",
-            ),
-            hex_to_32(
-                "181522ec8eca07de4860a4acdd12909d831cc56cbbac4622082221a8768d1d09",
-            ),
+            hex_to_32("4e45e16932b8af514961a1d3a1a25fdf3f4f7732e9d624c6c61548ab5fb8cd41"),
+            hex_to_32("181522ec8eca07de4860a4acdd12909d831cc56cbbac4622082221a8768d1d09"),
         );
         let sig2 = Signature::new(
-            hex_to_32(
-                "a196ed0e7ebcbe7b63fe1d8eecbdbde03a67ceba4fc8f6482bdcb9606a911404",
-            ),
-            hex_to_32(
-                "971729c7fa944b465b35250c6570a2f31acbb14b13d1565fab7330dcb2b3dfb1",
-            ),
+            hex_to_32("a196ed0e7ebcbe7b63fe1d8eecbdbde03a67ceba4fc8f6482bdcb9606a911404"),
+            hex_to_32("971729c7fa944b465b35250c6570a2f31acbb14b13d1565fab7330dcb2b3dfb1"),
         );
 
         assert_eq!(sig1, sig1);

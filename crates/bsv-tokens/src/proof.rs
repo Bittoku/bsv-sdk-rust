@@ -26,7 +26,10 @@ use crate::error::TokenError;
 /// # Errors
 /// Returns [`TokenError::InvalidScript`] if the raw bytes are malformed or
 /// `vout` is out of range.
-pub fn split_tx_around_output(raw_tx: &[u8], vout: u32) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>), TokenError> {
+pub fn split_tx_around_output(
+    raw_tx: &[u8],
+    vout: u32,
+) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>), TokenError> {
     let vout_idx = vout as usize;
     let tx_len = raw_tx.len();
 
@@ -79,7 +82,9 @@ pub fn split_tx_around_output(raw_tx: &[u8], vout: u32) -> Result<(Vec<u8>, Vec<
 
         // satoshis (8 bytes)
         if cursor + 8 > tx_len {
-            return Err(TokenError::InvalidScript("truncated output satoshis".into()));
+            return Err(TokenError::InvalidScript(
+                "truncated output satoshis".into(),
+            ));
         }
         cursor += 8;
 
@@ -302,7 +307,17 @@ mod tests {
 
     #[test]
     fn varint_roundtrip() {
-        for &val in &[0u64, 1, 0xfc, 0xfd, 0xfffe, 0xffff, 0x1_0000, 0xffff_ffff, 0x1_0000_0000] {
+        for &val in &[
+            0u64,
+            1,
+            0xfc,
+            0xfd,
+            0xfffe,
+            0xffff,
+            0x1_0000,
+            0xffff_ffff,
+            0x1_0000_0000,
+        ] {
             let encoded = encode_varint(val);
             let (decoded, len) = read_varint(&encoded, 0).unwrap();
             assert_eq!(decoded, val, "failed for value {val}");

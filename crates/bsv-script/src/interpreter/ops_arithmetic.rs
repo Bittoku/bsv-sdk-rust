@@ -6,7 +6,10 @@ use super::scriptnum::ScriptNumber;
 use super::thread::Thread;
 
 impl<'a> Thread<'a> {
-    pub(crate) fn op_unary_int(&mut self, f: impl FnOnce(&mut ScriptNumber)) -> Result<(), InterpreterError> {
+    pub(crate) fn op_unary_int(
+        &mut self,
+        f: impl FnOnce(&mut ScriptNumber),
+    ) -> Result<(), InterpreterError> {
         let mut m = self.dstack.pop_int()?;
         f(&mut m);
         self.dstack.push_int(&m);

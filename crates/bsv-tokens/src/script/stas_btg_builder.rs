@@ -158,7 +158,11 @@ fn build_stas_v2_body(
     let mut script_bytes = hex::decode(STAS_V2_TEMPLATE_HEX)
         .map_err(|e| TokenError::InvalidScript(format!("template decode error: {e}")))?;
 
-    debug_assert_eq!(script_bytes.len(), 1431, "STAS v2 template must be 1431 bytes");
+    debug_assert_eq!(
+        script_bytes.len(),
+        1431,
+        "STAS v2 template must be 1431 bytes"
+    );
 
     // Patch owner PKH at bytes 3..23
     script_bytes[3..23].copy_from_slice(&owner.public_key_hash);
@@ -302,70 +306,70 @@ fn build_btg_preamble(redemption_pkh: &[u8; 20]) -> Result<Vec<u8>, TokenError> 
     // Copy prefix (idx 2) to top
     preamble.push(0x52); // OP_2
     preamble.push(0x79); // OP_PICK
-    // Stack: sig pub prefix output suffix prefix'
+                         // Stack: sig pub prefix output suffix prefix'
 
     // Copy output (now idx 3, was 1+1) to top
     // After OP_2 OP_PICK, stack grew by 1. output is now at idx 2
     preamble.push(0x52); // OP_2
     preamble.push(0x79); // OP_PICK
-    // Stack: sig pub prefix output suffix prefix' output'
+                         // Stack: sig pub prefix output suffix prefix' output'
 
     // OP_CAT: pops output'(top) and prefix'(second), pushes prefix'||output'
     preamble.push(0x7e); // OP_CAT
-    // Stack: sig pub prefix output suffix (prefix'||output')
+                         // Stack: sig pub prefix output suffix (prefix'||output')
 
     // Copy suffix (now idx 1) to top
     preamble.push(0x51); // OP_1
     preamble.push(0x79); // OP_PICK
-    // Stack: sig pub prefix output suffix (prefix'||output') suffix'
+                         // Stack: sig pub prefix output suffix (prefix'||output') suffix'
 
     // OP_CAT: pops suffix'(top) and (prefix'||output')(second)
     // pushes (prefix'||output')||suffix' = prefix||output||suffix
     preamble.push(0x7e); // OP_CAT
-    // Stack: sig pub prefix output suffix (prefix||output||suffix)
+                         // Stack: sig pub prefix output suffix (prefix||output||suffix)
 
     // OP_HASH256: double-SHA256
     preamble.push(0xaa); // OP_HASH256
-    // Stack: sig pub prefix output suffix prev_tx_hash(32 bytes)
+                         // Stack: sig pub prefix output suffix prev_tx_hash(32 bytes)
 
     // Stash prev_tx_hash on alt stack for the ECDSA trick to compare later
     preamble.push(0x6b); // OP_TOALTSTACK
-    // Stack: sig pub prefix output suffix
-    // Alt:   prev_tx_hash
+                         // Stack: sig pub prefix output suffix
+                         // Alt:   prev_tx_hash
 
     // --- Step 2: Extract satoshis from output and verify ---
 
     // Copy output (idx 1) to top
     preamble.push(0x51); // OP_1
     preamble.push(0x79); // OP_PICK
-    // Stack: sig pub prefix output suffix output'
+                         // Stack: sig pub prefix output suffix output'
 
     // Split at byte 8: [satoshis_8bytes | rest_of_output]
     preamble.push(0x01); // OP_PUSH1
     preamble.push(0x08); // push byte 0x08
     preamble.push(0x7f); // OP_SPLIT
-    // Stack: sig pub prefix output suffix satoshis_bytes rest_of_output
+                         // Stack: sig pub prefix output suffix satoshis_bytes rest_of_output
 
     // Stash rest_of_output (has varint_scriptlen + script) on alt stack
     preamble.push(0x6b); // OP_TOALTSTACK
-    // Stack: sig pub prefix output suffix satoshis_bytes
-    // Alt:   prev_tx_hash rest_of_output
+                         // Stack: sig pub prefix output suffix satoshis_bytes
+                         // Alt:   prev_tx_hash rest_of_output
 
     // Convert satoshis LE bytes to script number
     preamble.push(0x81); // OP_BIN2NUM
-    // Stack: sig pub prefix output suffix satoshis_num
+                         // Stack: sig pub prefix output suffix satoshis_num
 
     // Stash satoshis on alt stack
     preamble.push(0x6b); // OP_TOALTSTACK
-    // Stack: sig pub prefix output suffix
-    // Alt:   prev_tx_hash rest_of_output satoshis_num
+                         // Stack: sig pub prefix output suffix
+                         // Alt:   prev_tx_hash rest_of_output satoshis_num
 
     // --- Step 3: Verify locking script format from rest_of_output ---
 
     // Recover rest_of_output from alt stack
     preamble.push(0x6c); // OP_FROMALTSTACK
-    // Stack: sig pub prefix output suffix rest_of_output
-    // Alt:   prev_tx_hash satoshis_num
+                         // Stack: sig pub prefix output suffix rest_of_output
+                         // Alt:   prev_tx_hash satoshis_num
 
     // The rest_of_output is: varint(script_len) + script_bytes
     // For typical STAS scripts (1431+ bytes), the varint is 2 bytes (0xfd + LE16).
@@ -378,11 +382,11 @@ fn build_btg_preamble(redemption_pkh: &[u8; 20]) -> Result<Vec<u8>, TokenError> 
     // For simplicity, we split at byte 1 to get the varint indicator.
     preamble.push(0x51); // OP_1
     preamble.push(0x7f); // OP_SPLIT
-    // Stack: sig pub prefix output suffix varint_first_byte remaining
+                         // Stack: sig pub prefix output suffix varint_first_byte remaining
 
     // Swap so varint_first_byte is on top
     preamble.push(0x7c); // OP_SWAP
-    // Stack: sig pub prefix output suffix remaining varint_first_byte
+                         // Stack: sig pub prefix output suffix remaining varint_first_byte
 
     // Check if it's 0xfd (OP_PUSHDATA1-style varint)
     preamble.push(0x01); // OP_PUSH1
@@ -391,7 +395,7 @@ fn build_btg_preamble(redemption_pkh: &[u8; 20]) -> Result<Vec<u8>, TokenError> 
 
     // OP_IF: varint_first_byte == 0xfd → need to skip 2 more varint bytes
     preamble.push(0x63); // OP_IF
-    // Skip 2 bytes of LE16 length
+                         // Skip 2 bytes of LE16 length
     preamble.push(0x52); // OP_2
     preamble.push(0x7f); // OP_SPLIT
     preamble.push(0x75); // OP_DROP (drop the 2 varint bytes)
@@ -404,10 +408,10 @@ fn build_btg_preamble(redemption_pkh: &[u8; 20]) -> Result<Vec<u8>, TokenError> 
     // Split first 3 bytes
     preamble.push(0x53); // OP_3
     preamble.push(0x7f); // OP_SPLIT
-    // Stack: sig pub prefix output suffix first_3_bytes rest_of_script
+                         // Stack: sig pub prefix output suffix first_3_bytes rest_of_script
 
     preamble.push(0x7c); // OP_SWAP
-    // Stack: sig pub prefix output suffix rest_of_script first_3_bytes
+                         // Stack: sig pub prefix output suffix rest_of_script first_3_bytes
 
     // Push expected prefix: 76 a9 14
     preamble.push(0x03); // OP_PUSH3
@@ -418,7 +422,7 @@ fn build_btg_preamble(redemption_pkh: &[u8; 20]) -> Result<Vec<u8>, TokenError> 
 
     // Verify prefix matches
     preamble.push(0x88); // OP_EQUALVERIFY
-    // Stack: sig pub prefix output suffix rest_of_script
+                         // Stack: sig pub prefix output suffix rest_of_script
 
     // rest_of_script starts with the 20-byte owner PKH.
     // For STAS-BTG: the redemption PKH is at a known offset within the script.
@@ -446,7 +450,7 @@ fn build_btg_preamble(redemption_pkh: &[u8; 20]) -> Result<Vec<u8>, TokenError> 
 
     // Stack: sig pub prefix output suffix rest_of_script
     preamble.push(0x82); // OP_SIZE
-    // Stack: sig pub prefix output suffix rest_of_script size_num
+                         // Stack: sig pub prefix output suffix rest_of_script size_num
 
     // Is it exactly 22 (P2PKH remainder: 20 bytes PKH + 88 ac)?
     preamble.push(0x01); // OP_PUSH1
@@ -460,10 +464,10 @@ fn build_btg_preamble(redemption_pkh: &[u8; 20]) -> Result<Vec<u8>, TokenError> 
     preamble.push(0x01); // OP_PUSH1
     preamble.push(20u8); // push 20
     preamble.push(0x7f); // OP_SPLIT
-    // Stack: ... pkh_20bytes suffix_2bytes
+                         // Stack: ... pkh_20bytes suffix_2bytes
 
     preamble.push(0x75); // OP_DROP (drop the 88ac suffix)
-    // Stack: ... pkh_20bytes
+                         // Stack: ... pkh_20bytes
 
     // OP_ELSE (STAS-BTG path)
     preamble.push(0x67); // OP_ELSE
@@ -473,29 +477,29 @@ fn build_btg_preamble(redemption_pkh: &[u8; 20]) -> Result<Vec<u8>, TokenError> 
     // Split at offset 1408 to get redemption PKH at bytes 1408..1428
     push_number(&mut preamble, 1408);
     preamble.push(0x7f); // OP_SPLIT
-    // Stack: ... before_1408 after_1408
+                         // Stack: ... before_1408 after_1408
 
     preamble.push(0x75); // OP_NIP — drop before_1408, keep after_1408
-    // Actually OP_NIP = 0x77. Or we can use OP_SWAP OP_DROP.
+                         // Actually OP_NIP = 0x77. Or we can use OP_SWAP OP_DROP.
     preamble.push(0x7c); // OP_SWAP
     preamble.push(0x75); // OP_DROP
-    // Oops, I pushed OP_NIP above. Let me clear and redo.
-    // Remove the last 3 pushes (0x75, 0x7c, 0x75)
+                         // Oops, I pushed OP_NIP above. Let me clear and redo.
+                         // Remove the last 3 pushes (0x75, 0x7c, 0x75)
     let len = preamble.len();
     preamble.truncate(len - 3);
 
     // OP_NIP (remove second-to-top): keeps after_1408 on top
     preamble.push(0x77); // OP_NIP
-    // Stack: ... after_1408
+                         // Stack: ... after_1408
 
     // Take first 20 bytes = redemption PKH
     preamble.push(0x01); // OP_PUSH1
     preamble.push(20u8);
     preamble.push(0x7f); // OP_SPLIT
-    // Stack: ... redemption_pkh_20 remainder
+                         // Stack: ... redemption_pkh_20 remainder
 
     preamble.push(0x75); // OP_DROP (drop remainder)
-    // Stack: ... redemption_pkh_20
+                         // Stack: ... redemption_pkh_20
 
     preamble.push(0x68); // OP_ENDIF
 
@@ -507,7 +511,7 @@ fn build_btg_preamble(redemption_pkh: &[u8; 20]) -> Result<Vec<u8>, TokenError> 
     // Stack: sig pub prefix output suffix extracted_pkh expected_pkh
 
     preamble.push(0x88); // OP_EQUALVERIFY
-    // Stack: sig pub prefix output suffix
+                         // Stack: sig pub prefix output suffix
 
     // --- Step 4: Recover stashed values and prepare for STAS v2 template ---
 
@@ -515,14 +519,14 @@ fn build_btg_preamble(redemption_pkh: &[u8; 20]) -> Result<Vec<u8>, TokenError> 
     preamble.push(0x75); // OP_DROP (suffix)
     preamble.push(0x75); // OP_DROP (output)
     preamble.push(0x75); // OP_DROP (prefix)
-    // Stack: sig pubkey
-    // Alt:   prev_tx_hash satoshis_num
+                         // Stack: sig pubkey
+                         // Alt:   prev_tx_hash satoshis_num
 
     // Recover satoshis_num from alt stack and stash below sig/pubkey
     // for the STAS template value check
     preamble.push(0x6c); // OP_FROMALTSTACK (satoshis_num)
     preamble.push(0x6c); // OP_FROMALTSTACK (prev_tx_hash)
-    // Stack: sig pubkey satoshis_num prev_tx_hash
+                         // Stack: sig pubkey satoshis_num prev_tx_hash
 
     // The existing STAS v2 template expects just <sig> <pubkey> on the stack
     // and extracts outpoint + value from the sighash preimage via the ECDSA trick.
@@ -535,8 +539,8 @@ fn build_btg_preamble(redemption_pkh: &[u8; 20]) -> Result<Vec<u8>, TokenError> 
     // them after extracting the preimage fields.
     preamble.push(0x6b); // OP_TOALTSTACK (prev_tx_hash)
     preamble.push(0x6b); // OP_TOALTSTACK (satoshis_num)
-    // Stack: sig pubkey
-    // Alt:   satoshis_num prev_tx_hash
+                         // Stack: sig pubkey
+                         // Alt:   satoshis_num prev_tx_hash
 
     // The STAS template will proceed normally. After it extracts the outpoint
     // txid and value from the sighash preimage via the ECDSA trick, it must
@@ -563,7 +567,11 @@ fn push_number(script: &mut Vec<u8>, value: i64) {
     } else {
         // Encode as minimal script number
         let negative = value < 0;
-        let mut abs_val = if negative { (-value) as u64 } else { value as u64 };
+        let mut abs_val = if negative {
+            (-value) as u64
+        } else {
+            value as u64
+        };
 
         let mut bytes = Vec::new();
         while abs_val > 0 {
@@ -663,8 +671,7 @@ mod tests {
         let redemption_pkh = [0xbb; 20];
         let owner = test_address(owner_pkh);
 
-        let btg_script =
-            build_stas_btg_locking_script(&owner, &redemption_pkh, true).unwrap();
+        let btg_script = build_stas_btg_locking_script(&owner, &redemption_pkh, true).unwrap();
         let btg_len = btg_script.len();
 
         // Standard STAS v2 is 1433 bytes (1431 + 2 flags)
@@ -680,8 +687,7 @@ mod tests {
         let redemption_pkh = [0xbb; 20];
         let owner = test_address(owner_pkh);
 
-        let btg_script =
-            build_stas_btg_locking_script(&owner, &redemption_pkh, true).unwrap();
+        let btg_script = build_stas_btg_locking_script(&owner, &redemption_pkh, true).unwrap();
         let bytes = btg_script.to_bytes();
 
         // The dual-path BTG script starts with OP_IF (0x63).
@@ -698,8 +704,7 @@ mod tests {
         let redemption_pkh = [0xbb; 20];
         let owner = test_address(owner_pkh);
 
-        let btg_script =
-            build_stas_btg_locking_script(&owner, &redemption_pkh, true).unwrap();
+        let btg_script = build_stas_btg_locking_script(&owner, &redemption_pkh, true).unwrap();
         let bytes = btg_script.to_bytes();
 
         // First byte must be OP_IF
@@ -707,13 +712,16 @@ mod tests {
 
         // OP_ELSE (0x67) must appear somewhere in the preamble region
         let has_else = bytes[1..350].contains(&0x67);
-        assert!(has_else, "BTG script should contain OP_ELSE in preamble region");
+        assert!(
+            has_else,
+            "BTG script should contain OP_ELSE in preamble region"
+        );
 
         // OP_ENDIF (0x68) must appear after OP_ELSE but before STAS v2 body.
         // We look for 0x68 followed by the STAS v2 P2PKH gate (76 a9 14).
-        let found_endif_before_body = bytes.windows(4).any(|w| {
-            w[0] == 0x68 && w[1] == 0x76 && w[2] == 0xa9 && w[3] == 0x14
-        });
+        let found_endif_before_body = bytes
+            .windows(4)
+            .any(|w| w[0] == 0x68 && w[1] == 0x76 && w[2] == 0xa9 && w[3] == 0x14);
         assert!(
             found_endif_before_body,
             "OP_ENDIF should immediately precede the STAS v2 body (76 a9 14)"
@@ -731,8 +739,7 @@ mod tests {
         let gate = build_checkpoint_gate(&redemption_pkh);
         assert_eq!(gate.len(), 25, "checkpoint gate should be 25 bytes");
 
-        let btg_script =
-            build_stas_btg_locking_script(&owner, &redemption_pkh, true).unwrap();
+        let btg_script = build_stas_btg_locking_script(&owner, &redemption_pkh, true).unwrap();
         let preamble_only = build_btg_preamble(&redemption_pkh).unwrap();
         let stas_body = build_stas_v2_body(&owner, &redemption_pkh, true).unwrap();
 
@@ -751,8 +758,7 @@ mod tests {
         let redemption_pkh = [0xbb; 20];
         let owner = test_address(owner_pkh);
 
-        let btg_script =
-            build_stas_btg_locking_script(&owner, &redemption_pkh, true).unwrap();
+        let btg_script = build_stas_btg_locking_script(&owner, &redemption_pkh, true).unwrap();
         let bytes = btg_script.to_bytes();
 
         // The STAS v2 body starts with 76 a9 14 (P2PKH gate)
@@ -767,18 +773,14 @@ mod tests {
         let redemption_pkh = [0xbb; 20];
         let owner = test_address(owner_pkh);
 
-        let btg_script =
-            build_stas_btg_locking_script(&owner, &redemption_pkh, true).unwrap();
+        let btg_script = build_stas_btg_locking_script(&owner, &redemption_pkh, true).unwrap();
         let bytes = btg_script.to_bytes();
 
         // The redemption PKH should appear at least three times:
         // 1. In the BTG preamble (OP_IF branch, for prev-TX verification)
         // 2. In the checkpoint gate (OP_ELSE branch, for issuer verification)
         // 3. In the STAS v2 body (at offset 1411)
-        let count = bytes
-            .windows(20)
-            .filter(|w| *w == redemption_pkh)
-            .count();
+        let count = bytes.windows(20).filter(|w| *w == redemption_pkh).count();
         assert!(
             count >= 3,
             "redemption PKH should appear at least 3 times (preamble + checkpoint + body), found {count}"
@@ -791,8 +793,7 @@ mod tests {
         let redemption_pkh = [0xbb; 20];
         let owner = test_address(owner_pkh);
 
-        let btg_script =
-            build_stas_btg_locking_script(&owner, &redemption_pkh, true).unwrap();
+        let btg_script = build_stas_btg_locking_script(&owner, &redemption_pkh, true).unwrap();
         let bytes = btg_script.to_bytes();
 
         let found = bytes.windows(20).any(|w| w == owner_pkh);
@@ -805,12 +806,14 @@ mod tests {
         let redemption_pkh = [0xbb; 20];
         let owner = test_address(owner_pkh);
 
-        let btg_script =
-            build_stas_btg_locking_script(&owner, &redemption_pkh, true).unwrap();
+        let btg_script = build_stas_btg_locking_script(&owner, &redemption_pkh, true).unwrap();
         let bytes = btg_script.to_bytes();
 
         let offset = find_preamble_redemption_offset(&bytes);
-        assert!(offset.is_some(), "should find redemption PKH offset in preamble");
+        assert!(
+            offset.is_some(),
+            "should find redemption PKH offset in preamble"
+        );
 
         let off = offset.unwrap();
         assert_eq!(

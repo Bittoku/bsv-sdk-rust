@@ -71,9 +71,11 @@ impl TransactionOutput {
             TransactionError::SerializationError(format!("reading script length: {}", e))
         })?;
 
-        let script_bytes = reader.read_bytes(script_len.value() as usize).map_err(|e| {
-            TransactionError::SerializationError(format!("reading locking script: {}", e))
-        })?;
+        let script_bytes = reader
+            .read_bytes(script_len.value() as usize)
+            .map_err(|e| {
+                TransactionError::SerializationError(format!("reading locking script: {}", e))
+            })?;
 
         if satoshis > MAX_SATOSHIS {
             return Err(TransactionError::SerializationError(format!(

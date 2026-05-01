@@ -96,11 +96,10 @@ impl ScriptNumber {
 
         // For pre-genesis, clamp to i32 range for serialization
         let working_val = if !self.after_genesis {
-            let v = self.val.to_i64().unwrap_or(if is_negative {
-                i64::MIN
-            } else {
-                i64::MAX
-            });
+            let v = self
+                .val
+                .to_i64()
+                .unwrap_or(if is_negative { i64::MIN } else { i64::MAX });
             if v > i32::MAX as i64 {
                 BigInt::from(i32::MAX)
             } else if v < i32::MIN as i64 {
@@ -118,9 +117,7 @@ impl ScriptNumber {
         let mut result: Vec<u8> = Vec::new();
         let mut cpy = abs_val;
         while cpy > BigInt::zero() {
-            result.push((&cpy & BigInt::from(0xff_u8))
-                .to_u8()
-                .unwrap_or(0));
+            result.push((&cpy & BigInt::from(0xff_u8)).to_u8().unwrap_or(0));
             cpy >>= 8;
         }
 
@@ -439,36 +436,186 @@ mod tests {
 
         let tests = vec![
             // Minimal encoding rejects negative 0
-            Test { serialized: hex_to_bytes("80"), num: 0, num_len: 4, minimal_encoding: true, expect_err: true },
+            Test {
+                serialized: hex_to_bytes("80"),
+                num: 0,
+                num_len: 4,
+                minimal_encoding: true,
+                expect_err: true,
+            },
             // Valid minimally encoded
-            Test { serialized: vec![], num: 0, num_len: 4, minimal_encoding: true, expect_err: false },
-            Test { serialized: hex_to_bytes("01"), num: 1, num_len: 4, minimal_encoding: true, expect_err: false },
-            Test { serialized: hex_to_bytes("81"), num: -1, num_len: 4, minimal_encoding: true, expect_err: false },
-            Test { serialized: hex_to_bytes("7f"), num: 127, num_len: 4, minimal_encoding: true, expect_err: false },
-            Test { serialized: hex_to_bytes("ff"), num: -127, num_len: 4, minimal_encoding: true, expect_err: false },
-            Test { serialized: hex_to_bytes("8000"), num: 128, num_len: 4, minimal_encoding: true, expect_err: false },
-            Test { serialized: hex_to_bytes("8080"), num: -128, num_len: 4, minimal_encoding: true, expect_err: false },
-            Test { serialized: hex_to_bytes("8100"), num: 129, num_len: 4, minimal_encoding: true, expect_err: false },
-            Test { serialized: hex_to_bytes("8180"), num: -129, num_len: 4, minimal_encoding: true, expect_err: false },
-            Test { serialized: hex_to_bytes("0001"), num: 256, num_len: 4, minimal_encoding: true, expect_err: false },
-            Test { serialized: hex_to_bytes("0081"), num: -256, num_len: 4, minimal_encoding: true, expect_err: false },
-            Test { serialized: hex_to_bytes("ff7f"), num: 32767, num_len: 4, minimal_encoding: true, expect_err: false },
-            Test { serialized: hex_to_bytes("ffff"), num: -32767, num_len: 4, minimal_encoding: true, expect_err: false },
-            Test { serialized: hex_to_bytes("008000"), num: 32768, num_len: 4, minimal_encoding: true, expect_err: false },
-            Test { serialized: hex_to_bytes("008080"), num: -32768, num_len: 4, minimal_encoding: true, expect_err: false },
-            Test { serialized: hex_to_bytes("ffffff7f"), num: 2147483647, num_len: 4, minimal_encoding: true, expect_err: false },
-            Test { serialized: hex_to_bytes("ffffffff"), num: -2147483647, num_len: 4, minimal_encoding: true, expect_err: false },
+            Test {
+                serialized: vec![],
+                num: 0,
+                num_len: 4,
+                minimal_encoding: true,
+                expect_err: false,
+            },
+            Test {
+                serialized: hex_to_bytes("01"),
+                num: 1,
+                num_len: 4,
+                minimal_encoding: true,
+                expect_err: false,
+            },
+            Test {
+                serialized: hex_to_bytes("81"),
+                num: -1,
+                num_len: 4,
+                minimal_encoding: true,
+                expect_err: false,
+            },
+            Test {
+                serialized: hex_to_bytes("7f"),
+                num: 127,
+                num_len: 4,
+                minimal_encoding: true,
+                expect_err: false,
+            },
+            Test {
+                serialized: hex_to_bytes("ff"),
+                num: -127,
+                num_len: 4,
+                minimal_encoding: true,
+                expect_err: false,
+            },
+            Test {
+                serialized: hex_to_bytes("8000"),
+                num: 128,
+                num_len: 4,
+                minimal_encoding: true,
+                expect_err: false,
+            },
+            Test {
+                serialized: hex_to_bytes("8080"),
+                num: -128,
+                num_len: 4,
+                minimal_encoding: true,
+                expect_err: false,
+            },
+            Test {
+                serialized: hex_to_bytes("8100"),
+                num: 129,
+                num_len: 4,
+                minimal_encoding: true,
+                expect_err: false,
+            },
+            Test {
+                serialized: hex_to_bytes("8180"),
+                num: -129,
+                num_len: 4,
+                minimal_encoding: true,
+                expect_err: false,
+            },
+            Test {
+                serialized: hex_to_bytes("0001"),
+                num: 256,
+                num_len: 4,
+                minimal_encoding: true,
+                expect_err: false,
+            },
+            Test {
+                serialized: hex_to_bytes("0081"),
+                num: -256,
+                num_len: 4,
+                minimal_encoding: true,
+                expect_err: false,
+            },
+            Test {
+                serialized: hex_to_bytes("ff7f"),
+                num: 32767,
+                num_len: 4,
+                minimal_encoding: true,
+                expect_err: false,
+            },
+            Test {
+                serialized: hex_to_bytes("ffff"),
+                num: -32767,
+                num_len: 4,
+                minimal_encoding: true,
+                expect_err: false,
+            },
+            Test {
+                serialized: hex_to_bytes("008000"),
+                num: 32768,
+                num_len: 4,
+                minimal_encoding: true,
+                expect_err: false,
+            },
+            Test {
+                serialized: hex_to_bytes("008080"),
+                num: -32768,
+                num_len: 4,
+                minimal_encoding: true,
+                expect_err: false,
+            },
+            Test {
+                serialized: hex_to_bytes("ffffff7f"),
+                num: 2147483647,
+                num_len: 4,
+                minimal_encoding: true,
+                expect_err: false,
+            },
+            Test {
+                serialized: hex_to_bytes("ffffffff"),
+                num: -2147483647,
+                num_len: 4,
+                minimal_encoding: true,
+                expect_err: false,
+            },
             // 5-byte numbers
-            Test { serialized: hex_to_bytes("ffffffff7f"), num: 549755813887, num_len: 5, minimal_encoding: true, expect_err: false },
-            Test { serialized: hex_to_bytes("ffffffffff"), num: -549755813887, num_len: 5, minimal_encoding: true, expect_err: false },
+            Test {
+                serialized: hex_to_bytes("ffffffff7f"),
+                num: 549755813887,
+                num_len: 5,
+                minimal_encoding: true,
+                expect_err: false,
+            },
+            Test {
+                serialized: hex_to_bytes("ffffffffff"),
+                num: -549755813887,
+                num_len: 5,
+                minimal_encoding: true,
+                expect_err: false,
+            },
             // Out of range for 4-byte
-            Test { serialized: hex_to_bytes("0000008000"), num: 0, num_len: 4, minimal_encoding: true, expect_err: true },
+            Test {
+                serialized: hex_to_bytes("0000008000"),
+                num: 0,
+                num_len: 4,
+                minimal_encoding: true,
+                expect_err: true,
+            },
             // Non-minimally encoded with flag
-            Test { serialized: hex_to_bytes("00"), num: 0, num_len: 4, minimal_encoding: true, expect_err: true },
-            Test { serialized: hex_to_bytes("0100"), num: 0, num_len: 4, minimal_encoding: true, expect_err: true },
+            Test {
+                serialized: hex_to_bytes("00"),
+                num: 0,
+                num_len: 4,
+                minimal_encoding: true,
+                expect_err: true,
+            },
+            Test {
+                serialized: hex_to_bytes("0100"),
+                num: 0,
+                num_len: 4,
+                minimal_encoding: true,
+                expect_err: true,
+            },
             // Non-minimally encoded without flag (OK)
-            Test { serialized: hex_to_bytes("00"), num: 0, num_len: 4, minimal_encoding: false, expect_err: false },
-            Test { serialized: hex_to_bytes("0100"), num: 1, num_len: 4, minimal_encoding: false, expect_err: false },
+            Test {
+                serialized: hex_to_bytes("00"),
+                num: 0,
+                num_len: 4,
+                minimal_encoding: false,
+                expect_err: false,
+            },
+            Test {
+                serialized: hex_to_bytes("0100"),
+                num: 1,
+                num_len: 4,
+                minimal_encoding: false,
+                expect_err: false,
+            },
         ];
 
         for test in &tests {

@@ -90,13 +90,9 @@ pub const P2MPKH_LOCKING_SCRIPT_LEN: usize = 70;
 ///  OP_1 OP_SPLIT (OP_1 OP_SPLIT OP_IFDUP OP_IF OP_SWAP OP_SPLIT OP_ENDIF)×5
 ///  OP_CHECKMULTISIG OP_ENDIF`
 const P2MPKH_LOCKING_SUFFIX: [u8; 47] = [
-    0x88, 0x82, 0x01, 0x21, 0x87, 0x63, 0xac, 0x67,
-    0x51, 0x7f, 0x51, 0x7f, 0x73, 0x63, 0x7c, 0x7f, 0x68,
-    0x51, 0x7f, 0x73, 0x63, 0x7c, 0x7f, 0x68,
-    0x51, 0x7f, 0x73, 0x63, 0x7c, 0x7f, 0x68,
-    0x51, 0x7f, 0x73, 0x63, 0x7c, 0x7f, 0x68,
-    0x51, 0x7f, 0x73, 0x63, 0x7c, 0x7f, 0x68,
-    0xae, 0x68,
+    0x88, 0x82, 0x01, 0x21, 0x87, 0x63, 0xac, 0x67, 0x51, 0x7f, 0x51, 0x7f, 0x73, 0x63, 0x7c, 0x7f,
+    0x68, 0x51, 0x7f, 0x73, 0x63, 0x7c, 0x7f, 0x68, 0x51, 0x7f, 0x73, 0x63, 0x7c, 0x7f, 0x68, 0x51,
+    0x7f, 0x73, 0x63, 0x7c, 0x7f, 0x68, 0x51, 0x7f, 0x73, 0x63, 0x7c, 0x7f, 0x68, 0xae, 0x68,
 ];
 
 /// The 3-byte prefix of the P2MPKH locking script: `OP_DUP OP_HASH160 OP_DATA_20`.
@@ -618,8 +614,8 @@ mod tests {
         // For an arbitrary MPKH, build the locking script and compare against
         // the spec-mandated hex.
         let mpkh: [u8; 20] = [
-            0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa,
-            0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00, 0x01, 0x02, 0x03, 0x04,
+            0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee,
+            0xff, 0x00, 0x01, 0x02, 0x03, 0x04,
         ];
         let body = p2mpkh_locking_script(mpkh);
         let expected_hex = format!(
@@ -700,15 +696,20 @@ mod tests {
         let expected_hex = concat!(
             "03",
             // pk1 = 1 * G
-            "21", "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+            "21",
+            "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
             // pk2 = 2 * G
-            "21", "02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5",
+            "21",
+            "02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5",
             // pk3 = 3 * G
-            "21", "02f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9",
+            "21",
+            "02f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9",
             // pk4 = 4 * G
-            "21", "02e493dbf1c10d80f3581e4904930b1404cc6c13900ee0758474fa94abe8c4cd13",
+            "21",
+            "02e493dbf1c10d80f3581e4904930b1404cc6c13900ee0758474fa94abe8c4cd13",
             // pk5 = 5 * G
-            "21", "022f8bde4d1a07209355b4a7250a5c5128e88b84bddc619ab7cba8d569b240efe4",
+            "21",
+            "022f8bde4d1a07209355b4a7250a5c5128e88b84bddc619ab7cba8d569b240efe4",
             "05",
         );
         assert_eq!(hex::encode(&bytes), expected_hex);
@@ -763,8 +764,7 @@ mod tests {
         bytes.push(0x01);
         let err = MultisigScript::from_serialized_bytes(&bytes).unwrap_err();
         assert!(
-            err.to_string().contains("threshold")
-                || err.to_string().contains("exceeds"),
+            err.to_string().contains("threshold") || err.to_string().contains("exceeds"),
             "unexpected error: {}",
             err
         );
@@ -898,7 +898,10 @@ mod tests {
         let result = unlocker.sign(&tx, 0);
         assert!(result.is_err());
         assert!(
-            result.unwrap_err().to_string().contains("missing source output"),
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("missing source output"),
             "error should mention missing source output"
         );
     }

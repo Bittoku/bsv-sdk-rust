@@ -56,10 +56,8 @@ impl VerifiableCertificate {
                 ))
             })?;
 
-            let (protocol_id, key_id) = Certificate::get_encryption_details(
-                field_name,
-                &self.certificate.serial_number,
-            );
+            let (protocol_id, key_id) =
+                Certificate::get_encryption_details(field_name, &self.certificate.serial_number);
 
             let decrypt_result = verifier_wallet
                 .decrypt(DecryptArgs {
@@ -83,12 +81,13 @@ impl VerifiableCertificate {
             let field_revelation_key = decrypt_result.plaintext;
 
             // 2. Decrypt the actual field value
-            let encrypted_field_value = self.certificate.fields.get(field_name).ok_or_else(|| {
-                AuthError::FieldDecryption(format!(
-                    "field '{}' not found in certificate fields",
-                    field_name
-                ))
-            })?;
+            let encrypted_field_value =
+                self.certificate.fields.get(field_name).ok_or_else(|| {
+                    AuthError::FieldDecryption(format!(
+                        "field '{}' not found in certificate fields",
+                        field_name
+                    ))
+                })?;
 
             let encrypted_field_bytes = BASE64.decode(encrypted_field_value).map_err(|e| {
                 AuthError::FieldDecryption(format!(

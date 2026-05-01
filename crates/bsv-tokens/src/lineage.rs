@@ -151,9 +151,9 @@ impl LineageValidator {
             match parsed.script_type {
                 ScriptType::Stas => {
                     // Verify the redemption PKH matches
-                    let stas_fields = parsed.stas.ok_or_else(|| {
-                        TokenError::InvalidScript("STAS fields missing".into())
-                    })?;
+                    let stas_fields = parsed
+                        .stas
+                        .ok_or_else(|| TokenError::InvalidScript("STAS fields missing".into()))?;
 
                     if stas_fields.redemption_hash != self.redemption_pkh {
                         return Err(TokenError::InvalidScript(format!(
@@ -262,13 +262,9 @@ mod tests {
 
     impl TxFetcher for MockFetcher {
         fn fetch_raw_tx(&self, txid: &[u8; 32]) -> Result<Vec<u8>, TokenError> {
-            self.txs
-                .get(txid)
-                .cloned()
-                .ok_or_else(|| TokenError::InvalidScript(format!(
-                    "tx not found: {}",
-                    hex::encode(txid)
-                )))
+            self.txs.get(txid).cloned().ok_or_else(|| {
+                TokenError::InvalidScript(format!("tx not found: {}", hex::encode(txid)))
+            })
         }
     }
 

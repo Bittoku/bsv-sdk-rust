@@ -17,7 +17,7 @@ use bsv_transaction::transaction::Transaction;
 use bsv_transaction::TransactionError;
 
 use crate::script::stas3_swap::is_arbitrator_free_owner;
-use crate::types::{Stas3SpendType, Stas3TxType, SigningKey};
+use crate::types::{SigningKey, Stas3SpendType, Stas3TxType};
 
 // ---------------------------------------------------------------------------
 // Fix K: STAS 3.0 unlocking-script amount encoding (spec §7).
@@ -798,10 +798,7 @@ impl Stas3TrailingParamsTemplate {
     /// inner template's produced unlocking script. Pass already-pushdata-
     /// encoded bytes when the spec requires per-parameter pushes; pass raw
     /// bytes when the engine expects them concatenated.
-    pub fn new(
-        inner: Box<dyn UnlockingScriptTemplate>,
-        trailing_bytes: Vec<u8>,
-    ) -> Self {
+    pub fn new(inner: Box<dyn UnlockingScriptTemplate>, trailing_bytes: Vec<u8>) -> Self {
         Self {
             inner,
             trailing_bytes,
@@ -827,9 +824,9 @@ impl UnlockingScriptTemplate for Stas3TrailingParamsTemplate {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::SigningKey;
     use bsv_primitives::ec::PrivateKey;
     use bsv_transaction::template::p2mpkh::MultisigScript;
-    use crate::types::SigningKey;
 
     #[test]
     fn stas3_unlock_from_signing_key_single() {
@@ -871,7 +868,8 @@ mod tests {
             ms,
             Stas3SpendType::Transfer,
             None,
-        ).unwrap();
+        )
+        .unwrap();
         let tx = bsv_transaction::transaction::Transaction::default();
         let est = unlocker.estimate_length(&tx, 0);
         assert!(est > 106);
@@ -948,7 +946,10 @@ mod tests {
 
         // Chunks 1..=2: signatures.
         for i in 1..=2 {
-            let sig_data = chunks[i].data.as_ref().expect("signature should be push data");
+            let sig_data = chunks[i]
+                .data
+                .as_ref()
+                .expect("signature should be push data");
             assert!(
                 sig_data.len() >= 71 && sig_data.len() <= 73,
                 "signature {} length {} not in 71..=73",
@@ -964,8 +965,14 @@ mod tests {
         }
 
         // Chunk 3: redeem script bytes.
-        let ms_chunk = chunks[3].data.as_ref().expect("redeem script should be push data");
-        assert_eq!(ms_chunk, &ms_bytes, "final chunk should be the redeem script bytes");
+        let ms_chunk = chunks[3]
+            .data
+            .as_ref()
+            .expect("redeem script should be push data");
+        assert_eq!(
+            ms_chunk, &ms_bytes,
+            "final chunk should be the redeem script bytes"
+        );
     }
 
     #[test]
@@ -989,7 +996,10 @@ mod tests {
         let result = unlocker.sign(&tx, 0);
         assert!(result.is_err());
         assert!(
-            result.unwrap_err().to_string().contains("missing source output"),
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("missing source output"),
             "error should mention missing source output"
         );
     }
@@ -1036,7 +1046,8 @@ mod tests {
         let keys: Vec<PrivateKey> = (0..1).map(|_| PrivateKey::new()).collect();
         let pubs = keys.iter().map(|k| k.pub_key()).collect();
         let ms = MultisigScript::new(1, pubs).unwrap();
-        let unlocker = unlock_mpkh(vec![keys[0].clone()], ms, Stas3SpendType::Transfer, None).unwrap();
+        let unlocker =
+            unlock_mpkh(vec![keys[0].clone()], ms, Stas3SpendType::Transfer, None).unwrap();
         let tx = bsv_transaction::transaction::Transaction::default();
         let est = unlocker.estimate_length(&tx, 0);
         // 1 (OP_0) + 1*73 (sig) + 2 (PUSHDATA1) + (2 + 1*34) redeem
@@ -1118,10 +1129,7 @@ mod tests {
             "values whose top byte has bit 7 set must carry a 0x00 sign sentinel"
         );
         // Push form is `0x03 0x0E 0xBD 0x00`.
-        assert_eq!(
-            push_unlock_amount(48398),
-            vec![0x03, 0x0E, 0xBD, 0x00]
-        );
+        assert_eq!(push_unlock_amount(48398), vec![0x03, 0x0E, 0xBD, 0x00]);
     }
 
     #[test]
@@ -1148,7 +1156,8 @@ mod tests {
         for (value, expected) in cases {
             let got = encode_unlock_amount(*value);
             assert_eq!(
-                got, *expected,
+                got,
+                *expected,
                 "amount {} ({:#x}) → got {} expected {}",
                 value,
                 value,
@@ -1193,25 +1202,23 @@ mod tests {
 
         // Build a STAS3 locking script whose owner is the EMPTY_HASH160 sentinel.
         let redemption = [0x22; 20];
-        let locking = build_stas3_locking_script(
-            &EMPTY_HASH160, &redemption, None, false, true, &[], &[],
-        )
-        .unwrap();
+        let locking =
+            build_stas3_locking_script(&EMPTY_HASH160, &redemption, None, false, true, &[], &[])
+                .unwrap();
 
         // Any signing key — should be ignored on the no-auth path.
         let key = PrivateKey::new();
         let sk = SigningKey::Single(key);
-        let unlocker = unlock_for_input(
-            locking.to_bytes(), &sk, Stas3SpendType::Transfer, None,
-        )
-        .unwrap();
+        let unlocker =
+            unlock_for_input(locking.to_bytes(), &sk, Stas3SpendType::Transfer, None).unwrap();
 
         // Build a minimal tx for sign(); for the no-auth template, the tx
         // is unused but a value is required by the trait signature.
         let tx = mock_tx_with_source(5000);
         let script = unlocker.sign(&tx, 0).unwrap();
         assert_eq!(
-            script.to_bytes(), &[0x00],
+            script.to_bytes(),
+            &[0x00],
             "arbitrator-free input should produce a single OP_FALSE push"
         );
     }
@@ -1222,17 +1229,13 @@ mod tests {
 
         let owner = [0x11; 20]; // not the sentinel
         let redemption = [0x22; 20];
-        let locking = build_stas3_locking_script(
-            &owner, &redemption, None, false, true, &[], &[],
-        )
-        .unwrap();
+        let locking =
+            build_stas3_locking_script(&owner, &redemption, None, false, true, &[], &[]).unwrap();
 
         let key = PrivateKey::new();
         let sk = SigningKey::Single(key);
-        let unlocker = unlock_for_input(
-            locking.to_bytes(), &sk, Stas3SpendType::Transfer, None,
-        )
-        .unwrap();
+        let unlocker =
+            unlock_for_input(locking.to_bytes(), &sk, Stas3SpendType::Transfer, None).unwrap();
 
         let tx = mock_tx_with_source(5000);
         let script = unlocker.sign(&tx, 0).unwrap();
@@ -1299,7 +1302,11 @@ mod tests {
         // Spec §7 ordering for this configuration. Decode the chunks and
         // assert their layout slot-by-slot.
         let chunks = script.chunks().unwrap();
-        assert!(chunks.len() >= 9, "expected at least 9 pushes, got {}", chunks.len());
+        assert!(
+            chunks.len() >= 9,
+            "expected at least 9 pushes, got {}",
+            chunks.len()
+        );
 
         // Slot 1: amount → minimal LE [0x88, 0x13] for 5000.
         assert_eq!(chunks[0].data.as_deref(), Some(&[0x88u8, 0x13][..]));
@@ -1311,25 +1318,15 @@ mod tests {
             "var2 should be empty"
         );
         // Slot 13: change_amount → OP_FALSE
-        assert!(
-            chunks[3].data.is_none() || chunks[3].data.as_ref().is_some_and(|d| d.is_empty())
-        );
+        assert!(chunks[3].data.is_none() || chunks[3].data.as_ref().is_some_and(|d| d.is_empty()));
         // Slot 14: change_addr → OP_FALSE
-        assert!(
-            chunks[4].data.is_none() || chunks[4].data.as_ref().is_some_and(|d| d.is_empty())
-        );
+        assert!(chunks[4].data.is_none() || chunks[4].data.as_ref().is_some_and(|d| d.is_empty()));
         // Slot 15: noteData → OP_FALSE
-        assert!(
-            chunks[5].data.is_none() || chunks[5].data.as_ref().is_some_and(|d| d.is_empty())
-        );
+        assert!(chunks[5].data.is_none() || chunks[5].data.as_ref().is_some_and(|d| d.is_empty()));
         // Slot 16: fundIdx → OP_FALSE
-        assert!(
-            chunks[6].data.is_none() || chunks[6].data.as_ref().is_some_and(|d| d.is_empty())
-        );
+        assert!(chunks[6].data.is_none() || chunks[6].data.as_ref().is_some_and(|d| d.is_empty()));
         // Slot 17: fundTxid → OP_FALSE
-        assert!(
-            chunks[7].data.is_none() || chunks[7].data.as_ref().is_some_and(|d| d.is_empty())
-        );
+        assert!(chunks[7].data.is_none() || chunks[7].data.as_ref().is_some_and(|d| d.is_empty()));
         // Slot 18: txType
         assert_eq!(chunks[8].data.as_deref(), Some(&[0x00u8][..]));
         // Slot 19: preimage
@@ -1387,9 +1384,7 @@ mod tests {
 
         // Output 1 occupies chunks 0..3, Output 2 occupies chunks 3..6.
         // Chunk 3: amount empty (zero). Chunk 4: 20×0xAA. Chunk 5: var2 [0x01].
-        assert!(
-            chunks[3].data.is_none() || chunks[3].data.as_ref().is_some_and(|d| d.is_empty())
-        );
+        assert!(chunks[3].data.is_none() || chunks[3].data.as_ref().is_some_and(|d| d.is_empty()));
         assert_eq!(chunks[4].data.as_deref(), Some(&[0xAAu8; 20][..]));
         assert_eq!(chunks[5].data.as_deref(), Some(&[0x01u8][..]));
         // Slot 13 (change_amount) starts at chunk 6 — proves 3rd/4th
@@ -1436,11 +1431,31 @@ mod tests {
     fn witness_rejects_too_many_stas_outputs() {
         let w = Stas3UnlockWitness {
             stas_outputs: vec![
-                Stas3WitnessOutput { amount: 1, owner_pkh: [0; 20], var2: vec![] },
-                Stas3WitnessOutput { amount: 1, owner_pkh: [0; 20], var2: vec![] },
-                Stas3WitnessOutput { amount: 1, owner_pkh: [0; 20], var2: vec![] },
-                Stas3WitnessOutput { amount: 1, owner_pkh: [0; 20], var2: vec![] },
-                Stas3WitnessOutput { amount: 1, owner_pkh: [0; 20], var2: vec![] },
+                Stas3WitnessOutput {
+                    amount: 1,
+                    owner_pkh: [0; 20],
+                    var2: vec![],
+                },
+                Stas3WitnessOutput {
+                    amount: 1,
+                    owner_pkh: [0; 20],
+                    var2: vec![],
+                },
+                Stas3WitnessOutput {
+                    amount: 1,
+                    owner_pkh: [0; 20],
+                    var2: vec![],
+                },
+                Stas3WitnessOutput {
+                    amount: 1,
+                    owner_pkh: [0; 20],
+                    var2: vec![],
+                },
+                Stas3WitnessOutput {
+                    amount: 1,
+                    owner_pkh: [0; 20],
+                    var2: vec![],
+                },
             ],
             change: None,
             note_data: None,
@@ -1516,16 +1531,9 @@ mod tests {
     #[test]
     fn engine_constants_baked_into_template() {
         use crate::script::stas3_builder::build_stas3_locking_script;
-        let script = build_stas3_locking_script(
-            &[0u8; 20],
-            &[0u8; 20],
-            None,
-            false,
-            true,
-            &[],
-            &[],
-        )
-        .unwrap();
+        let script =
+            build_stas3_locking_script(&[0u8; 20], &[0u8; 20], None, false, true, &[], &[])
+                .unwrap();
         let script_hex = hex::encode(script.to_bytes());
 
         // PUBKEY_A: hard-coded sigtail pubkey (spec §11 / template Section D).

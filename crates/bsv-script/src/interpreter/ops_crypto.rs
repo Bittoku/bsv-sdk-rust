@@ -2,11 +2,11 @@
 
 use num_bigint::BigInt;
 
-use crate::opcodes::OP_CODESEPARATOR;
 use super::error::{InterpreterError, InterpreterErrorCode};
 use super::flags::ScriptFlags;
 use super::parsed_opcode::*;
 use super::thread::Thread;
+use crate::opcodes::OP_CODESEPARATOR;
 
 pub(crate) enum HashType {
     Ripemd160,
@@ -28,28 +28,28 @@ impl<'a> Thread<'a> {
                 hasher.finalize().to_vec()
             }
             HashType::Sha1 => {
-                use sha1::Sha1;
                 use sha1::Digest;
+                use sha1::Sha1;
                 let mut hasher = Sha1::new();
                 hasher.update(&buf);
                 hasher.finalize().to_vec()
             }
             HashType::Sha256 => {
-                use sha2::{Sha256, Digest};
+                use sha2::{Digest, Sha256};
                 let mut hasher = Sha256::new();
                 hasher.update(&buf);
                 hasher.finalize().to_vec()
             }
             HashType::Hash160 => {
-                use sha2::{Sha256, Digest as Digest2};
-                use ripemd::{Ripemd160, Digest};
+                use ripemd::{Digest, Ripemd160};
+                use sha2::{Digest as Digest2, Sha256};
                 let sha = Sha256::digest(&buf);
                 let mut ripe = Ripemd160::new();
                 ripe.update(&sha);
                 ripe.finalize().to_vec()
             }
             HashType::Hash256 => {
-                use sha2::{Sha256, Digest};
+                use sha2::{Digest, Sha256};
                 let first = Sha256::digest(&buf);
                 let second = Sha256::digest(&first);
                 second.to_vec()
@@ -101,8 +101,7 @@ impl<'a> Thread<'a> {
         let mut sub_script = self.sub_script();
 
         // Remove signature from subscript for non-forkid
-        let has_forkid = self.has_flag(ScriptFlags::ENABLE_SIGHASH_FORKID)
-            && (shf & 0x40) != 0; // SIGHASH_FORKID = 0x40
+        let has_forkid = self.has_flag(ScriptFlags::ENABLE_SIGHASH_FORKID) && (shf & 0x40) != 0; // SIGHASH_FORKID = 0x40
         if !has_forkid {
             sub_script = remove_opcode_by_data(&sub_script, &full_sig_bytes);
             sub_script = remove_opcode(&sub_script, OP_CODESEPARATOR);
@@ -110,12 +109,15 @@ impl<'a> Thread<'a> {
 
         let script_bytes = unparse(&sub_script);
 
-        match ctx.verify_signature(&full_sig_bytes, &pk_bytes, &script_bytes, self.input_idx, shf) {
+        match ctx.verify_signature(
+            &full_sig_bytes,
+            &pk_bytes,
+            &script_bytes,
+            self.input_idx,
+            shf,
+        ) {
             Ok(valid) => {
-                if !valid
-                    && self.has_flag(ScriptFlags::VERIFY_NULL_FAIL)
-                    && !sig_bytes.is_empty()
-                {
+                if !valid && self.has_flag(ScriptFlags::VERIFY_NULL_FAIL) && !sig_bytes.is_empty() {
                     return Err(InterpreterError::new(
                         InterpreterErrorCode::NullFail,
                         "signature not empty on failed checksig".to_string(),
@@ -287,7 +289,10 @@ impl<'a> Thread<'a> {
         Ok(())
     }
 
-    pub(crate) fn op_checkmultisigverify(&mut self, pop: &ParsedOpcode) -> Result<(), InterpreterError> {
+    pub(crate) fn op_checkmultisigverify(
+        &mut self,
+        pop: &ParsedOpcode,
+    ) -> Result<(), InterpreterError> {
         self.op_checkmultisig()?;
         self.abstract_verify(pop, InterpreterErrorCode::CheckMultiSigVerify)
     }
@@ -502,10 +507,8 @@ impl<'a> Thread<'a> {
                 .expect("valid hex constant")
             });
             let half_order = &*HALF_ORDER;
-            let s_value = BigInt::from_bytes_be(
-                num_bigint::Sign::Plus,
-                &sig[s_offset..s_offset + s_len],
-            );
+            let s_value =
+                BigInt::from_bytes_be(num_bigint::Sign::Plus, &sig[s_offset..s_offset + s_len]);
             if s_value > *half_order {
                 return Err(InterpreterError::new(
                     InterpreterErrorCode::SigHighS,

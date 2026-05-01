@@ -70,9 +70,8 @@ impl Transaction {
     /// `Ok(Transaction)` on success, or a `TransactionError` if the hex is
     /// invalid or the bytes do not form a valid transaction.
     pub fn from_hex(hex_str: &str) -> Result<Self, TransactionError> {
-        let bytes = hex::decode(hex_str).map_err(|e| {
-            TransactionError::SerializationError(format!("invalid hex: {}", e))
-        })?;
+        let bytes = hex::decode(hex_str)
+            .map_err(|e| TransactionError::SerializationError(format!("invalid hex: {}", e)))?;
         Self::from_bytes(&bytes)
     }
 
@@ -91,9 +90,10 @@ impl Transaction {
         let mut reader = BsvReader::new(bytes);
         let tx = Self::read_from(&mut reader)?;
         if reader.remaining() != 0 {
-            return Err(TransactionError::SerializationError(
-                format!("trailing {} bytes after transaction", reader.remaining()),
-            ));
+            return Err(TransactionError::SerializationError(format!(
+                "trailing {} bytes after transaction",
+                reader.remaining()
+            )));
         }
         Ok(tx)
     }
@@ -110,9 +110,9 @@ impl Transaction {
     /// `Ok(Transaction)` on success, or a `TransactionError` on I/O or
     /// format errors.
     pub fn read_from(reader: &mut BsvReader) -> Result<Self, TransactionError> {
-        let version = reader.read_u32_le().map_err(|e| {
-            TransactionError::SerializationError(format!("reading version: {}", e))
-        })?;
+        let version = reader
+            .read_u32_le()
+            .map_err(|e| TransactionError::SerializationError(format!("reading version: {}", e)))?;
 
         let input_count = reader.read_varint().map_err(|e| {
             TransactionError::SerializationError(format!("reading input count: {}", e))

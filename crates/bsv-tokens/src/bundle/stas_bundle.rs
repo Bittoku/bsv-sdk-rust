@@ -5,13 +5,12 @@ use bsv_primitives::ec::PrivateKey;
 use bsv_script::Script;
 use bsv_transaction::transaction::Transaction;
 
-use crate::error::TokenError;
-use crate::types::{Destination, Payment};
-use crate::factory::stas::{
-    build_transfer_tx, build_split_tx, build_merge_tx,
-    TransferConfig, SplitConfig, MergeConfig,
-};
 use super::planner::{plan_operations, PlannedOp};
+use crate::error::TokenError;
+use crate::factory::stas::{
+    build_merge_tx, build_split_tx, build_transfer_tx, MergeConfig, SplitConfig, TransferConfig,
+};
+use crate::types::{Destination, Payment};
 
 /// A UTXO holding STAS tokens for bundle operations.
 pub struct TokenUtxo {
@@ -94,7 +93,10 @@ pub fn build_stas_bundle(config: StasBundleConfig) -> Result<PayoutBundle, Token
         return Err(TokenError::BundleError("no destinations provided".into()));
     }
 
-    let available: Vec<(usize, u64)> = config.token_utxos.iter().enumerate()
+    let available: Vec<(usize, u64)> = config
+        .token_utxos
+        .iter()
+        .enumerate()
         .map(|(i, u)| (i, u.satoshis))
         .collect();
     let targets: Vec<u64> = config.destinations.iter().map(|d| d.satoshis).collect();
@@ -125,20 +127,24 @@ pub fn build_stas_bundle(config: StasBundleConfig) -> Result<PayoutBundle, Token
             PlannedOp::Split { source, amounts } => {
                 let funding = (config.funding_provider)()?;
                 // Map amounts to destinations; first N amounts correspond to actual destinations
-                let dests: Vec<Destination> = amounts.iter().enumerate().map(|(i, &amt)| {
-                    if i < config.destinations.len() {
-                        Destination {
-                            address: config.destinations[i].address.clone(),
-                            satoshis: amt,
+                let dests: Vec<Destination> = amounts
+                    .iter()
+                    .enumerate()
+                    .map(|(i, &amt)| {
+                        if i < config.destinations.len() {
+                            Destination {
+                                address: config.destinations[i].address.clone(),
+                                satoshis: amt,
+                            }
+                        } else {
+                            // Change goes back to first destination's address (simplified)
+                            Destination {
+                                address: config.destinations[0].address.clone(),
+                                satoshis: amt,
+                            }
                         }
-                    } else {
-                        // Change goes back to first destination's address (simplified)
-                        Destination {
-                            address: config.destinations[0].address.clone(),
-                            satoshis: amt,
-                        }
-                    }
-                }).collect();
+                    })
+                    .collect();
                 let tx_config = SplitConfig {
                     token_utxo: token_to_payment(&config.token_utxos[*source]),
                     destinations: dests,
@@ -151,8 +157,8 @@ pub fn build_stas_bundle(config: StasBundleConfig) -> Result<PayoutBundle, Token
             }
             PlannedOp::Merge { input_a, input_b } => {
                 let funding = (config.funding_provider)()?;
-                let merged_sats = config.token_utxos[*input_a].satoshis
-                    + config.token_utxos[*input_b].satoshis;
+                let merged_sats =
+                    config.token_utxos[*input_a].satoshis + config.token_utxos[*input_b].satoshis;
                 let tx_config = MergeConfig {
                     token_utxos: vec![
                         token_to_payment(&config.token_utxos[*input_a]),

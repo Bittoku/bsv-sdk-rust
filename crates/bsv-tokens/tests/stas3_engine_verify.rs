@@ -20,8 +20,8 @@ use bsv_tokens::stas3::verify_input;
 use bsv_tokens::types::ActionData;
 use bsv_tokens::{
     build_stas3_base_tx, build_stas3_locking_script, build_stas3_swap_swap_tx,
-    build_stas3_swap_swap_tx_with_pieces, Stas3BaseConfig, Stas3OutputParams,
-    Stas3SpendType, Stas3SwapPieceParams, SigningKey, TokenInput,
+    build_stas3_swap_swap_tx_with_pieces, SigningKey, Stas3BaseConfig, Stas3OutputParams,
+    Stas3SpendType, Stas3SwapPieceParams, TokenInput,
 };
 use bsv_transaction::template::p2pkh;
 
@@ -111,7 +111,12 @@ fn engine_accepts_transfer_with_change() {
     };
 
     let tx = build_stas3_base_tx(&config).unwrap();
-    let unlock_len = tx.inputs[0].unlocking_script.as_ref().unwrap().to_bytes().len();
+    let unlock_len = tx.inputs[0]
+        .unlocking_script
+        .as_ref()
+        .unwrap()
+        .to_bytes()
+        .len();
     let result = verify_input(&tx, 0, &locking, 5000);
     assert_engine_ok("transfer_with_change", unlock_len, result);
 }
@@ -144,7 +149,12 @@ fn engine_accepts_transfer_no_change() {
     };
 
     let tx = build_stas3_base_tx(&config).unwrap();
-    let unlock_len = tx.inputs[0].unlocking_script.as_ref().unwrap().to_bytes().len();
+    let unlock_len = tx.inputs[0]
+        .unlocking_script
+        .as_ref()
+        .unwrap()
+        .to_bytes()
+        .len();
     let result = verify_input(&tx, 0, &locking, 5000);
     assert_engine_ok("transfer_no_change", unlock_len, result);
 }
@@ -216,7 +226,12 @@ fn engine_accepts_sign_bit_overflow_change_amount() {
         change_amt
     );
 
-    let unlock_len = tx.inputs[0].unlocking_script.as_ref().unwrap().to_bytes().len();
+    let unlock_len = tx.inputs[0]
+        .unlocking_script
+        .as_ref()
+        .unwrap()
+        .to_bytes()
+        .len();
 
     // Dump the slot-13 (change_amount) push from the unlock script for
     // cross-SDK comparison with Elixir.
@@ -269,7 +284,12 @@ fn engine_accepts_two_output_split() {
     };
 
     let tx = build_stas3_base_tx(&config).unwrap();
-    let unlock_len = tx.inputs[0].unlocking_script.as_ref().unwrap().to_bytes().len();
+    let unlock_len = tx.inputs[0]
+        .unlocking_script
+        .as_ref()
+        .unwrap()
+        .to_bytes()
+        .len();
     let result = verify_input(&tx, 0, &locking, 10_000);
     assert_engine_ok("two_output_split", unlock_len, result);
 }
@@ -531,11 +551,25 @@ fn engine_accepts_swap_swap_with_trailing_pieces() {
     };
 
     let locking_a = build_stas3_locking_script(
-        &owner_a_pkh, &redemption_pkh, Some(&swap), false, false, &[], &[],
-    ).unwrap();
+        &owner_a_pkh,
+        &redemption_pkh,
+        Some(&swap),
+        false,
+        false,
+        &[],
+        &[],
+    )
+    .unwrap();
     let locking_b = build_stas3_locking_script(
-        &owner_b_pkh, &redemption_pkh, Some(&swap), false, false, &[], &[],
-    ).unwrap();
+        &owner_b_pkh,
+        &redemption_pkh,
+        Some(&swap),
+        false,
+        false,
+        &[],
+        &[],
+    )
+    .unwrap();
 
     // Build synthetic preceding txs whose HASH256 we then use as the
     // token-input txids — required for the engine's back-to-genesis

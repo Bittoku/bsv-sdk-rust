@@ -34,14 +34,10 @@ impl MockTransport {
 impl Transport for MockTransport {
     fn send(&self, message: &AuthMessage) -> Result<(), AuthError> {
         let paired = self.paired.lock().unwrap();
-        let paired = paired
-            .as_ref()
-            .ok_or(AuthError::TransportNotConnected)?;
+        let paired = paired.as_ref().ok_or(AuthError::TransportNotConnected)?;
 
         let handler = paired.handler.lock().unwrap();
-        let handler = handler
-            .as_ref()
-            .ok_or(AuthError::NoHandlerRegistered)?;
+        let handler = handler.as_ref().ok_or(AuthError::NoHandlerRegistered)?;
 
         handler(message)
     }
@@ -55,11 +51,7 @@ impl Transport for MockTransport {
     }
 }
 
-fn make_peer(
-    name: &str,
-    pk: &PrivateKey,
-    transport: Arc<MockTransport>,
-) -> Arc<Peer> {
+fn make_peer(name: &str, pk: &PrivateKey, transport: Arc<MockTransport>) -> Arc<Peer> {
     let wallet = ProtoWallet::new(ProtoWalletArgs::PrivateKey(pk.clone())).unwrap();
     let session_manager = Arc::new(DefaultSessionManager::new());
 
@@ -74,14 +66,12 @@ fn make_peer(
 
 #[test]
 fn test_peer_authentication_and_message_exchange() {
-    let alice_pk = PrivateKey::from_hex(
-        "143ab18a84d3b25e1a13cefa90038411e5d2014590a2a4a57263d1593c8dee1c",
-    )
-    .unwrap();
-    let bob_pk = PrivateKey::from_hex(
-        "0881208859876fc227d71bfb8b91814462c5164b6fee27e614798f6e85d2547d",
-    )
-    .unwrap();
+    let alice_pk =
+        PrivateKey::from_hex("143ab18a84d3b25e1a13cefa90038411e5d2014590a2a4a57263d1593c8dee1c")
+            .unwrap();
+    let bob_pk =
+        PrivateKey::from_hex("0881208859876fc227d71bfb8b91814462c5164b6fee27e614798f6e85d2547d")
+            .unwrap();
 
     let alice_transport = MockTransport::new("Alice");
     let bob_transport = MockTransport::new("Bob");
@@ -105,9 +95,7 @@ fn test_peer_authentication_and_message_exchange() {
     // Alice sends a message to Bob
     let test_message = b"Hello Bob!";
     let bob_identity = bob_pk.pub_key();
-    alice
-        .to_peer(test_message, Some(&bob_identity))
-        .unwrap();
+    alice.to_peer(test_message, Some(&bob_identity)).unwrap();
 
     // Verify Bob received the message
     let received = received_message.lock().unwrap();
@@ -115,19 +103,20 @@ fn test_peer_authentication_and_message_exchange() {
 
     let sender = received_sender.lock().unwrap();
     assert!(sender.is_some());
-    assert_eq!(sender.as_ref().unwrap().to_hex(), alice_pk.pub_key().to_hex());
+    assert_eq!(
+        sender.as_ref().unwrap().to_hex(),
+        alice_pk.pub_key().to_hex()
+    );
 }
 
 #[test]
 fn test_peer_bidirectional_communication() {
-    let alice_pk = PrivateKey::from_hex(
-        "143ab18a84d3b25e1a13cefa90038411e5d2014590a2a4a57263d1593c8dee1c",
-    )
-    .unwrap();
-    let bob_pk = PrivateKey::from_hex(
-        "0881208859876fc227d71bfb8b91814462c5164b6fee27e614798f6e85d2547d",
-    )
-    .unwrap();
+    let alice_pk =
+        PrivateKey::from_hex("143ab18a84d3b25e1a13cefa90038411e5d2014590a2a4a57263d1593c8dee1c")
+            .unwrap();
+    let bob_pk =
+        PrivateKey::from_hex("0881208859876fc227d71bfb8b91814462c5164b6fee27e614798f6e85d2547d")
+            .unwrap();
 
     let alice_transport = MockTransport::new("Alice");
     let bob_transport = MockTransport::new("Bob");

@@ -55,7 +55,10 @@ impl<'a> Thread<'a> {
         if n.greater_than_int(self.cfg.max_script_element_size() as i64) {
             return Err(InterpreterError::new(
                 InterpreterErrorCode::NumberTooBig,
-                format!("n is larger than the max of {}", self.cfg.max_script_element_size()),
+                format!(
+                    "n is larger than the max of {}",
+                    self.cfg.max_script_element_size()
+                ),
             ));
         }
 

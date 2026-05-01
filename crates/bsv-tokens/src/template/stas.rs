@@ -267,15 +267,11 @@ mod tests {
         let keys: Vec<PrivateKey> = (0..3).map(|_| PrivateKey::new()).collect();
         let pubs = keys.iter().map(|k| k.pub_key()).collect();
         let ms = MultisigScript::new(2, pubs).unwrap();
-        let unlocker = unlock_mpkh(
-            vec![keys[0].clone(), keys[1].clone()],
-            ms,
-            None,
-        ).unwrap();
+        let unlocker = unlock_mpkh(vec![keys[0].clone(), keys[1].clone()], ms, None).unwrap();
         let tx = bsv_transaction::transaction::Transaction::default();
         let est = unlocker.estimate_length(&tx, 0);
         assert!(est > 106); // must be more than P2PKH
-        // 2 * 73 (sigs) + 2 (PUSHDATA1) + (2 + 3*34) redeem = 146 + 2 + 104 = 252
+                            // 2 * 73 (sigs) + 2 (PUSHDATA1) + (2 + 3*34) redeem = 146 + 2 + 104 = 252
         assert_eq!(est, 2 * 73 + 2 + (2 + 3 * 34));
     }
 
@@ -321,12 +317,7 @@ mod tests {
         let ms = MultisigScript::new(2, pubs).unwrap();
         let ms_bytes = ms.to_bytes();
 
-        let unlocker = unlock_mpkh(
-            vec![keys[0].clone(), keys[1].clone()],
-            ms,
-            None,
-        )
-        .unwrap();
+        let unlocker = unlock_mpkh(vec![keys[0].clone(), keys[1].clone()], ms, None).unwrap();
 
         let tx = mock_tx_with_source(10_000);
         let script = unlocker.sign(&tx, 0).unwrap();
@@ -337,7 +328,10 @@ mod tests {
 
         // Verify each signature chunk
         for i in 0..2 {
-            let sig_data = chunks[i].data.as_ref().expect("signature should be push data");
+            let sig_data = chunks[i]
+                .data
+                .as_ref()
+                .expect("signature should be push data");
             // DER signature + sighash flag: 71-73 bytes
             assert!(
                 sig_data.len() >= 71 && sig_data.len() <= 73,
@@ -355,8 +349,14 @@ mod tests {
         }
 
         // Last chunk is the serialized multisig script
-        let ms_chunk = chunks[2].data.as_ref().expect("multisig script should be push data");
-        assert_eq!(ms_chunk, &ms_bytes, "final chunk should be the multisig script bytes");
+        let ms_chunk = chunks[2]
+            .data
+            .as_ref()
+            .expect("multisig script should be push data");
+        assert_eq!(
+            ms_chunk, &ms_bytes,
+            "final chunk should be the multisig script bytes"
+        );
     }
 
     #[test]
@@ -408,12 +408,7 @@ mod tests {
         let keys: Vec<PrivateKey> = (0..3).map(|_| PrivateKey::new()).collect();
         let pubs: Vec<_> = keys.iter().map(|k| k.pub_key()).collect();
         let ms = MultisigScript::new(2, pubs).unwrap();
-        let unlocker = unlock_mpkh(
-            vec![keys[0].clone(), keys[1].clone()],
-            ms,
-            None,
-        )
-        .unwrap();
+        let unlocker = unlock_mpkh(vec![keys[0].clone(), keys[1].clone()], ms, None).unwrap();
 
         // Transaction with an input but no source output set
         let mut tx = bsv_transaction::transaction::Transaction::new();
@@ -424,7 +419,10 @@ mod tests {
         let result = unlocker.sign(&tx, 0);
         assert!(result.is_err());
         assert!(
-            result.unwrap_err().to_string().contains("missing source output"),
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("missing source output"),
             "error should mention missing source output"
         );
     }
@@ -435,12 +433,7 @@ mod tests {
         let pubs: Vec<_> = keys.iter().map(|k| k.pub_key()).collect();
         let ms = MultisigScript::new(2, pubs).unwrap();
 
-        let unlocker = unlock_mpkh(
-            vec![keys[0].clone(), keys[1].clone()],
-            ms,
-            None,
-        )
-        .unwrap();
+        let unlocker = unlock_mpkh(vec![keys[0].clone(), keys[1].clone()], ms, None).unwrap();
 
         let tx = mock_tx_with_source(10_000);
         let script = unlocker.sign(&tx, 0).unwrap();

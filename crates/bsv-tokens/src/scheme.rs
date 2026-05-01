@@ -26,9 +26,7 @@ impl Authority {
             ));
         }
         if self.m == 0 {
-            return Err(TokenError::InvalidAuthority(
-                "m must be at least 1".into(),
-            ));
+            return Err(TokenError::InvalidAuthority("m must be at least 1".into()));
         }
         if self.m > self.public_keys.len() {
             return Err(TokenError::InvalidAuthority(format!(

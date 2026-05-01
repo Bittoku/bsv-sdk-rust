@@ -1,9 +1,8 @@
 //! Tests for certificates: Certificate, MasterCertificate, VerifiableCertificate.
 
 use bsv_auth::certificates::{
-    Certificate, MasterCertificate, VerifiableCertificate,
     create_certificate_fields, create_keyring_for_verifier, decrypt_field, decrypt_fields,
-    issue_certificate_for_subject,
+    issue_certificate_for_subject, Certificate, MasterCertificate, VerifiableCertificate,
 };
 use bsv_auth::utils::random_base64;
 use bsv_primitives::ec::private_key::PrivateKey;
@@ -274,10 +273,8 @@ fn test_create_keyring_for_verifier_and_decrypt() {
     assert!(keyring_for_verifier.contains_key("name"));
 
     // Verifier can decrypt
-    let mut verifiable = VerifiableCertificate::new(
-        master_cert.certificate.clone(),
-        keyring_for_verifier,
-    );
+    let mut verifiable =
+        VerifiableCertificate::new(master_cert.certificate.clone(), keyring_for_verifier);
 
     let decrypted = verifiable.decrypt_fields(&verifier_wallet).unwrap();
     assert_eq!(decrypted.len(), 1);

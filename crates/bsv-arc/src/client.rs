@@ -34,10 +34,7 @@ impl ArcClient {
     }
 
     /// Broadcast a transaction to the ARC API.
-    pub async fn broadcast_async(
-        &self,
-        tx: &Transaction,
-    ) -> Result<ArcResponse, ArcError> {
+    pub async fn broadcast_async(&self, tx: &Transaction) -> Result<ArcResponse, ArcError> {
         let url = format!("{}/tx", self.config.base_url);
         let raw_tx = tx.to_bytes();
         let headers = self.build_headers();
@@ -74,12 +71,7 @@ impl ArcClient {
         let url = format!("{}/tx/{}", self.config.base_url, txid);
         let headers = self.build_headers();
 
-        let resp = self
-            .client
-            .get(&url)
-            .headers(headers)
-            .send()
-            .await?;
+        let resp = self.client.get(&url).headers(headers).send().await?;
 
         let response: ArcResponse = resp.json().await?;
         Ok(response)
@@ -126,7 +118,10 @@ impl ArcClient {
         }
 
         if self.config.cumulative_fee_validation {
-            headers.insert("X-CumulativeFeeValidation", HeaderValue::from_static("true"));
+            headers.insert(
+                "X-CumulativeFeeValidation",
+                HeaderValue::from_static("true"),
+            );
         }
 
         if self.config.full_status_updates {
@@ -160,8 +155,8 @@ impl Broadcaster for ArcClient {
             }
             Err(_) => {
                 // No runtime, create one.
-                let rt = tokio::runtime::Runtime::new()
-                    .map_err(|e| SpvError::General(e.to_string()))?;
+                let rt =
+                    tokio::runtime::Runtime::new().map_err(|e| SpvError::General(e.to_string()))?;
                 rt.block_on(self.broadcast_async(tx))
             }
         };

@@ -75,8 +75,7 @@ pub fn create_certificate_fields(
         certificate_fields.insert(field_name.clone(), BASE64.encode(&encrypted_value));
 
         // 3. Encrypt the symmetric key for the certifier/subject
-        let (protocol_id, key_id) =
-            Certificate::get_encryption_details(field_name, "");
+        let (protocol_id, key_id) = Certificate::get_encryption_details(field_name, "");
         let encrypted_key = creator_wallet.encrypt(EncryptArgs {
             encryption_args: EncryptionArgs {
                 protocol_id,
@@ -131,10 +130,9 @@ pub fn issue_certificate_for_subject(
 
     // 4. Determine subject key
     let subject_key = match subject.r#type {
-        CounterpartyType::Other => subject
-            .counterparty
-            .clone()
-            .ok_or(AuthError::General("subject counterparty is Other but has no public key".into()))?,
+        CounterpartyType::Other => subject.counterparty.clone().ok_or(AuthError::General(
+            "subject counterparty is Other but has no public key".into(),
+        ))?,
         _ => certifier_pub_key.public_key.clone(),
     };
 
@@ -144,12 +142,7 @@ pub fn issue_certificate_for_subject(
         serial_number,
         subject_key,
         certifier_pub_key.public_key,
-        revocation_outpoint.unwrap_or_else(|| {
-            format!(
-                "{}.0",
-                "0".repeat(64)
-            )
-        }),
+        revocation_outpoint.unwrap_or_else(|| format!("{}.0", "0".repeat(64))),
         field_result.certificate_fields,
     );
 
@@ -204,7 +197,10 @@ pub fn decrypt_field(
         .decrypt(&encrypted_field_bytes)
         .map_err(|e| AuthError::DecryptionFailed(format!("field {}: {}", field_name, e)))?;
 
-    Ok((field_revelation_key, String::from_utf8_lossy(&plaintext).to_string()))
+    Ok((
+        field_revelation_key,
+        String::from_utf8_lossy(&plaintext).to_string(),
+    ))
 }
 
 /// Decrypt multiple fields using the master keyring.
@@ -220,8 +216,13 @@ pub fn decrypt_fields(
 
     let mut decrypted = HashMap::new();
     for (field_name, encrypted_value) in fields {
-        let (_, plaintext) =
-            decrypt_field(wallet, master_keyring, field_name, encrypted_value, counterparty)?;
+        let (_, plaintext) = decrypt_field(
+            wallet,
+            master_keyring,
+            field_name,
+            encrypted_value,
+            counterparty,
+        )?;
         decrypted.insert(field_name.clone(), plaintext);
     }
 
@@ -259,8 +260,7 @@ pub fn create_keyring_for_verifier(
         )?;
 
         // Re-encrypt for the verifier
-        let (protocol_id, key_id) =
-            Certificate::get_encryption_details(field_name, serial_number);
+        let (protocol_id, key_id) = Certificate::get_encryption_details(field_name, serial_number);
         let encrypted_for_verifier = subject_wallet.encrypt(EncryptArgs {
             encryption_args: EncryptionArgs {
                 protocol_id,

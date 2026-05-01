@@ -3,7 +3,6 @@
 /// Supports P2PKH address generation from public key hashes,
 /// address validation, and mainnet/testnet discrimination.
 /// Uses Base58Check encoding with SHA-256d checksums.
-
 use std::fmt;
 
 use bsv_primitives::hash::{hash160, sha256d};
@@ -120,10 +119,13 @@ impl Address {
     /// # Returns
     /// A mainnet `Address`, or an error if the hex is invalid.
     pub fn from_public_key_string(pub_key_hex: &str, mainnet: bool) -> Result<Self, ScriptError> {
-        let pub_key_bytes = hex::decode(pub_key_hex)
-            ?;
+        let pub_key_bytes = hex::decode(pub_key_hex)?;
         let h = hash160(&pub_key_bytes);
-        let network = if mainnet { Network::Mainnet } else { Network::Testnet };
+        let network = if mainnet {
+            Network::Mainnet
+        } else {
+            Network::Testnet
+        };
         Ok(Self::from_public_key_hash(&h, network))
     }
 }
@@ -224,10 +226,7 @@ mod tests {
             true,
         )
         .expect("should create address");
-        assert_eq!(
-            hex::encode(addr.public_key_hash),
-            TEST_PUBLIC_KEY_HASH
-        );
+        assert_eq!(hex::encode(addr.public_key_hash), TEST_PUBLIC_KEY_HASH);
         assert_eq!(addr.address_string, "114ZWApV4EEU8frr7zygqQcB1V2BodGZuS");
         assert_eq!(addr.network, Network::Mainnet);
     }
@@ -240,10 +239,7 @@ mod tests {
             false,
         )
         .expect("should create address");
-        assert_eq!(
-            hex::encode(addr.public_key_hash),
-            TEST_PUBLIC_KEY_HASH
-        );
+        assert_eq!(hex::encode(addr.public_key_hash), TEST_PUBLIC_KEY_HASH);
         assert_eq!(addr.address_string, "mfaWoDuTsFfiunLTqZx4fKpVsUctiDV9jk");
         assert_eq!(addr.network, Network::Testnet);
     }

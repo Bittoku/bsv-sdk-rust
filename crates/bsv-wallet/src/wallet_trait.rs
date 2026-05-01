@@ -154,10 +154,7 @@ pub trait WalletInterface {
         Err(WalletError::General("not implemented".into()))
     }
     /// Get the block header at the specified height.
-    fn get_header_for_height(
-        &self,
-        _args: GetHeaderArgs,
-    ) -> Result<GetHeaderResult, WalletError> {
+    fn get_header_for_height(&self, _args: GetHeaderArgs) -> Result<GetHeaderResult, WalletError> {
         Err(WalletError::General("not implemented".into()))
     }
     /// Get the network the wallet is connected to (e.g. "mainnet").

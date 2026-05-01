@@ -356,10 +356,7 @@ impl SwapDescriptor {
 
     /// Parse a descriptor body starting at `offset` (no leading action byte).
     /// Returns the descriptor and the offset past the last consumed byte.
-    fn parse_body(
-        bytes: &[u8],
-        offset: usize,
-    ) -> Result<(Self, usize), SwapDescriptorError> {
+    fn parse_body(bytes: &[u8], offset: usize) -> Result<(Self, usize), SwapDescriptorError> {
         const FIXED: usize = 32 + 20 + 4 + 4;
         if bytes.len() < offset + FIXED {
             return Err(SwapDescriptorError::Truncated(
@@ -686,7 +683,7 @@ mod tests {
         };
         let bytes = top.to_var2_bytes();
         assert_eq!(bytes.len(), 61 + 60 + 60); // 181
-        // Pinned snapshot — independently computed; must round-trip and match.
+                                               // Pinned snapshot — independently computed; must round-trip and match.
         let expected_hex = "01\
 1111111111111111111111111111111111111111111111111111111111111111\
 4141414141414141414141414141414141414141\
