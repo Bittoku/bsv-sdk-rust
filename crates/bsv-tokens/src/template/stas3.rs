@@ -289,22 +289,27 @@ pub fn compute_input_preimage(
 /// Used for inputs whose owner field is `HASH160("")` (arbitrator-free swap,
 /// spec §9.5 / §10.3).
 ///
-/// # Spec interpretation (FLAG FOR REVIEW)
+/// # Spec interpretation (clarified by spec author)
 ///
-/// Spec §10.3 reads "instructs the engine to accept OP_FALSE in place of
-/// both signature and preimage". With the §7 witness now encoding the
-/// preimage at slot 19 and the authz push at slot 21+, this template emits
-/// `OP_FALSE` in the AUTHORIZATION slot only — i.e. the full unlock is the
-/// witness body (with slot 19 already containing OP_FALSE) followed by a
-/// single OP_FALSE in place of `<sig> <pubkey>`. This produces TWO
-/// OP_FALSE pushes total: one for slot 19 (preimage) and one for slot 21+
-/// (authz). Confirm with the spec author whether the §10.3 wording
-/// requires emitting BOTH OP_FALSEs explicitly (current behaviour) or just
-/// a single combined marker.
+/// Spec §10.3 reads:
+/// > "Setting owner to HASH160("") = b472a266…9fcb instructs the engine to
+/// > accept OP_FALSE in place of both signature and **address/MPKH preimage**,
+/// > skipping all ECDSA checks for that party."
+///
+/// The "preimage" in this clause is the **address/MPKH preimage** — the
+/// pubkey (P2PKH) or multisig redeem script (P2MPKH) whose `HASH160` equals
+/// the owner field. That data lives in the **authz block (slot 21+)** of the
+/// §7 unlock witness, NOT slot 19.
+///
+/// Slot 19 is the **sighashPreimage** (BIP-143 transaction preimage), which
+/// is a completely different concept and MUST remain intact in no-auth mode
+/// — the engine still performs preimage-driven outputs/sighash checks.
 ///
 /// When constructed via [`Self::with_witness`], the produced unlocking
-/// script is the full witness body followed by `OP_FALSE`. When
-/// constructed via [`Self::new`] (legacy / back-compat), the produced
+/// script is the full §7 witness body (with the real BIP-143 preimage in
+/// slot 19) followed by a single `OP_FALSE` push in the authz slot (21+) in
+/// place of `<sig> <pubkey>` (P2PKH) or `OP_0 <sigs> <redeem>` (P2MPKH).
+/// When constructed via [`Self::new`] (legacy / back-compat), the produced
 /// unlocking script is a single `OP_FALSE` byte.
 pub struct Stas3NoAuthUnlockingTemplate {
     witness: Option<Stas3UnlockWitness>,
@@ -316,11 +321,12 @@ impl Stas3NoAuthUnlockingTemplate {
         Self { witness: None }
     }
 
-    /// Construct a no-auth template that emits the full §7 witness with
-    /// `OP_FALSE` in the authz slot (slot 21+). The witness's slot 19
-    /// (preimage) should also be set to an empty body (use
-    /// `sighash_preimage = Vec::new()`) to signal "no preimage" — see the
-    /// §10.3 interpretation note on this struct.
+    /// Construct a no-auth template that emits the full §7 witness body —
+    /// including the **real BIP-143 sighashPreimage in slot 19** — followed
+    /// by a single `OP_FALSE` push in the authz slot (21+). The caller MUST
+    /// populate `witness.sighash_preimage` with the actual preimage (e.g.
+    /// via [`compute_input_preimage`]); only the address/MPKH preimage of
+    /// slot 21+ is replaced by `OP_FALSE` per §10.3.
     pub fn with_witness(witness: Stas3UnlockWitness) -> Self {
         Self {
             witness: Some(witness),
@@ -1467,30 +1473,39 @@ mod tests {
     }
 
     // -------------------------------------------------------------------
-    // No-auth template § 10.3 interpretation: with-witness path emits
-    // OP_FALSE in slot 19 (preimage) AND slot 21+ (authz) — TWO total.
+    // No-auth template § 10.3 interpretation (clarified by spec author):
+    // the "preimage" in §10.3 is the address/MPKH preimage (authz slot
+    // 21+), NOT the sighashPreimage (slot 19). The with-witness path
+    // therefore emits the REAL BIP-143 preimage in slot 19, and only a
+    // single OP_FALSE in slot 21+ for the authz push.
     // -------------------------------------------------------------------
 
     #[test]
-    fn no_auth_with_witness_emits_two_op_false() {
-        let mut w = build_witness_1out_no_change();
-        w.sighash_preimage = Vec::new(); // preimage encoded as OP_FALSE
+    fn no_auth_with_witness_keeps_real_preimage_and_op_false_authz() {
+        let w = build_witness_1out_no_change();
+        let expected_preimage = w.sighash_preimage.clone();
+        assert!(
+            !expected_preimage.is_empty(),
+            "fixture must supply a real preimage"
+        );
         let unlocker = Stas3NoAuthUnlockingTemplate::with_witness(w);
         let tx = bsv_transaction::transaction::Transaction::default();
         let script = unlocker.sign(&tx, 0).unwrap();
         let chunks = script.chunks().unwrap();
-        // The last two pushes should be empty pushes (OP_FALSE) — slot 19
-        // (preimage) and slot 21+ (authz).
+        // Slot ordering after write_into: [...slots 1..=18, slot 19
+        // (preimage), slot 20 (spendType)] then this template appends slot
+        // 21+ (authz OP_FALSE). So the last chunk is authz, second-to-last
+        // is spendType, third-from-last is the sighashPreimage.
         let last = chunks.last().unwrap();
-        let second_last = &chunks[chunks.len() - 3]; // slot 19 is 2 chunks before authz (after slot 20)
+        let preimage_chunk = &chunks[chunks.len() - 3];
         assert!(
             last.data.is_none() || last.data.as_ref().is_some_and(|d| d.is_empty()),
-            "authz slot must be OP_FALSE"
+            "authz slot 21+ must be a single OP_FALSE push"
         );
-        assert!(
-            second_last.data.is_none()
-                || second_last.data.as_ref().is_some_and(|d| d.is_empty()),
-            "preimage slot 19 must be OP_FALSE"
+        assert_eq!(
+            preimage_chunk.data.as_deref(),
+            Some(expected_preimage.as_slice()),
+            "slot 19 must carry the real BIP-143 sighashPreimage, not OP_FALSE"
         );
     }
 

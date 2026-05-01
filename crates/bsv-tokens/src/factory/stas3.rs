@@ -3908,16 +3908,31 @@ mod tests {
 
         let tx = build_stas3_swap_swap_tx(&mut config).unwrap();
 
-        // Input 1 (arbitrator-free) unlocking script per spec §10.3: full
-        // §7 witness body (slots 1..=20) followed by `OP_FALSE` in place
-        // of `<sig> <pubkey>`. The authz slot is therefore the LAST push
-        // and MUST be empty (OP_FALSE).
+        // Input 1 (arbitrator-free) unlocking script per spec §10.3
+        // (clarified by spec author): the "preimage" in §10.3 is the
+        // address/MPKH preimage of the authz slot (21+), NOT the
+        // sighashPreimage (slot 19). The full §7 witness body — including
+        // the real BIP-143 preimage in slot 19 — is therefore emitted, and
+        // ONLY the authz push (slot 21+) is replaced by a single OP_FALSE.
         let unlock = tx.inputs[1].unlocking_script.as_ref().expect("must be signed");
         let chunks = unlock.chunks().expect("unlock script chunks parse");
         let last = chunks.last().expect("at least one push");
         assert!(
             last.data.is_none() || last.data.as_ref().is_some_and(|d| d.is_empty()),
-            "arbitrator-free leg authz slot must be OP_FALSE"
+            "arbitrator-free leg authz slot 21+ must be a single OP_FALSE push"
+        );
+        // Slot 19 (sighashPreimage) is third-from-last: ... <preimage>
+        // <spendType> <authz=OP_FALSE>. It MUST carry the real BIP-143
+        // preimage (non-empty) — the engine still performs preimage-driven
+        // checks on no-auth inputs.
+        let preimage_chunk = &chunks[chunks.len() - 3];
+        let preimage_bytes = preimage_chunk
+            .data
+            .as_deref()
+            .expect("slot 19 sighashPreimage must be a non-empty push");
+        assert!(
+            !preimage_bytes.is_empty(),
+            "arbitrator-free leg slot 19 must carry the real BIP-143 preimage, not OP_FALSE"
         );
         // Witness body must be non-empty — this is no longer the legacy
         // single-OP_FALSE form.
