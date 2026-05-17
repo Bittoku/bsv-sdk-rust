@@ -1,0 +1,86 @@
+# Release automation for the bsv-sdk-rust workspace.
+#
+# release-plz runs on every push to `main` and does two things:
+#
+#   release-plz-pr     — opens/updates a "release PR" that bumps the
+#                        version of every crate whose files changed
+#                        (per Conventional Commits) and updates its
+#                        CHANGELOG. Review + merge that PR to release.
+#
+#   release-plz-release — after the release PR merges, publishes the
+#                         bumped crates to crates.io in dependency
+#                         order and creates the git tags / GitHub
+#                         releases.
+#
+# This replaces the manual, dependency-ordered `cargo publish` sweep.
+# It also structurally prevents the partial-release version drift the
+# workspace hit at 0.3.x (facade ahead of its members), because the
+# release PR bumps + publishes everything in one reviewed unit.
+#
+# ── Required repo setup ───────────────────────────────────────────────
+#   Settings → Secrets and variables → Actions → New repository secret:
+#     CARGO_REGISTRY_TOKEN — a crates.io API token scoped to
+#                            `publish-update` (publish-new too, only if
+#                            new crates will be added later).
+#
+# ── Optional but recommended ──────────────────────────────────────────
+#   PRs opened with the default GITHUB_TOKEN do NOT trigger other
+#   workflows, so `ci.yml` will not run on the release PR. To get CI on
+#   the release PR, create a fine-grained PAT (or GitHub App token) with
+#   contents:write + pull-requests:write, store it as RELEASE_PLZ_TOKEN,
+#   and swap `secrets.GITHUB_TOKEN` below for `secrets.RELEASE_PLZ_TOKEN`.
+
+name: Release-plz
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  release-plz-release:
+    name: Release-plz release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Run release-plz
+        uses: release-plz/[email protected]
+        with:
+          command: release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+  release-plz-pr:
+    name: Release-plz PR
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    concurrency:
+      group: release-plz-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Run release-plz
+        uses: release-plz/[email protected]
+        with:
+          command: release-pr
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
