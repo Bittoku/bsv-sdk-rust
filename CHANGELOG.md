@@ -1,5 +1,28 @@
 # Changelog
 
+## v0.3.1 — 2026-05-17
+
+### Bug Fixes
+
+- **STAS 3.0 piece-length limit corrected to 127 bytes** — the §9.5 piece-array
+  encoder previously allowed pieces up to 255 bytes, but the on-chain v0.1
+  engine reads each piece's 1-byte length prefix via `OP_1 OP_SPLIT` as a
+  *signed* script-num, so any length ≥ 128 reads as negative and `OP_SPLIT`
+  rejects it. The encoder now hard-errors at >127 bytes for both the swap and
+  merge paths instead of silently producing unspendable transactions (1e6ce19).
+
+### Internal / Chores
+
+- Cross-SDK piece-array fixture test pins the §9.5 merge encoding byte-for-byte
+  against the matching `bsv_sdk_elixir` test (46e2090).
+- The lineage validator is now documented as experimental — it does not handle
+  STAS 3.0 ancestors or model the issuance-set invariant (46e2090).
+- Added the missing factory config re-exports (confiscate / merge / redeem /
+  split) to the crate root; corrected an inaccurate "crate-private" comment
+  (1e6ce19).
+- Workspace version reconciled to 0.3.1 across all member crates and the
+  `bittoku-bsv` facade.
+
 ## v0.3.0 — 2026-05-01
 
 ### New Features
