@@ -1,6 +1,14 @@
 # Changelog
 
-## v0.3.1 — 2026-05-17
+## v0.3.2 — 2026-05-17
+
+<!--
+  v0.3.1 was tagged locally but never released: a prior partial release
+  had already published the bittoku-bsv facade at 0.3.1 (members lagged
+  at 0.3.0), so 0.3.1 could not be re-published. v0.3.2 reconciles the
+  whole workspace — all member crates and the facade — to one version.
+-->
+
 
 ### Bug Fixes
 
