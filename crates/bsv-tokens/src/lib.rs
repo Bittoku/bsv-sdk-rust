@@ -26,13 +26,15 @@ pub use error::TokenError;
 pub use factory::{
     build_btg_checkpoint_tx, build_btg_merge_tx, build_btg_split_tx, build_btg_transfer_tx,
     build_contract_tx, build_issue_tx, build_merge_tx, build_redeem_tx, build_split_tx,
-    build_stas3_base_tx, build_stas3_freeze_tx, build_stas3_issue_txs, build_stas3_swap_cancel_tx,
+    build_stas3_base_tx, build_stas3_confiscate_tx, build_stas3_freeze_tx, build_stas3_issue_txs,
+    build_stas3_merge_tx, build_stas3_redeem_tx, build_stas3_split_tx, build_stas3_swap_cancel_tx,
     build_stas3_swap_flow_tx, build_stas3_swap_swap_tx, build_stas3_swap_swap_tx_with_pieces,
-    build_stas3_transfer_swap_tx, build_stas3_unfreeze_tx, build_transfer_tx, BtgCheckpointConfig,
-    BtgMergeConfig, BtgPayment, BtgSplitConfig, BtgTransferConfig, ContractConfig, IssueConfig,
-    MergeConfig, RedeemConfig, SplitConfig, Stas3BaseConfig, Stas3IssueConfig, Stas3IssueOutput,
-    Stas3IssueTxs, Stas3OutputParams, Stas3SwapCancelConfig, Stas3SwapPieceParams, TokenInput,
-    TransferConfig,
+    build_stas3_transfer_swap_tx, build_stas3_unfreeze_tx, build_swap_remainder_output,
+    build_transfer_tx, BtgCheckpointConfig, BtgMergeConfig, BtgPayment, BtgSplitConfig,
+    BtgTransferConfig, ContractConfig, IssueConfig, MergeConfig, RedeemAddressType, RedeemConfig,
+    SplitConfig, Stas3BaseConfig, Stas3ConfiscateConfig, Stas3IssueConfig, Stas3IssueOutput,
+    Stas3IssueTxs, Stas3MergeConfig, Stas3OutputParams, Stas3RedeemConfig, Stas3SplitConfig,
+    Stas3SwapCancelConfig, Stas3SwapPieceParams, TokenInput, TransferConfig,
 };
 pub use lineage::{LineageValidator, TxFetcher};
 pub use proof::split_tx_around_output;

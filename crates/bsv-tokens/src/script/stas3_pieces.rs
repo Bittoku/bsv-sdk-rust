@@ -37,14 +37,22 @@
 //! ```
 //!
 //! with no separators. Spec §9.5's "delimited by space" wording is
-//! historical and superseded by the engine ASM. Each piece must fit within a
-//! single u8 length prefix (≤ 0xFF bytes).
+//! historical and superseded by the engine ASM. Each piece must fit within
+//! 127 bytes: the 1-byte length prefix is read by `OP_1 OP_SPLIT` as a
+//! signed script-num, so 0x80 (128) is treated as negative and `OP_SPLIT`
+//! fails — 0x7F (127) is the maximum positive single-byte script-num.
 
 use crate::error::TokenError;
 
-/// Maximum byte length of a single piece (engine reads 1-byte length prefix
-/// via `OP_1 OP_SPLIT`).
-const MAX_PIECE_LEN: usize = 0xFF;
+/// Maximum byte length of a single piece.
+///
+/// The v0.1 engine reads each piece length via `OP_1 OP_SPLIT`, which pops
+/// 1 byte and interprets it as a **signed** Bitcoin script-number
+/// (CScriptNum). Any value ≥ 0x80 (128) is treated as negative, causing
+/// `OP_SPLIT` to fail with an invalid-split-range error and producing an
+/// unspendable transaction. The maximum positive single-byte script-num is
+/// 0x7F (127).
+const MAX_PIECE_LEN: usize = 0x7F;
 
 /// Encoded trailing-param block for a STAS 3.0 atomic-swap unlocking script
 /// (`txType = 1`).
@@ -968,12 +976,15 @@ mod tests {
         assert_eq!(parsed.pieces.len(), 3);
     }
 
-    /// Pieces longer than 255 bytes cannot fit a 1-byte length prefix and
-    /// must be rejected by the encoder.
+    /// A piece of exactly 128 bytes must be rejected: the v0.1 engine reads
+    /// piece lengths via `OP_1 OP_SPLIT` as a signed script-num, so 0x80
+    /// (128) is treated as negative and `OP_SPLIT` fails. 127 is the
+    /// maximum positive single-byte script-num and must be accepted.
     #[test]
-    fn piece_array_rejects_piece_over_255_bytes() {
-        let pieces: Vec<Vec<u8>> = vec![vec![0xAB; 256]];
-        let res = validate_piece_lengths(&pieces);
+    fn piece_array_rejects_piece_over_127_bytes() {
+        // 128 bytes — exactly at the boundary, must be rejected.
+        let pieces_bad: Vec<Vec<u8>> = vec![vec![0xAB; 128]];
+        let res = validate_piece_lengths(&pieces_bad);
         match res {
             Err(TokenError::InvalidScript(msg)) => {
                 assert!(
@@ -983,5 +994,12 @@ mod tests {
             }
             other => panic!("expected InvalidScript(InvalidPiece...), got {other:?}"),
         }
+
+        // 127 bytes — at the limit, must be accepted.
+        let pieces_ok: Vec<Vec<u8>> = vec![vec![0xAB; 127]];
+        assert!(
+            validate_piece_lengths(&pieces_ok).is_ok(),
+            "expected Ok for a 127-byte piece, got Err"
+        );
     }
 }

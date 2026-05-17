@@ -300,9 +300,10 @@ fn engine_accepts_two_output_split() {
 // Runs ONE factory of each family that's reachable from the public crate
 // API through `verify_input` and reports each result. The task spec lists
 // 6 families: regular, freeze, confiscation, swap-cancel, atomic-swap,
-// redeem. Several of those configs are crate-private (Stas3FreezeConfig,
-// Stas3ConfiscateConfig, Stas3RedeemConfig) and aren't reachable from an
-// integration test.
+// redeem. The configs for all families (Stas3ConfiscateConfig,
+// Stas3RedeemConfig, Stas3MergeConfig, Stas3SplitConfig, etc.) are public
+// and re-exported from the crate root. Note: there is no Stas3FreezeConfig
+// — freeze/unfreeze uses Stas3BaseConfig.
 //
 // We exercise the two reachable families here:
 //   - regular (build_stas3_base_tx)
@@ -530,8 +531,9 @@ fn build_synthetic_preceding_tx(lock: &Script, satoshis: u64) -> Vec<u8> {
 /// separately. Keep the `#[ignore]` so CI stays green; remove it once
 /// the upstream piece-size constraint is resolved.
 #[test]
-#[ignore = "encoder fix applied; engine still rejects pieces > 127 bytes via signed-byte OP_SPLIT — \
-            same failure as Elixir SDK; needs separate piece-size resolution"]
+#[ignore = "the head piece in this synthetic swap-swap tx exceeds 127 bytes, which is unencodable \
+            under the v0.1 engine's signed 1-byte length prefix (OP_1 OP_SPLIT reads 0x80+ as \
+            negative); this is a known v0.1 engine limitation pending a spec revision"]
 fn engine_accepts_swap_swap_with_trailing_pieces() {
     use bsv_primitives::hash::sha256d;
 
