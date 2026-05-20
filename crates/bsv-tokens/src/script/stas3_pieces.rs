@@ -1,20 +1,20 @@
-//! STAS 3.0 atomic-swap & merge piece-array encoding (spec v0.1 §8.1, §9.5).
+//! STAS 3.0 atomic-swap & merge piece-array encoding (spec v0.2.3 §8, §9.5).
 //!
 //! For `txType = 1` (atomic swap), the unlocking script's trailing parameters
 //! are:
 //!
 //! ```text
-//! counterparty_locking_script
-//! piece_count       : 1-byte unsigned integer
-//! piece_array       : length-prefixed pieces (1-byte length, then body)
+//! pushdata(counterparty_locking_script)
+//! pushdata(piece_count)
+//! pushdata(piece_1) pushdata(piece_2) ... pushdata(piece_N)
 //! ```
 //!
 //! For `txType = 2..7` (merge variants) the trailing parameters are the same
 //! minus the leading counterparty script:
 //!
 //! ```text
-//! piece_count       : 1-byte unsigned integer (must equal txType, 2..=7)
-//! piece_array       : length-prefixed pieces (1-byte length, then body)
+//! pushdata(piece_count)
+//! pushdata(piece_1) pushdata(piece_2) ... pushdata(piece_N)
 //! ```
 //!
 //! "Pieces" are produced from the **preceding transaction** of an asset input
@@ -25,34 +25,201 @@
 //! (everything BEFORE the first asset, BETWEEN consecutive assets, and
 //! AFTER the last). The piece array is reverse-ordered.
 //!
-//! ## Wire format
+//! ## Wire format (spec v0.2.3 §9.5 / §8)
 //!
-//! The engine consumes pieces via the repeated atom
-//! `OP_1 OP_SPLIT OP_IFDUP OP_IF OP_SWAP OP_SPLIT OP_ENDIF`: it reads 1 byte
-//! as the next piece's length, then exactly that many bytes as the piece
-//! body. The piece-array is therefore encoded as
+//! Each piece is **its own `OP_PUSHDATA` operation** in the unlocking
+//! script. The canonical on-chain engine
+//! (`github.com/stassso/STAS-3-script-templates`) consumes them via an
+//! unrolled, counter-driven block:
 //!
 //! ```text
-//! [len_0][piece_0_bytes][len_1][piece_1_bytes]...[len_N-1][piece_N-1_bytes]
+//! OP_OVER OP_IF OP_SWAP OP_1SUB OP_SWAP OP_3 OP_PICK OP_CAT OP_10 OP_ROLL OP_CAT OP_ENDIF
 //! ```
 //!
-//! with no separators. Spec §9.5's "delimited by space" wording is
-//! historical and superseded by the engine ASM. Each piece must fit within
-//! 127 bytes: the 1-byte length prefix is read by `OP_1 OP_SPLIT` as a
-//! signed script-num, so 0x80 (128) is treated as negative and `OP_SPLIT`
-//! fails — 0x7F (127) is the maximum positive single-byte script-num.
+//! repeated 5×, driven by a decrementing `piece_count` counter sitting on
+//! top of the stack. Each iteration takes one piece off the stack and
+//! concatenates it into the reconstructed preceding tx; the guard
+//! (`OP_OVER OP_IF`) skips iterations once the counter hits zero, which
+//! is what makes the same template handle 1..6 pieces uniformly. There
+//! is therefore **no concatenated length-prefixed blob** and **no
+//! per-piece size limit** — the earlier "127-byte piece limit" was a
+//! phantom created by the obsolete 1-byte length-prefix scheme and does
+//! not exist in the protocol.
+//!
+//! The trailing-param block is the concatenation of independent Bitcoin
+//! pushdata operations, each opcode chosen by size (direct `0x01..=0x4b`,
+//! `OP_PUSHDATA1/2/4`):
+//!
+//! ```text
+//! [merge]  push(piece_count) push(piece_1) ... push(piece_N)
+//! [swap ]  push(counterparty_script) push(piece_count) push(piece_1) ... push(piece_N)
+//! ```
+//!
+//! `piece_count` is encoded as a **minimal Bitcoin numeric push** — DXS's
+//! convention (`ScriptBuilder.addNumber(n)`): for `n ∈ 1..=16` this emits
+//! the single opcode `OP_<n>` (`0x50 + n`); for `n ∈ 17..=127` it emits
+//! a 2-byte direct push `0x01 <n>`. The engine decrements this value via
+//! `OP_1SUB` and tests it via `OP_OVER OP_IF` on each unrolled iteration.
 
 use crate::error::TokenError;
 
-/// Maximum byte length of a single piece.
+// ---------------------------------------------------------------------------
+// Bitcoin pushdata framing
+// ---------------------------------------------------------------------------
+
+/// Append a single Bitcoin pushdata operation for `data` to `out`.
 ///
-/// The v0.1 engine reads each piece length via `OP_1 OP_SPLIT`, which pops
-/// 1 byte and interprets it as a **signed** Bitcoin script-number
-/// (CScriptNum). Any value ≥ 0x80 (128) is treated as negative, causing
-/// `OP_SPLIT` to fail with an invalid-split-range error and producing an
-/// unspendable transaction. The maximum positive single-byte script-num is
-/// 0x7F (127).
-const MAX_PIECE_LEN: usize = 0x7F;
+/// Uses standard push framing, opcode chosen by size:
+/// * empty            → `OP_0` (0x00)
+/// * `1..=75` bytes   → direct push `0x01..=0x4b`
+/// * `76..=255`       → `OP_PUSHDATA1`
+/// * `256..=65535`    → `OP_PUSHDATA2`
+/// * larger           → `OP_PUSHDATA4`
+fn append_pushdata(out: &mut Vec<u8>, data: &[u8]) {
+    let len = data.len();
+    if len == 0 {
+        out.push(0x00);
+    } else if len <= 0x4b {
+        out.push(len as u8);
+    } else if len <= 0xff {
+        out.push(0x4c);
+        out.push(len as u8);
+    } else if len <= 0xffff {
+        out.push(0x4d);
+        out.extend_from_slice(&(len as u16).to_le_bytes());
+    } else {
+        out.push(0x4e);
+        out.extend_from_slice(&(len as u32).to_le_bytes());
+    }
+    out.extend_from_slice(data);
+}
+
+/// Append a single Bitcoin numeric push for the unsigned value `n` to
+/// `out`, using the minimal encoding chosen by DXS's `ScriptBuilder.addNumber`:
+///
+/// * `n == 0`         → `OP_0` (0x00)
+/// * `n ∈ 1..=16`     → single opcode `OP_<n>` (`0x50 + n`)
+/// * `n ∈ 17..=127`   → 2-byte direct push `0x01 <n>` (positive script-num)
+/// * `n ∈ 128..=255`  → 3-byte push `0x02 <n> 0x00` (sign-bit sentinel)
+///
+/// This is the wire shape the canonical STAS 3.0 engine consumes for
+/// `piece_count`: a single-stack-item Bitcoin numeric value that the
+/// engine decrements via `OP_1SUB` and tests via `OP_OVER OP_IF` on each
+/// unrolled iteration of the piece consumer.
+fn append_minimal_numeric_push(out: &mut Vec<u8>, n: u8) {
+    match n {
+        0 => out.push(0x00),
+        1..=16 => out.push(0x50 + n),
+        17..=127 => {
+            out.push(0x01);
+            out.push(n);
+        }
+        _ => {
+            out.push(0x02);
+            out.push(n);
+            out.push(0x00);
+        }
+    }
+}
+
+/// Read a single Bitcoin pushdata operation from `bytes` starting at
+/// `cursor`. Returns `(body, num_bytes_consumed)`.
+///
+/// Recognises the data pushes (`OP_0`, `0x01..=0x4b`, `OP_PUSHDATA1/2/4`)
+/// as well as the numeric stack-pushing opcodes (`OP_1NEGATE`,
+/// `OP_1`..`OP_16`). Numeric opcodes are returned as 1-byte bodies
+/// containing the script-num value they push (`OP_1NEGATE` → `[0x81]`,
+/// `OP_<n>` → `[n]` for `n ∈ 1..=16`). This lets the parser uniformly
+/// treat `piece_count` whether it was emitted as a numeric opcode (the
+/// DXS convention for `n ∈ 1..=16`) or as a direct push.
+fn read_pushdata(bytes: &[u8], cursor: usize) -> Result<(Vec<u8>, usize), TrailingParamsError> {
+    if cursor >= bytes.len() {
+        return Err(TrailingParamsError::Truncated(cursor));
+    }
+    let opcode = bytes[cursor];
+    match opcode {
+        0x00 => Ok((Vec::new(), 1)),
+        // OP_1NEGATE pushes the script-num -1 (1-byte encoding 0x81).
+        0x4f => Ok((vec![0x81], 1)),
+        // OP_1..=OP_16 push the integer N (single byte 0x01..0x10).
+        0x51..=0x60 => Ok((vec![opcode - 0x50], 1)),
+        0x01..=0x4b => {
+            let len = opcode as usize;
+            let start = cursor + 1;
+            let end = start
+                .checked_add(len)
+                .ok_or(TrailingParamsError::Truncated(cursor))?;
+            if end > bytes.len() {
+                return Err(TrailingParamsError::Truncated(cursor));
+            }
+            Ok((bytes[start..end].to_vec(), 1 + len))
+        }
+        0x4c => {
+            if cursor + 1 >= bytes.len() {
+                return Err(TrailingParamsError::Truncated(cursor));
+            }
+            let len = bytes[cursor + 1] as usize;
+            let start = cursor + 2;
+            let end = start
+                .checked_add(len)
+                .ok_or(TrailingParamsError::Truncated(cursor))?;
+            if end > bytes.len() {
+                return Err(TrailingParamsError::Truncated(cursor));
+            }
+            Ok((bytes[start..end].to_vec(), 2 + len))
+        }
+        0x4d => {
+            if cursor + 2 >= bytes.len() {
+                return Err(TrailingParamsError::Truncated(cursor));
+            }
+            let len = u16::from_le_bytes([bytes[cursor + 1], bytes[cursor + 2]]) as usize;
+            let start = cursor + 3;
+            let end = start
+                .checked_add(len)
+                .ok_or(TrailingParamsError::Truncated(cursor))?;
+            if end > bytes.len() {
+                return Err(TrailingParamsError::Truncated(cursor));
+            }
+            Ok((bytes[start..end].to_vec(), 3 + len))
+        }
+        0x4e => {
+            if cursor + 4 >= bytes.len() {
+                return Err(TrailingParamsError::Truncated(cursor));
+            }
+            let len = u32::from_le_bytes([
+                bytes[cursor + 1],
+                bytes[cursor + 2],
+                bytes[cursor + 3],
+                bytes[cursor + 4],
+            ]) as usize;
+            let start = cursor + 5;
+            let end = start
+                .checked_add(len)
+                .ok_or(TrailingParamsError::Truncated(cursor))?;
+            if end > bytes.len() {
+                return Err(TrailingParamsError::Truncated(cursor));
+            }
+            Ok((bytes[start..end].to_vec(), 5 + len))
+        }
+        _ => Err(TrailingParamsError::InvalidPushdata(cursor)),
+    }
+}
+
+/// Encoded byte length of a pushdata operation for `data` (header + body).
+#[cfg(test)]
+fn pushdata_len(data: &[u8]) -> usize {
+    let len = data.len();
+    let header = if len == 0 || len <= 0x4b {
+        1
+    } else if len <= 0xff {
+        2
+    } else if len <= 0xffff {
+        3
+    } else {
+        5
+    };
+    header + len
+}
 
 /// Encoded trailing-param block for a STAS 3.0 atomic-swap unlocking script
 /// (`txType = 1`).
@@ -66,16 +233,16 @@ const MAX_PIECE_LEN: usize = 0x7F;
 ///   outputs whose asset locking-script bytes must be excised.
 ///
 /// # Returns
-/// A byte vector of the form
-/// `counterparty_locking_script || [piece_count] || piece_array`, where
-/// each piece is encoded as `[len][body]` (1-byte length prefix followed
-/// by the piece bytes).
+/// A byte vector that is the concatenation of independent Bitcoin pushdata
+/// operations:
+/// `push(counterparty_locking_script) ‖ push(piece_count) ‖ push(piece_1) ‖
+/// … ‖ push(piece_N)`. The block is ready to append verbatim to an
+/// unlocking script.
 ///
 /// # Errors
 /// * [`TokenError::InvalidScript`] — when `asset_output_indices` is empty,
-///   when an index points at a non-STAS-shaped output, when any single
-///   piece exceeds 255 bytes (`OP_1 OP_SPLIT` reads exactly 1 byte as the
-///   length prefix), or when `preceding_tx` is malformed.
+///   when an index points at a non-STAS-shaped output, or when
+///   `preceding_tx` is malformed.
 pub fn encode_atomic_swap_trailing_params(
     counterparty_locking_script: &[u8],
     preceding_tx: &[u8],
@@ -90,20 +257,24 @@ pub fn encode_atomic_swap_trailing_params(
     let piece_count: u8 = pieces.len().try_into().map_err(|_| {
         TokenError::InvalidScript("atomic-swap pieces: piece count exceeds u8 range".into())
     })?;
-    validate_piece_lengths(&pieces)?;
 
-    let mut out =
-        Vec::with_capacity(counterparty_locking_script.len() + 1 + pieces_total_len(&pieces));
-    out.extend_from_slice(counterparty_locking_script);
-    out.push(piece_count);
-    append_piece_array(&mut out, &pieces);
+    let mut out = Vec::new();
+    append_pushdata(&mut out, counterparty_locking_script);
+    append_minimal_numeric_push(&mut out, piece_count);
+    for piece in &pieces {
+        append_pushdata(&mut out, piece);
+    }
     Ok(out)
 }
 
 /// Encoded trailing-param block for a STAS 3.0 merge unlocking script
 /// (`txType = 2..=7`).
 ///
-/// `piece_count` must equal `txType` (range 2..=7) per spec §8.1.
+/// `piece_count` must equal `txType` (range 2..=7) per spec §8.
+///
+/// # Returns
+/// A byte vector that is the concatenation of independent Bitcoin pushdata
+/// operations: `push(piece_count) ‖ push(piece_1) ‖ … ‖ push(piece_N)`.
 ///
 /// # Errors
 /// * [`TokenError::InvalidScript`] — when `piece_count` is not in 2..=7,
@@ -133,10 +304,11 @@ pub fn encode_merge_trailing_params(
             pieces.len()
         )));
     }
-    validate_piece_lengths(&pieces)?;
-    let mut out = Vec::with_capacity(1 + pieces_total_len(&pieces));
-    out.push(piece_count);
-    append_piece_array(&mut out, &pieces);
+    let mut out = Vec::new();
+    append_minimal_numeric_push(&mut out, piece_count);
+    for piece in &pieces {
+        append_pushdata(&mut out, piece);
+    }
     Ok(out)
 }
 
@@ -145,7 +317,7 @@ pub fn encode_merge_trailing_params(
 pub struct ParsedTrailingParams {
     /// Counterparty locking script (only present for atomic-swap, `txType=1`).
     pub counterparty_locking_script: Option<Vec<u8>>,
-    /// Declared piece count byte.
+    /// Declared piece count.
     pub piece_count: u8,
     /// Pieces in the encoded order (reverse-of-original per spec).
     pub pieces: Vec<Vec<u8>>,
@@ -157,10 +329,16 @@ pub enum TrailingParamsError {
     /// Buffer too short to contain the expected fields.
     #[error("trailing params truncated at offset {0}")]
     Truncated(usize),
+    /// A pushdata opcode at the given offset was invalid (not a push op).
+    #[error("invalid pushdata opcode at offset {0}")]
+    InvalidPushdata(usize),
+    /// The `piece_count` push did not carry a single-byte numeric value.
+    #[error("malformed piece_count push")]
+    MalformedPieceCount,
     /// Declared piece count does not match the parsed array length.
     #[error("piece_count mismatch: declared {declared}, found {found}")]
     PieceCountMismatch {
-        /// Piece count declared by the leading byte.
+        /// Piece count declared by the leading push.
         declared: u8,
         /// Number of pieces actually present in the array.
         found: usize,
@@ -168,48 +346,54 @@ pub enum TrailingParamsError {
     /// `txType` argument out of supported range (must be 1..=7).
     #[error("unsupported tx_type {0}; expected 1..=7")]
     UnsupportedTxType(u8),
-    /// Counterparty locking script length cannot be inferred for `txType=1`.
-    #[error("ambiguous counterparty script length for atomic swap")]
-    AmbiguousCounterpartyScript,
-    /// Trailing bytes remain after consuming `piece_count` length-prefixed
-    /// pieces from the piece-array.
+    /// Trailing bytes remain after consuming `piece_count` pushdata pieces.
     #[error("trailing bytes remain after piece_array (offset {0})")]
     TrailingBytesAfterPieces(usize),
 }
 
 /// Parse an existing trailing-param block.
 ///
-/// For atomic swap (`tx_type = 1`), the caller MUST provide
-/// `counterparty_script_len` — the byte length of the counterparty's
-/// locking script — because the trailing block carries no inline length
-/// prefix for that field (it is delineated by surrounding script pushes
-/// in the unlocking witness). Pass `None` for merge variants.
+/// The block is a sequence of independent Bitcoin pushdata operations:
+/// for atomic swap (`tx_type = 1`) the first push is the counterparty
+/// locking script, then `piece_count`, then `piece_count` piece pushes;
+/// for merge (`tx_type = 2..=7`) the first push is `piece_count`, then the
+/// pieces. No external length hints are required — each component is a
+/// self-delimiting push.
 pub fn parse_trailing_params(
     bytes: &[u8],
     tx_type: u8,
-    counterparty_script_len: Option<usize>,
 ) -> Result<ParsedTrailingParams, TrailingParamsError> {
     if !(1..=7).contains(&tx_type) {
         return Err(TrailingParamsError::UnsupportedTxType(tx_type));
     }
 
-    let (counterparty_locking_script, after_script) = if tx_type == 1 {
-        let len =
-            counterparty_script_len.ok_or(TrailingParamsError::AmbiguousCounterpartyScript)?;
-        if bytes.len() < len {
-            return Err(TrailingParamsError::Truncated(len));
-        }
-        (Some(bytes[..len].to_vec()), len)
+    let mut cursor = 0usize;
+
+    let counterparty_locking_script = if tx_type == 1 {
+        let (cp, consumed) = read_pushdata(bytes, cursor)?;
+        cursor += consumed;
+        Some(cp)
     } else {
-        (None, 0)
+        None
     };
 
-    if bytes.len() <= after_script {
-        return Err(TrailingParamsError::Truncated(after_script));
+    let (count_body, consumed) = read_pushdata(bytes, cursor)?;
+    cursor += consumed;
+    if count_body.len() != 1 {
+        return Err(TrailingParamsError::MalformedPieceCount);
     }
-    let piece_count = bytes[after_script];
-    let pieces_bytes = &bytes[after_script + 1..];
-    let pieces = split_piece_array(pieces_bytes, piece_count as usize, after_script + 1)?;
+    let piece_count = count_body[0];
+
+    let mut pieces: Vec<Vec<u8>> = Vec::with_capacity(piece_count as usize);
+    for _ in 0..piece_count {
+        let (piece, consumed) = read_pushdata(bytes, cursor)?;
+        cursor += consumed;
+        pieces.push(piece);
+    }
+
+    if cursor != bytes.len() {
+        return Err(TrailingParamsError::TrailingBytesAfterPieces(cursor));
+    }
 
     if pieces.len() != piece_count as usize {
         return Err(TrailingParamsError::PieceCountMismatch {
@@ -236,70 +420,6 @@ pub fn parse_trailing_params(
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
-
-/// Total encoded byte length of the piece-array (1-byte length prefix per
-/// piece plus each piece body).
-fn pieces_total_len(pieces: &[Vec<u8>]) -> usize {
-    pieces.iter().map(|p| 1 + p.len()).sum()
-}
-
-/// Reject any piece that exceeds the engine's 1-byte length-prefix capacity.
-fn validate_piece_lengths(pieces: &[Vec<u8>]) -> Result<(), TokenError> {
-    for (i, piece) in pieces.iter().enumerate() {
-        if piece.len() > MAX_PIECE_LEN {
-            return Err(TokenError::InvalidScript(format!(
-                "InvalidPiece: piece {i} length {} exceeds engine limit of {} bytes \
-                 (OP_1 OP_SPLIT reads a 1-byte length prefix)",
-                piece.len(),
-                MAX_PIECE_LEN
-            )));
-        }
-    }
-    Ok(())
-}
-
-/// Append the piece array to `out` using the engine's wire format:
-/// `[len_0][piece_0_bytes][len_1][piece_1_bytes]...`. Caller guarantees
-/// each piece fits in a u8 via [`validate_piece_lengths`].
-fn append_piece_array(out: &mut Vec<u8>, pieces: &[Vec<u8>]) {
-    for piece in pieces {
-        debug_assert!(piece.len() <= MAX_PIECE_LEN);
-        out.push(piece.len() as u8);
-        out.extend_from_slice(piece);
-    }
-}
-
-/// Parse a length-prefixed piece-array. Reads exactly `piece_count` pieces;
-/// returns an error if the buffer truncates mid-piece or has trailing bytes.
-fn split_piece_array(
-    bytes: &[u8],
-    piece_count: usize,
-    base_offset: usize,
-) -> Result<Vec<Vec<u8>>, TrailingParamsError> {
-    let mut pieces: Vec<Vec<u8>> = Vec::with_capacity(piece_count);
-    let mut cursor = 0usize;
-    for _ in 0..piece_count {
-        if cursor >= bytes.len() {
-            return Err(TrailingParamsError::Truncated(base_offset + cursor));
-        }
-        let len = bytes[cursor] as usize;
-        cursor += 1;
-        let end = cursor
-            .checked_add(len)
-            .ok_or(TrailingParamsError::Truncated(base_offset + cursor))?;
-        if end > bytes.len() {
-            return Err(TrailingParamsError::Truncated(base_offset + end));
-        }
-        pieces.push(bytes[cursor..end].to_vec());
-        cursor = end;
-    }
-    if cursor != bytes.len() {
-        return Err(TrailingParamsError::TrailingBytesAfterPieces(
-            base_offset + cursor,
-        ));
-    }
-    Ok(pieces)
-}
 
 /// Build the reverse-ordered piece array from a preceding transaction by
 /// excising the asset locking script (everything past `[owner][var2]`)
@@ -625,6 +745,58 @@ mod tests {
         tx
     }
 
+    // ----- pushdata framing -----
+
+    #[test]
+    fn pushdata_framing_picks_correct_opcode() {
+        let mut out = Vec::new();
+        append_pushdata(&mut out, &[]);
+        assert_eq!(out, vec![0x00]);
+
+        let mut out = Vec::new();
+        append_pushdata(&mut out, &[0xAB, 0xCD]);
+        assert_eq!(out, vec![0x02, 0xAB, 0xCD]);
+
+        // 75 bytes → direct push 0x4b.
+        let mut out = Vec::new();
+        append_pushdata(&mut out, &vec![0x11; 75]);
+        assert_eq!(out[0], 0x4b);
+        assert_eq!(out.len(), 76);
+
+        // 76 bytes → OP_PUSHDATA1.
+        let mut out = Vec::new();
+        append_pushdata(&mut out, &vec![0x22; 76]);
+        assert_eq!(out[0], 0x4c);
+        assert_eq!(out[1], 76);
+        assert_eq!(out.len(), 78);
+
+        // 200 bytes → OP_PUSHDATA1 (no size limit on pieces anymore).
+        let mut out = Vec::new();
+        append_pushdata(&mut out, &vec![0x33; 200]);
+        assert_eq!(out[0], 0x4c);
+        assert_eq!(out[1], 200);
+        assert_eq!(out.len(), 202);
+
+        // 300 bytes → OP_PUSHDATA2.
+        let mut out = Vec::new();
+        append_pushdata(&mut out, &vec![0x44; 300]);
+        assert_eq!(out[0], 0x4d);
+        assert_eq!(out.len(), 303);
+    }
+
+    #[test]
+    fn pushdata_round_trips() {
+        for len in [0usize, 1, 75, 76, 127, 128, 200, 255, 256, 1000] {
+            let data = vec![0x5Au8; len];
+            let mut framed = Vec::new();
+            append_pushdata(&mut framed, &data);
+            assert_eq!(framed.len(), pushdata_len(&data));
+            let (body, consumed) = read_pushdata(&framed, 0).unwrap();
+            assert_eq!(body, data);
+            assert_eq!(consumed, framed.len());
+        }
+    }
+
     // ----- atomic swap -----
 
     #[test]
@@ -636,15 +808,18 @@ mod tests {
         let counterparty_script = vec![0xCC, 0xCC];
         let trailing = encode_atomic_swap_trailing_params(&counterparty_script, &tx, &[1]).unwrap();
 
-        // Trailing layout = counterparty_script || piece_count(1B) || pieces.
-        // Two pieces (head, tail) → reversed → [tail, head] each prefixed by
-        // its own 1-byte length. tail = bytes after the excised engine of
-        // asset output (locktime). head = bytes before the excised region.
-        assert_eq!(&trailing[..2], counterparty_script.as_slice());
-        assert_eq!(trailing[2], 2u8); // piece_count = 2
+        // Trailing layout = push(counterparty_script) ‖ push(piece_count)
+        // ‖ push(piece)... — the first push is the 2-byte counterparty.
+        assert_eq!(&trailing[..3], &[0x02, 0xCC, 0xCC]);
+        // Next push is piece_count as a minimal numeric opcode: count=2 → OP_2 (0x52).
+        assert_eq!(trailing[3], 0x52);
 
-        // Round-trip parse to validate the length-prefixed shape.
-        let parsed = parse_trailing_params(&trailing, 1, Some(counterparty_script.len())).unwrap();
+        // Round-trip parse to validate the pushdata shape.
+        let parsed = parse_trailing_params(&trailing, 1).unwrap();
+        assert_eq!(
+            parsed.counterparty_locking_script.as_deref(),
+            Some(&[0xCC, 0xCC][..])
+        );
         assert_eq!(parsed.piece_count, 2);
         assert_eq!(parsed.pieces.len(), 2);
     }
@@ -675,8 +850,9 @@ mod tests {
         let tx = fake_tx(&[a.clone()]);
         // 1 asset → produces head + tail = 2 pieces → matches piece_count=2.
         let trailing = encode_merge_trailing_params(2, &tx, &[0]).unwrap();
-        assert_eq!(trailing[0], 2u8);
-        let parsed = parse_trailing_params(&trailing, 2, None).unwrap();
+        // First push is piece_count as a minimal numeric opcode: count=2 → OP_2 (0x52).
+        assert_eq!(trailing[0], 0x52);
+        let parsed = parse_trailing_params(&trailing, 2).unwrap();
         assert_eq!(parsed.pieces.len(), 2);
     }
 
@@ -687,8 +863,9 @@ mod tests {
         let tx = fake_tx(&[a, b]);
         // 2 assets → 3 pieces (head, between, tail) → matches piece_count=3.
         let trailing = encode_merge_trailing_params(3, &tx, &[0, 1]).unwrap();
-        assert_eq!(trailing[0], 3u8);
-        let parsed = parse_trailing_params(&trailing, 3, None).unwrap();
+        // piece_count=3 → OP_3 (0x53).
+        assert_eq!(trailing[0], 0x53);
+        let parsed = parse_trailing_params(&trailing, 3).unwrap();
         assert_eq!(parsed.pieces.len(), 3);
     }
 
@@ -700,8 +877,9 @@ mod tests {
         let tx = fake_tx(&[a, b, c]);
         // 3 assets → 4 pieces → matches piece_count=4.
         let trailing = encode_merge_trailing_params(4, &tx, &[0, 1, 2]).unwrap();
-        assert_eq!(trailing[0], 4u8);
-        let parsed = parse_trailing_params(&trailing, 4, None).unwrap();
+        // piece_count=4 → OP_4 (0x54).
+        assert_eq!(trailing[0], 0x54);
+        let parsed = parse_trailing_params(&trailing, 4).unwrap();
         assert_eq!(parsed.pieces.len(), 4);
     }
 
@@ -737,19 +915,15 @@ mod tests {
         let counterparty = vec![0xCAu8, 0xFE, 0xBA, 0xBE];
 
         let encoded = encode_atomic_swap_trailing_params(&counterparty, &tx, &[0]).unwrap();
-        let parsed = parse_trailing_params(&encoded, 1, Some(counterparty.len())).unwrap();
+        let parsed = parse_trailing_params(&encoded, 1).unwrap();
         assert_eq!(
             parsed.counterparty_locking_script.as_deref(),
             Some(&counterparty[..])
         );
         assert_eq!(parsed.piece_count, 2);
         assert_eq!(parsed.pieces.len(), 2);
-        // Reconstruct: pieces.reverse() then join the original by stitching
-        // the excised regions back in. We just verify the reverse preserves
-        // the head/tail sentinel bytes from `tx`.
-        // tx starts with 4 version bytes [0x01,0x00,0x00,0x00].
         // After reverse, the LAST piece is the head — which should start
-        // with the version bytes.
+        // with the version bytes [0x01,0x00,0x00,0x00].
         let head = parsed.pieces.last().unwrap();
         assert_eq!(&head[..4], &1u32.to_le_bytes()[..]);
     }
@@ -760,28 +934,27 @@ mod tests {
         let b = fake_stas_script(0x22, 0xBB, &[0xE2, 0xE2]);
         let tx = fake_tx(&[a, b]);
         let encoded = encode_merge_trailing_params(3, &tx, &[0, 1]).unwrap();
-        let parsed = parse_trailing_params(&encoded, 3, None).unwrap();
+        let parsed = parse_trailing_params(&encoded, 3).unwrap();
         assert!(parsed.counterparty_locking_script.is_none());
         assert_eq!(parsed.piece_count, 3);
         assert_eq!(parsed.pieces.len(), 3);
     }
 
     #[test]
-    fn parse_rejects_bad_piece_count() {
-        // Length-prefixed: declared count=2 but the buffer truncates after
-        // the first piece's header. piece_count(0x02) || len(0x02) AA BB ||
-        // len(0x05) but no body — engine reports Truncated.
-        let block = vec![0x02u8, 0x02, 0xAA, 0xBB, 0x05];
-        let res = parse_trailing_params(&block, 2, None);
+    fn parse_rejects_truncated_piece() {
+        // Merge block: piece_count opcode OP_2 (0x52), then one full piece
+        // push [0x02,0xAA,0xBB], then a push header [0x05] with no body.
+        let block = vec![0x52u8, 0x02, 0xAA, 0xBB, 0x05];
+        let res = parse_trailing_params(&block, 2);
         assert!(matches!(res, Err(TrailingParamsError::Truncated(_))));
     }
 
     #[test]
     fn parse_rejects_trailing_bytes_after_pieces() {
-        // tx_type=1, counterparty=[] (len=0), piece_count=1, one
-        // length-prefixed piece [0x01, 0xAA], then a stray trailing 0xCC.
-        let block = vec![0x01u8 /* piece_count */, 0x01, 0xAA, 0xCC];
-        let res = parse_trailing_params(&block, 1, Some(0));
+        // tx_type=1: push(counterparty=[]) = [0x00], piece_count=1 → OP_1
+        // (0x51), one piece push [0x01,0xAA], then a stray byte 0xCC.
+        let block = vec![0x00u8, 0x51, 0x01, 0xAA, 0xCC];
+        let res = parse_trailing_params(&block, 1);
         assert!(matches!(
             res,
             Err(TrailingParamsError::TrailingBytesAfterPieces(_))
@@ -790,23 +963,23 @@ mod tests {
 
     #[test]
     fn parse_rejects_unsupported_tx_type() {
-        let block = vec![0x01u8];
+        let block = vec![0x01u8, 0x01];
         assert!(matches!(
-            parse_trailing_params(&block, 0, None),
+            parse_trailing_params(&block, 0),
             Err(TrailingParamsError::UnsupportedTxType(0))
         ));
         assert!(matches!(
-            parse_trailing_params(&block, 8, None),
+            parse_trailing_params(&block, 8),
             Err(TrailingParamsError::UnsupportedTxType(8))
         ));
     }
 
     #[test]
     fn parse_handles_empty_pieces() {
-        // Length-prefixed: piece_count=3, then [len=1][0xAA][len=0][len=1][0xBB]
-        // → 3 pieces, middle one empty. Use tx_type=3 so count must equal 3.
-        let block = vec![0x03u8, 0x01, 0xAA, 0x00, 0x01, 0xBB];
-        let parsed = parse_trailing_params(&block, 3, None).unwrap();
+        // Merge tx_type=3: piece_count=3 → OP_3 (0x53), then three piece
+        // pushes — [0x01,0xAA], [0x00] (empty), [0x01,0xBB].
+        let block = vec![0x53u8, 0x01, 0xAA, 0x00, 0x01, 0xBB];
+        let parsed = parse_trailing_params(&block, 3).unwrap();
         assert_eq!(parsed.pieces.len(), 3);
         assert_eq!(parsed.pieces[0], vec![0xAA]);
         assert_eq!(parsed.pieces[1], Vec::<u8>::new());
@@ -820,7 +993,7 @@ mod tests {
             let asset = fake_stas_script(0x11, 0xAA, &[0xE1]);
             let tx = fake_tx(&[asset]);
             let encoded = encode_atomic_swap_trailing_params(&counterparty, &tx, &[0]).unwrap();
-            let parsed = parse_trailing_params(&encoded, 1, Some(cp_len)).unwrap();
+            let parsed = parse_trailing_params(&encoded, 1).unwrap();
             assert_eq!(
                 parsed.counterparty_locking_script.as_deref(),
                 Some(&counterparty[..])
@@ -829,84 +1002,94 @@ mod tests {
         }
     }
 
-    // ----- snapshot pinning the trailing block hex -----
+    // ----- snapshot pinning the trailing block shape -----
 
     #[test]
-    fn snapshot_atomic_swap_hex_pin() {
-        // Deterministic input: a single 1-byte counterparty script (0x99),
-        // single asset output with engine payload [0xE1,0xE2,0xE3] in a
-        // canonical 1-input/1-output tx. We don't assert exact bytes for
-        // the inner tx (that's defined by `fake_tx`), but we snapshot the
-        // shape and pin the leading bytes the spec mandates.
+    fn snapshot_atomic_swap_shape() {
         let asset = fake_stas_script(0x77, 0x55, &[0xE1, 0xE2, 0xE3]);
         let tx = fake_tx(&[asset]);
         let counterparty = vec![0x99u8];
         let encoded = encode_atomic_swap_trailing_params(&counterparty, &tx, &[0]).unwrap();
 
-        // Required leading bytes: 0x99 (counterparty) || 0x02 (piece_count).
-        assert_eq!(encoded[0], 0x99);
-        assert_eq!(encoded[1], 0x02);
-        // Round-trip parse for shape coverage.
-        let parsed = parse_trailing_params(&encoded, 1, Some(1)).unwrap();
+        // First push: counterparty script [0x99] → [0x01, 0x99].
+        assert_eq!(&encoded[..2], &[0x01, 0x99]);
+        // Next push: piece_count=2 → OP_2 (single byte 0x52).
+        assert_eq!(encoded[2], 0x52);
+        let parsed = parse_trailing_params(&encoded, 1).unwrap();
         assert_eq!(parsed.pieces.len(), 2);
     }
 
     #[test]
-    fn snapshot_merge_hex_pin() {
+    fn snapshot_merge_shape() {
         let a = fake_stas_script(0xAA, 0x11, &[0xE1]);
         let b = fake_stas_script(0xBB, 0x22, &[0xE2]);
         let c = fake_stas_script(0xCC, 0x33, &[0xE3]);
         let tx = fake_tx(&[a, b, c]);
         let encoded = encode_merge_trailing_params(4, &tx, &[0, 1, 2]).unwrap();
-        // Leading byte is the piece count.
-        assert_eq!(encoded[0], 4);
-        // Round-trip through the parser to verify the length-prefixed shape.
-        let parsed = parse_trailing_params(&encoded, 4, None).unwrap();
+        // First push is piece_count: count=4 → OP_4 (0x54).
+        assert_eq!(encoded[0], 0x54);
+        let parsed = parse_trailing_params(&encoded, 4).unwrap();
         assert_eq!(parsed.pieces.len(), 4);
     }
 
-    // ----- length-prefix shape regression -----
+    // ----- pushdata-per-piece shape regression -----
 
-    /// Encode a tiny 2-piece array directly via the public encoders and
-    /// verify the wire bytes are length-prefixed (no separators).
-    ///
-    /// Builds a synthetic preceding tx with a single STAS-shaped output
-    /// whose excise leaves head=`[0x41,0x42]` ("AB") and tail=`[0x43,0x44]`
-    /// ("CD"). After reversal the encoded piece body must be
-    /// `[0x02,0x43,0x44,0x02,0x41,0x42]`.
+    /// Each piece is its own pushdata operation; piece_count is its own
+    /// push. There is NO concatenated length-prefixed blob and NO 127-byte
+    /// piece-size limit.
     #[test]
-    fn piece_array_is_length_prefixed_not_separator_delimited() {
-        // We don't synthesize a tx here — the spec for the encoder's wire
-        // format is enforced by the helpers directly. Use them with known
-        // pieces to assert the exact bytes.
-        let pieces: Vec<Vec<u8>> = vec![vec![0x41, 0x42], vec![0x43, 0x44]];
-        validate_piece_lengths(&pieces).unwrap();
-        let mut out = Vec::new();
-        append_piece_array(&mut out, &pieces);
+    fn piece_array_is_pushdata_per_piece() {
+        // Synthesize a merge block with two known pieces by hand-framing.
+        // piece_count uses the minimal numeric push (OP_2 = 0x52, single byte);
+        // pieces use standard pushdata framing.
+        let mut block = Vec::new();
+        append_minimal_numeric_push(&mut block, 2); // piece_count → OP_2 (0x52)
+        append_pushdata(&mut block, &[0x41, 0x42]); // piece 0
+        append_pushdata(&mut block, &[0x43, 0x44]); // piece 1
         assert_eq!(
-            out,
-            vec![0x02, 0x41, 0x42, 0x02, 0x43, 0x44],
-            "piece-array must be length-prefixed: \
-             [len][body][len][body], no 0x20 separators"
+            block,
+            vec![0x52, 0x02, 0x41, 0x42, 0x02, 0x43, 0x44],
+            "trailing block must be OP_<n> piece_count followed by independent \
+             pushdata operations: OP_<count> push(piece) push(piece)"
         );
 
-        // Round-trip via split_piece_array (the decoder counterpart).
-        let decoded = split_piece_array(&out, 2, 0).unwrap();
-        assert_eq!(decoded, pieces);
+        let parsed = parse_trailing_params(&block, 2).unwrap();
+        assert_eq!(parsed.piece_count, 2);
+        assert_eq!(parsed.pieces, vec![vec![0x41, 0x42], vec![0x43, 0x44]]);
+    }
+
+    /// A 200-byte piece must encode fine — there is no piece-size limit
+    /// (the old "127-byte limit" was a phantom of the length-prefix scheme).
+    #[test]
+    fn piece_array_accepts_large_pieces() {
+        // Build a STAS-shaped script whose excise leaves a >127-byte head.
+        let big_payload = vec![0xEE; 300];
+        let asset = fake_stas_script(0x11, 0xAA, &big_payload);
+        // 200 bytes of leading dust to push the head piece well past 127.
+        let dust = vec![0x6Au8; 200];
+        let tx = fake_tx(&[dust, asset]);
+        let trailing = encode_merge_trailing_params(2, &tx, &[1]).unwrap();
+        let parsed = parse_trailing_params(&trailing, 2).unwrap();
+        assert_eq!(parsed.pieces.len(), 2);
+        // The head piece (last after reverse) is well over 127 bytes and
+        // round-trips cleanly through pushdata framing.
+        assert!(parsed.pieces.last().unwrap().len() > 127);
     }
 
     // ----- real STAS 3.0 fixture (cross-SDK pin) -----
 
-    /// The 2812-byte STAS 3.0 engine base template. Starts with the engine
-    /// prefix `6d827363`, ends with `0x6a` (OP_RETURN). Same blob pinned in
-    /// the Elixir SDK's `reader_push_data_test.exs` and
-    /// `stas3_pieces_test.exs`.
+    /// The 2899-byte STAS 3.0 canonical engine base template. Starts with
+    /// the engine prefix `6d827363`, ends with `0x6a` (OP_RETURN). Same
+    /// blob pinned in the Elixir SDK's `reader_push_data_test.exs` and
+    /// `stas3_pieces_test.exs`. SHA-256:
+    /// `5c659f5f3abdad612c4bfd19b6034f2df0c0bcef1af1ca928d0f5a34ac3ee371`.
+    /// Source: `github.com/stassso/STAS-3-script-templates` (v0.2.3).
     const STAS3_BASE_TEMPLATE_HEX: &str = concat!(
-        "6d82736301218763007b7b517c6e5667766b517f786b517f73637c7f68517f73637c7f68517f73637c7f68517f73637c7f68517f73637c7f68766c936c7c5493686751687652937a76aa607f5f7f7c5e7f7c5d7f7c5c7f7c5b7f7c5a7f7c597f7c587f7c577f7c567f7c557f7c547f7c537f7c527f7c517f7c7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7c5f7f7c5e7f7c5d7f7c5c7f7c5b7f7c5a7f7c597f7c587f7c577f7c567f7c557f7c547f7c537f7c527f7c517f7c7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e011f7f7d7e01007e8111414136d08c5ed2bf3ba048afe6dcaebafe01005f80837e01007e7652967b537a7601ff877c0100879b7d648b6752799368537a7d9776547aa06394677768263044022079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f8179802207c607f5f7f7c5e7f7c5d7f7c5c7f7c5b7f7c5a7f7c597f7c587f7c577f7c567f7c557f7c547f7c537f7c527f7c517f7c7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7c5f7f7c5e7f7c5d7f7c5c7f7c5b7f7c5a7f7c597f7c587f7c577f7c567f7c557f7c547f7c537f7c527f7c517f7c7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e01417e7c6421038ff83d8cf12121491609c4939dc11c4aa35503508fe432dc5a5c1905608b92186721023635954789a02e39fb7e54440b6f528d53efd65635ddad7f3c4085f97fdbdc4868ad547f7701207f01207f7701247f517f7801007e02fd00a063546752687f7801007e817f727e7b517f7c01147d887f517f7c01007e817601619f6976014ea063517c7b6776014ba06376014da063755467014d9c6352675168687f7c01007e81687f007b7b687602fd0a7f7701147f7c5579876b826475020100686b587a5893766b7a765155a569005379736382013ca07c517f7c51877b9a6352795487637101007c7e717101207f01147f75777c7567756c766b8b8b79518868677568686c6c7c6b517f7c817f788273638c7f776775010068518463517f7c01147d887f547952876372777c717c767663517f756852875779766352790152879a689b63517f77567a7567527c7681014f0161a5587a9a63015094687e68746c766b5c9388748c76795879888c8c7978886777717c767663517f7568528778015287587a9a9b745394768b797663517f756852877c6c766b5c936ea0637c8c768b797663517f75685287726b9b7c6c686ea0637c5394768b797663517f75685287726b9b7c6c686ea063755494797663517f756852879b676d689b63006968687c717167567a75686d7c518763755279686c755879a9886b6b6b6b6b6b6b827763af686c6c6c6c6c6c6c547a577a7664577a577a587a597a786354807e7e676d68aa880067765158a569765187645294587a53795a7a7e7e78637c8c7c53797e597a7e6878637c8c7c53797e597a7e6878637c8c7c53797e597a7e6878637c8c7c53797e597a7e6878637c8c7c53797e597a7e6867587a6876aa5a7a7d54807e597a5b7a5c7a786354807e6f7e7eaa727c7e676d6e7eaa7c687b7eaa5a7a7d877663516752687c72879b69537a6491687c7b547f77517f7853a0916901247f77517f7c01007e817602fc00a06302fd00a063546752687f7c01007e816854937f77788c6301247f77517f7c01007e817602fc00a06302fd00a063546752687f7c01007e816854937f777852946301247f77517f7c01007e817602fc00a06302fd00a063546752687f7c01007e816854937f77686877517f7c52797d8b9f7c53a09b91697c76638c7c587f77517f7c01007e817602fc00a06302fd00a063546752687f7c01007e81687f777c6876638c7c587f77517f7c01007e817602fc00a06302fd00a063546752687f7c01007e81687f777c6863587f77517f7c01007e817602fc00a06302fd00a063546752687f7c01007e81687f7768587f517f7801007e817602fc00a06302fd00a063546752687f7801007e81727e7b7b687f75517f7c01147d887f517f7c01007e817601619f6976014ea0637c6776014ba06376014da063755467014d9c6352675168687f7c01007e81687f68557964577988756d67716881687863567a677b68587f7c8153796353795287637b6b537a6b717c6b6b537a6b676b577a6b597a6b587a6b577a6b7c68677b93687c547f7701207f75748c7a7669765880044676a914780114748c7a76727b748c7a768291788251877c764f877c81510111a59b9a9b648276014ba1647602ff00a16351014c677603ffff00a16352014d6754014e68687b7b7f757e687c7e67736301509367010068685c795c79636c766b7363517f7c51876301207f7c5279a8877c011c7f5579877c01147f755679879a9a6967756868687e777e7e827602fc00a0637603ffff00a06301fe7c82546701fd7c8252687da0637f756780687e67517f75687c7e7e0a888201218763ac67517f07517f73637c7f6876767e767e7e02ae687e7e7c557a00740111a063005a79646b7c748c7a76697d937b7b58807e6c91677c748c7a7d58807e6c6c6c557a680114748c7a748c7a768291788251877c764f877c81510111a59b9a9b648276014ba1647602ff00a16351014c677603ffff00a16352014d6754014e68687b7b7f757e687c7e67736301509367010068685479635f79676c766b0115797363517f7c51876301207f7c5279a8877c011c7f5579877c01147f755679879a9a6967756868687e777e7e827602fc00a0637603ffff00a06301fe7c82546701fd7c8252687da0637f756780687e67517f75687c7e7c637e677c6b7c6b7c6b7e7c6b68685979636c6c766b786b7363517f7c51876301347f77547f547f75786352797b01007e81957c01007e81965379a169676d68677568685c797363517f7c51876301347f77547f547f75786354797b01007e81957c01007e819678a169676d68677568687568740111a063748c7a76697d58807e00005c79635e79768263517f756851876c6c766b7c6b768263517f756851877b6e9b63789c6375745294797b78877b7b877d9b69637c917c689167745294797c638777637c917c91686777876391677c917c686868676d6d68687863537a6c936c6c6c567a567a54795479587a676b72937b7b5c795e796c68748c7a748c7a7b636e717b7b877b7b879a6967726d6801147b7e7c8291788251877c764f877c81510111a59b9a9b648276014ba1647602ff00a16351014c677603ffff00a16352014d6754014e68687b7b7f757e687c7e67736301509367010068687e7c636c766b7e726b6b726b6b675b797e68827602fc00a0637603ffff00a06301fe7c82546701fd7c8252687da0637f756780687e67517f75687c7e7e68740111a063748c7a76697d58807e00005c79635e79768263517f756851876c6c766b7c6b768263517f756851877b6e9b63789c6375745294797b78877b7b877d9b69637c917c689167745294797c638777637c917c91686777876391677c917c686868676d6d68687863537a6c936c6c6c567a567a54795479587a676b72937b7b5c795e796c68748c7a748c7a7b636e717b7b877b7b879a6967726d6801147b7e7c8291788251877c764f877c81510111a59b9a9b648276014ba1647602ff00a16351014c677603ffff00a16352014d6754014e68687b7b7f757e687c7e67736301509367010068687e7c636c766b7e726b6b726b6b675b797e68827602fc00a0637603ffff00a06301fe7c82546701fd7c8252687da0637f756780687e67517f75687c7e7e68597a636c6c6c6d6c6c6d6c9d687c587a9d7d7e5c79635d795880041976a9145e797e0288ac7e7e6700687d7e5c7a766302006a7c7e827602fc00a06301fd7c7e536751687f757c7e0058807c7e687d7eaa6b7e7e7e7e7e7eaa78877c6c877c6c9a9b726d726d77776a",
+        "6d82736301218763007b7b517c6e5667766b517f786b517f73637c7f68517f73637c7f68517f73637c7f68517f73637c7f68517f73637c7f68766c936c7c5493686751687652937a76aa607f5f7f7c5e7f7c5d7f7c5c7f7c5b7f7c5a7f7c597f7c587f7c577f7c567f7c557f7c547f7c537f7c527f7c517f7c7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7c5f7f7c5e7f7c5d7f7c5c7f7c5b7f7c5a7f7c597f7c587f7c577f7c567f7c557f7c547f7c537f7c527f7c517f7c7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e011f7f7d7e01007e8111414136d08c5ed2bf3ba048afe6dcaebafe01005f80837e01007e7652967b537a7601ff877c0100879b7d648b6752799368537a7d9776547aa06394677768263044022079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f8179802207c607f5f7f7c5e7f7c5d7f7c5c7f7c5b7f7c5a7f7c597f7c587f7c577f7c567f7c557f7c547f7c537f7c527f7c517f7c7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7c5f7f7c5e7f7c5d7f7c5c7f7c5b7f7c5a7f7c597f7c587f7c577f7c567f7c557f7c547f7c537f7c527f7c517f7c7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e01417e7c6421038ff83d8cf12121491609c4939dc11c4aa35503508fe432dc5a5c1905608b92186721023635954789a02e39fb7e54440b6f528d53efd65635ddad7f3c4085f97fdbdc4868ad547f7701207f01207f7701247f517f7801007e02fd00a063546752687f7801007e817f727e7b517f7c01147d887f517f7c01007e817601619f6976014ea063517c7b6776014ba06376014da063755467014d9c6352675168687f7c01007e81687f007b7b687602540b7f7701147f7c5579876b826475020100686b587a5893766b7a765155a569005379736382013ca07c517f7c51877b9a6352795487637101007c7e717101207f01147f7577776775785387646c766b8b8b7951886868677568686c6c7c6b517f7c817f788273638c7f776775010068518463517f7c01147d887f547952876372777c717c767663517f756852875779766352790152879a689b63517f77567a7567527c7681014f0161a5587a9a63015094687e68746c766b5c9388748c76795879888c8c7978886777717c567a5679538764780152879a787663517f756852879b745394768b797663517f756852877c6c766b5c936ea0637c8c768b797663517f75685287726b9b7c6c686ea0637c5394768b797663517f75685287726b9b7c6c686ea063755494797663517f756852879b676d689b63006968677568687c717167567a7568788273638c7f776775010068528463517f7c01147d887f547953876372777c677768686d6c75787653877c52879b636c75006b687c518763755279685879a9886b6b6b6b6b6b6b827763af686c6c6c6c6c6c6c547a577a7664577a577a587a597a786354807e7e676d68aa8800677b7c7651876375577a7c587a67007c68765258a569765187645294597a53795b7a7e7e78637c8c7c53797e5a7a7e6878637c8c7c53797e5a7a7e6878637c8c7c53797e5a7a7e6878637c8c7c53797e5a7a7e6878637c8c7c53797e5a7a7e68687276647572677772755168537a76aa5a7a7d54807e597a5b7a5c7a786354807e6f7e7eaa727c7e676d6e7eaa7c687b7eaa5a7a7d877663516752687c72879b69537a6491687c7b547f77517f7853a0916901247f77517f7c01007e817602fc00a06302fd00a063546752687f7c01007e816854937f77788c6301247f77517f7c01007e817602fc00a06302fd00a063546752687f7c01007e816854937f777852946301247f77517f7c01007e817602fc00a06302fd00a063546752687f7c01007e816854937f77686877517f7c52797d8b9f7c53a09b91697c76638c7c587f77517f7c01007e817602fc00a06302fd00a063546752687f7c01007e81687f777c6876638c7c587f77517f7c01007e817602fc00a06302fd00a063546752687f7c01007e81687f777c6863587f77517f7c01007e817602fc00a06302fd00a063546752687f7c01007e81687f7768587f517f7801007e817602fc00a06302fd00a063546752687f7801007e81727e7b7b687f75517f7c01147d887f517f7c01007e817601619f6976014ea0637c6776014ba06376014da063755467014d9c6352675168687f7c01007e81687f68557964577988756d67716881687863567a677b68587f7c8153796353795287637b6b537a6b717c6b6b537a6b676b577a6b597a6b587a6b577a6b7c68677b93687c547f7701207f75748c7a7669765880044676a914780114748c7a76727b748c7a768291788251877c764f877c81510111a59b9a9b648276014ba1647602ff00a16351014c677603ffff00a16352014d6754014e68687b7b7f757e687c7e67736301509367010068685c795c79636c766b7363517f7c51876301207f7c5279a8877c011c7f5579877c01147f755679879a9a6967756868687e777e7e827602fc00a0637603ffff00a06301fe7c82546701fd7c8252687da0637f756780687e67517f75687c7e7e0a888201218763ac67517f07517f73637c7f6876767e767e7e02ae687e7e7c557a00740111a063005a79646b7c748c7a76697d937b7b58807e6c91677c748c7a7d58807e6c6c6c557a680114748c7a748c7a768291788251877c764f877c81510111a59b9a9b648276014ba1647602ff00a16351014c677603ffff00a16352014d6754014e68687b7b7f757e687c7e67736301509367010068685479635f79676c766b0115797363517f7c51876301207f7c5279a8877c011c7f5579877c01147f755679879a9a6967756868687e777e7e827602fc00a0637603ffff00a06301fe7c82546701fd7c8252687da0637f756780687e67517f75687c7e7c637e677c6b7c6b7c6b7e7c6b68685979636c6c766b786b7363517f7c51876301347f77547f547f75786352797b01007e81957c01007e81965379a169676d68677568685c797363517f7c51876301347f77547f547f75786354797b01007e81957c01007e819678a169676d68677568687568740111a063748c7a76697d58807e00005c79635e79768263517f756851876c6c766b7c6b768263517f756851877b6e9b63789c6375745294797b78877b7b877d9b69637c917c689167745294797c638777637c917c91686777876391677c917c686868676d6d68687863537a6c936c6c6c567a567a54795479587a676b72937b7b5c795e796c68748c7a748c7a7b636e717b7b877b7b879a6967726d6801147b7e7c8291788251877c764f877c81510111a59b9a9b648276014ba1647602ff00a16351014c677603ffff00a16352014d6754014e68687b7b7f757e687c7e67736301509367010068687e7c636c766b7e726b6b726b6b675b797e68827602fc00a0637603ffff00a06301fe7c82546701fd7c8252687da0637f756780687e67517f75687c7e7e68740111a063748c7a76697d58807e00005c79635e79768263517f756851876c6c766b7c6b768263517f756851877b6e9b63789c6375745294797b78877b7b877d9b69637c917c689167745294797c638777637c917c91686777876391677c917c686868676d6d68687863537a6c936c6c6c567a567a54795479587a676b72937b7b5c795e796c68748c7a748c7a7b636e717b7b877b7b879a6967726d6801147b7e7c8291788251877c764f877c81510111a59b9a9b648276014ba1647602ff00a16351014c677603ffff00a16352014d6754014e68687b7b7f757e687c7e67736301509367010068687e7c636c766b7e726b6b726b6b675b797e68827602fc00a0637603ffff00a06301fe7c82546701fd7c8252687da0637f756780687e67517f75687c7e7e68597a636c6c6c6d6c6c6d6c9d687c587a9d7d7e5c79635d795880041976a9145e797e0288ac7e7e6700687d7e5c7a766302006a7c7e827602fc00a06301fd7c7e536751687f757c7e0058807c7e687d7eaa6b7e7e7e7e7e7eaa78877c6c877c6c9a9b726d726d77776a",
     );
 
     /// Build a REAL STAS 3.0 locking script:
-    ///   `0x14 <owner:20>` + `<var2 = OP_0>` + 2812-byte base template
+    ///   `0x14 <owner:20>` + `<var2 = OP_0>` + 2899-byte canonical base template
     ///   + `0x14 <redemption:20>` post-OP_RETURN data.
     fn real_stas3_locking_script(owner: u8, redemption: u8) -> Vec<u8> {
         let base: Vec<u8> = (0..STAS3_BASE_TEMPLATE_HEX.len() / 2)
@@ -928,14 +1111,10 @@ mod tests {
     ///   → describe `real STAS 3.0 locking-script fixture (cross-SDK pin)`.
     ///
     /// Both SDKs MUST produce byte-identical output for the same input.
-    /// On a REAL STAS3 script, Rust's "excise past `[owner][var2]`" and
-    /// Elixir's "excise from engine prefix" resolve to the SAME offset
-    /// (22), so the encoders converge. They only diverge for malformed
-    /// (non-STAS3) input — which is a fixture artifact, not a spec bug.
     /// Build the cross-SDK preceding tx: 1 dummy input (prev_txid = 32×0x11,
     /// vout 0, empty scriptSig, sequence 0xFFFFFFFF), N outputs each with
     /// value 0, locktime 0. Construction is byte-identical to the Elixir
-    /// SDK's `synthetic_tx_with_outputs/1` so the canonical hex matches.
+    /// SDK's `cross_sdk_preceding_tx/1` so the canonical hex matches.
     fn cross_sdk_preceding_tx(output_scripts: &[Vec<u8>]) -> Vec<u8> {
         let mut tx = Vec::new();
         tx.extend_from_slice(&1u32.to_le_bytes()); // version
@@ -954,6 +1133,16 @@ mod tests {
         tx
     }
 
+    /// Cross-SDK byte-identity pin for STAS 3.0 merge (txType=3) trailing
+    /// params against the canonical engine + DXS option-3 conventions.
+    /// The same hex is pinned in the Elixir SDK's `stas3_pieces_test.exs`
+    /// → describe `real STAS 3.0 locking-script fixture (cross-SDK pin)`.
+    /// Both SDKs MUST produce byte-identical output for the same input.
+    ///
+    /// Layout (decoded): OP_3 (0x53) piece_count ‖ pushdata(4B) tail
+    /// piece (locktime) ‖ pushdata(33B) middle piece (out 1 value/varint
+    /// + owner_push + var2) ‖ OP_PUSHDATA1(80B) head piece (version +
+    /// input).
     #[test]
     fn real_stas3_merge_cross_sdk_pin() {
         let script0 = real_stas3_locking_script(0xA0, 0xCC);
@@ -963,8 +1152,7 @@ mod tests {
         let trailing = encode_merge_trailing_params(3, &tx, &[0, 1]).unwrap();
         let hex: String = trailing.iter().map(|b| format!("{b:02x}")).collect();
 
-        // Cross-SDK canonical merge trailing-param hex (txType=3, vouts [0,1]).
-        const CANONICAL_MERGE_HEX: &str = "030400000000210000000000000000fd270b14b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b00050010000000111111111111111111111111111111111111111111111111111111111111111110000000000ffffffff020000000000000000fd270b14a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a000";
+        const CANONICAL_MERGE_HEX: &str = "530400000000210000000000000000fd7e0b14b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0004c50010000000111111111111111111111111111111111111111111111111111111111111111110000000000ffffffff020000000000000000fd7e0b14a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a000";
         assert_eq!(
             hex, CANONICAL_MERGE_HEX,
             "Rust merge encoding diverged from the pinned cross-SDK \
@@ -972,34 +1160,7 @@ mod tests {
         );
 
         // Round-trips through the parser to 3 pieces.
-        let parsed = parse_trailing_params(&trailing, 3, None).unwrap();
+        let parsed = parse_trailing_params(&trailing, 3).unwrap();
         assert_eq!(parsed.pieces.len(), 3);
-    }
-
-    /// A piece of exactly 128 bytes must be rejected: the v0.1 engine reads
-    /// piece lengths via `OP_1 OP_SPLIT` as a signed script-num, so 0x80
-    /// (128) is treated as negative and `OP_SPLIT` fails. 127 is the
-    /// maximum positive single-byte script-num and must be accepted.
-    #[test]
-    fn piece_array_rejects_piece_over_127_bytes() {
-        // 128 bytes — exactly at the boundary, must be rejected.
-        let pieces_bad: Vec<Vec<u8>> = vec![vec![0xAB; 128]];
-        let res = validate_piece_lengths(&pieces_bad);
-        match res {
-            Err(TokenError::InvalidScript(msg)) => {
-                assert!(
-                    msg.contains("InvalidPiece"),
-                    "expected InvalidPiece-prefixed error, got: {msg}"
-                );
-            }
-            other => panic!("expected InvalidScript(InvalidPiece...), got {other:?}"),
-        }
-
-        // 127 bytes — at the limit, must be accepted.
-        let pieces_ok: Vec<Vec<u8>> = vec![vec![0xAB; 127]];
-        assert!(
-            validate_piece_lengths(&pieces_ok).is_ok(),
-            "expected Ok for a 127-byte piece, got Err"
-        );
     }
 }

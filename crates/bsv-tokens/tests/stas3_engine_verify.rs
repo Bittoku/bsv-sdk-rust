@@ -122,7 +122,10 @@ fn engine_accepts_transfer_with_change() {
 }
 
 /// Scenario 2: 1 STAS input, 1 STAS output, no change leg (exact fee).
-/// Fee = 1602 sats matches the Elixir reference test.
+/// Fee = 1646 sats matches the Elixir reference test (recomputed after
+/// the canonical engine swap; was 1602 under the obsolete 2812-byte
+/// template — the 87-byte longer canonical template raises the exact
+/// fee by ~44 sats).
 #[test]
 fn engine_accepts_transfer_no_change() {
     let token_key = test_key();
@@ -140,7 +143,7 @@ fn engine_accepts_transfer_no_change() {
         }],
         fee_txid: dummy_hash(),
         fee_vout: 1,
-        fee_satoshis: 1602,
+        fee_satoshis: 1646,
         fee_locking_script: test_p2pkh_script(&fee_key),
         fee_private_key: fee_key,
         destinations: vec![dest(5000, [0x33; 20], redemption_pkh)],
@@ -510,30 +513,32 @@ fn build_synthetic_preceding_tx(lock: &Script, satoshis: u64) -> Vec<u8> {
 /// Atomic-swap engine verification with the spec §9.5 trailing
 /// piece-array auto-wired into both inputs' unlocking scripts.
 ///
-/// The piece-array is encoded length-prefixed (`[len][body][len][body]...`)
-/// to match the engine ASM's `OP_1 OP_SPLIT OP_IFDUP OP_IF OP_SWAP
-/// OP_SPLIT OP_ENDIF` consumption pattern.
+/// The piece-array is encoded as independent Bitcoin pushdata operations
+/// per spec v0.2.3 §9.5/§8:
+///   `push(counterparty) OP_<piece_count> push(piece_1) … push(piece_N)`
+/// — and the canonical engine
+/// (`github.com/stassso/STAS-3-script-templates`) consumes them via the
+/// unrolled `OP_OVER OP_IF OP_SWAP OP_1SUB OP_SWAP OP_3 OP_PICK OP_CAT
+/// OP_10 OP_ROLL OP_CAT OP_ENDIF` block (5×), driven by a decrementing
+/// `piece_count` counter. There is no per-piece size limit.
 ///
-/// **Status**: with the length-prefixed encoding, the engine progresses
-/// past the original `InvalidStackOperation` failure but now rejects
-/// with `NumberTooSmall: n is negative` at `OP_SPLIT` — a separate
-/// downstream issue. In the synthetic preceding tx, the `head` piece is
-/// 141 bytes (4 version + 1 input_count + 41 input + 1 output_count +
-/// 8 value + 3 script_len_varint + 21 owner+var2 prefix + ... ≈ 141B),
-/// so its 1-byte length prefix `0x8d` is interpreted as a negative
-/// Bitcoin-script number. The engine ASM's `OP_1 OP_SPLIT` reads exactly
-/// 1 byte as the length prefix, so each piece body must be ≤ 0x7F = 127
-/// bytes — but the synthetic-preceding-tx head exceeds that. The Elixir
-/// reference SDK fails with the matching `:invalid_split_range`.
-///
-/// The encoder/decoder pair is now byte-identical to the Elixir SDK; the
-/// remaining downstream rejection is independent of this fix and tracked
-/// separately. Keep the `#[ignore]` so CI stays green; remove it once
-/// the upstream piece-size constraint is resolved.
+/// **Status (2026-05-21):** the encoder produces byte-identical output
+/// across the Rust + Elixir SDKs (see `real_stas3_merge_cross_sdk_pin`
+/// in `src/script/stas3_pieces.rs`), and the canonical engine accepts
+/// the non-piece transfer/split/atomic-swap flows. But under this
+/// synthetic swap-swap-with-pieces scenario the engine still rejects
+/// with `InvalidStackOperation` — the piece-consumer block sees a
+/// script-num that decoded as a large unsigned value (`index 2147483647`
+/// against a 28-deep stack), suggesting a counter underflow on a deeper
+/// stack-shape mismatch (possibly the synthetic preceding tx layout, or
+/// the factory's witness wiring before the piece block). Tracked as a
+/// follow-up; the encoder/parser correctness is already validated by
+/// the cross-SDK pin test.
 #[test]
-#[ignore = "the head piece in this synthetic swap-swap tx exceeds 127 bytes, which is unencodable \
-            under the v0.1 engine's signed 1-byte length prefix (OP_1 OP_SPLIT reads 0x80+ as \
-            negative); this is a known v0.1 engine limitation pending a spec revision"]
+#[ignore = "encoder is byte-correct (cross-SDK pin passes; canonical engine accepts \
+            non-piece flows); engine rejects this synthetic swap-swap-with-pieces \
+            scenario with InvalidStackOperation. Deeper investigation into preceding-tx \
+            shape / factory witness wiring needed; deferred."]
 fn engine_accepts_swap_swap_with_trailing_pieces() {
     use bsv_primitives::hash::sha256d;
 

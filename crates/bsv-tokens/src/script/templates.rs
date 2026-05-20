@@ -37,8 +37,12 @@ pub const STAS_V2_MIN_LEN: usize = STAS_V2_TEMPLATE_LEN + 1;
 /// OP_2MUL OP_SIZE OP_OVER OP_IF.
 pub const STAS3_BASE_PREFIX: [u8; 4] = [0x6d, 0x82, 0x73, 0x63];
 
-/// Length of the compiled STAS3 base template in bytes.
-pub const STAS3_BASE_TEMPLATE_LEN: usize = 2812;
+/// Length of the compiled STAS 3.0 canonical engine base template in
+/// bytes. The canonical engine is sourced from
+/// `github.com/stassso/STAS-3-script-templates` (v0.2.3) and used by
+/// `STAS3_BASE_TEMPLATE_HEX` in `stas3_builder.rs`. The earlier
+/// 2812-byte length-prefixed-piece-consumer engine is deprecated.
+pub const STAS3_BASE_TEMPLATE_LEN: usize = 2899;
 
 /// Standard P2PKH locking script length (25 bytes).
 pub const P2PKH_LEN: usize = 25;

@@ -1086,43 +1086,22 @@ pub fn build_stas3_swap_swap_tx_with_pieces(
         let counterparty_script = config.token_inputs[counterparty_idx]
             .locking_script
             .to_bytes();
+        // The encoder returns a fully push-framed block: each component
+        // (counterparty_script, piece_count, and every piece) is its own
+        // independent Bitcoin pushdata operation per spec v0.2.3 §9.5/§8.
+        // It is appended verbatim — no further re-framing is needed.
         let trailing = encode_atomic_swap_trailing_params(
             counterparty_script,
             &pieces[i].preceding_tx,
             &[pieces[i].asset_output_index],
         )?;
-        // Append the trailing bytes verbatim — the encoder produces
-        // properly push-framed bytes for each component.
         let existing = tx.inputs[i]
             .unlocking_script
             .as_ref()
             .map(|s| s.to_bytes().to_vec())
             .unwrap_or_default();
         let mut combined = existing;
-        // Per spec §9.5 the counterparty_script must be a single push,
-        // followed by piece_count (1B push) and piece_array (1 push per
-        // piece). encode_atomic_swap_trailing_params returns the
-        // concatenation of those bodies *without* push framing, so we
-        // need to push them as separate items here.
-        // The encoded layout is: counterparty_script || piece_count(1B)
-        //                       || piece_array (each piece is 1-byte length
-        //                       prefix followed by piece body).
-        let cp_len = counterparty_script.len();
-        let cp_bytes = &trailing[..cp_len];
-        let piece_count = trailing[cp_len];
-        let piece_array_bytes = &trailing[cp_len + 1..];
-        // Build a sub-script that pushes each of the 3 pieces in order:
-        //   counterparty_script (1 push)
-        //   piece_count (1 push)
-        //   piece_array (1 push)
-        let mut sub = Script::new();
-        sub.append_push_data(cp_bytes)
-            .map_err(|e| TokenError::InvalidScript(format!("counterparty push: {e:?}")))?;
-        sub.append_push_data(&[piece_count])
-            .map_err(|e| TokenError::InvalidScript(format!("piece_count push: {e:?}")))?;
-        sub.append_push_data(piece_array_bytes)
-            .map_err(|e| TokenError::InvalidScript(format!("piece_array push: {e:?}")))?;
-        combined.extend_from_slice(sub.to_bytes());
+        combined.extend_from_slice(&trailing);
         tx.inputs[i].unlocking_script = Some(Script::from_bytes(&combined));
     }
 

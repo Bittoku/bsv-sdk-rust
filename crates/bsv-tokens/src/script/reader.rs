@@ -816,7 +816,7 @@ mod tests {
     /// sequence starting at byte 21 (after OP_DATA_20 + 20 owner bytes).
     ///
     /// Layout:
-    ///   [0x14][20 owner bytes][action_data_bytes...][STAS3_BASE_PREFIX][padding to 2812 bytes, last byte 0x6a][OP_RETURN data: redemption + flags]
+    ///   [0x14][20 owner bytes][action_data_bytes...][STAS3_BASE_PREFIX][padding to 2899 bytes, last byte 0x6a][OP_RETURN data: redemption + flags]
     fn build_stas3_script(action_data_bytes: &[u8]) -> Vec<u8> {
         let owner = [0xAA; 20];
         let redemption = [0xBB; 20];
@@ -831,7 +831,7 @@ mod tests {
 
         // STAS3 base template: prefix bytes + filler + OP_RETURN at end
         let prefix_and_action_len = script.len(); // bytes consumed so far
-        let template_body_len = STAS3_BASE_TEMPLATE_LEN; // 2812 bytes for the base template
+        let template_body_len = STAS3_BASE_TEMPLATE_LEN; // 2899 bytes for the canonical base template
 
         // Start with the 4-byte prefix
         script.extend_from_slice(&STAS3_BASE_PREFIX);
