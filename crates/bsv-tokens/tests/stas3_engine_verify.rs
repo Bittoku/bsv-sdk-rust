@@ -548,9 +548,6 @@ fn build_synthetic_preceding_tx(lock: &Script, satoshis: u64) -> Vec<u8> {
 /// investigation needed — likely requires diffing reconstructed bytes
 /// against the synthetic tx or replaying a DXS conformance vector.
 #[test]
-#[ignore = "InvalidStackOperation resolved by prepending trailing piece block. \
-            Now fails at OP_VERIFY (back-to-genesis hash mismatch) deeper in the \
-            engine — needs reconstruction byte-diff investigation."]
 fn engine_accepts_swap_swap_with_trailing_pieces() {
     use bsv_primitives::hash::sha256d;
 
@@ -561,9 +558,61 @@ fn engine_accepts_swap_swap_with_trailing_pieces() {
     let owner_b_pkh = hash160(&token_key_b.pub_key().to_compressed());
     let redemption_pkh = [0x22; 20];
 
-    let swap = ActionData::Swap {
-        requested_script_hash: [0xab; 32],
-        requested_pkh: [0xcd; 20],
+    // Per spec §9.5:
+    //   - "Wanted asset is received at the output matching the initiator's
+    //     input index" — so each input's swap descriptor's `requested_pkh`
+    //     MUST equal the owner of its matching destination output.
+    //   - `requested_script_hash` MUST be SHA256 of the counterparty's
+    //     locking-script tail (the bytes after owner_push + var2_push) —
+    //     this is how the swap descriptor locks in the counterparty's
+    //     expected asset script.
+    //
+    // Two-pass setup: build locking scripts with placeholder swap, compute
+    // the SHA256, then rebuild with the real swap.
+    let dest_0_pkh: [u8; 20] = [0x44; 20];
+    let dest_1_pkh: [u8; 20] = [0x55; 20];
+    let placeholder_swap = ActionData::Swap {
+        requested_script_hash: [0u8; 32],
+        requested_pkh: dest_0_pkh,
+        rate_numerator: 1,
+        rate_denominator: 1,
+        next: None,
+    };
+    let placeholder_a = build_stas3_locking_script(
+        &owner_a_pkh,
+        &redemption_pkh,
+        Some(&placeholder_swap),
+        false,
+        false,
+        &[],
+        &[],
+    )
+    .unwrap();
+    let placeholder_b = build_stas3_locking_script(
+        &owner_b_pkh,
+        &redemption_pkh,
+        Some(&placeholder_swap),
+        false,
+        false,
+        &[],
+        &[],
+    )
+    .unwrap();
+    let counterparty_hash_for_a =
+        bsv_tokens::compute_stas3_requested_script_hash(placeholder_b.to_bytes()).unwrap();
+    let counterparty_hash_for_b =
+        bsv_tokens::compute_stas3_requested_script_hash(placeholder_a.to_bytes()).unwrap();
+
+    let swap_a = ActionData::Swap {
+        requested_script_hash: counterparty_hash_for_a,
+        requested_pkh: dest_0_pkh,
+        rate_numerator: 1,
+        rate_denominator: 1,
+        next: None,
+    };
+    let swap_b = ActionData::Swap {
+        requested_script_hash: counterparty_hash_for_b,
+        requested_pkh: dest_1_pkh,
         rate_numerator: 1,
         rate_denominator: 1,
         next: None,
@@ -572,7 +621,7 @@ fn engine_accepts_swap_swap_with_trailing_pieces() {
     let locking_a = build_stas3_locking_script(
         &owner_a_pkh,
         &redemption_pkh,
-        Some(&swap),
+        Some(&swap_a),
         false,
         false,
         &[],
@@ -582,7 +631,7 @@ fn engine_accepts_swap_swap_with_trailing_pieces() {
     let locking_b = build_stas3_locking_script(
         &owner_b_pkh,
         &redemption_pkh,
-        Some(&swap),
+        Some(&swap_b),
         false,
         false,
         &[],

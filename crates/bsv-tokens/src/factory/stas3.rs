@@ -497,6 +497,7 @@ fn derive_witness_for_input(
         note_data,
         funding_input,
         tx_type,
+        swap_trailing: None,
         sighash_preimage,
         spend_type,
     })
@@ -1077,46 +1078,291 @@ pub fn build_stas3_swap_swap_tx_with_pieces(
     // standard authz appended already).
     let mut tx = build_stas3_base_tx_with_tx_type(config, Stas3TxType::AtomicSwap)?;
 
-    // For each token input, PREPEND the spec §9.5 trailing block to the
-    // already-signed §7 unlock witness. The counterparty for input 0 is
-    // input 1 and vice versa.
+    // For each token input, splice in the DXS-aligned §9.5 swap trailing
+    // block IN PLACE OF the bare txType byte at spec §7 slot 18. The
+    // counterparty for input 0 is input 1 and vice versa.
     //
-    // Push ordering in the unlocking script matters: items are pushed
-    // bottom-up in execution order. The canonical engine starts the
-    // locking script with the §10.2 P2MPKH redeem-buffer parser, which
-    // reads OP_SIZE on the TOP of stack — that slot must be the §7
-    // no-auth (empty) push for non-MPKH inputs. If the piece block is
-    // appended (pushed last), the head piece ends up on top, the parser
-    // mis-classifies it as a long redeem buffer, OP_SPLITs it into
-    // bogus chunks, and downstream `OP_DUP OP_2 OP_ADD OP_ROLL` pops a
-    // 131-byte chunk as the ROLL depth → script-num overflow → InvalidStackOperation.
+    // Mirrors DXS `input-builder.ts` `prepareMergeInfo` + the `if
+    // (this.Merge)` script-build branch. The on-script form is:
     //
-    // Prepending places the piece block at the BOTTOM of the stack
-    // (consumed later by the piece consumer at canonical engine offset
-    // ~7485), with the §7 slots remaining on top in their original
-    // order, so the §10.2 guard sees an empty push and skips cleanly.
-    use crate::script::stas3_pieces::encode_atomic_swap_trailing_params;
+    //   push(counterparty_vout)              numeric
+    //   push(pieces[0]) … push(pieces[N-1])  raw pushdata each
+    //   push(piece_count)                    numeric
+    //   push(counterparty_asset_tail)        raw pushdata
+    //   push(1)                              numeric — "swap marker"
+    //
+    // Pieces come from the COUNTERPARTY's preceding_tx (not own); the
+    // engine uses them to cross-verify the other leg's back-to-genesis
+    // ancestor. `counterparty_asset_tail` is the bytes AFTER `owner_push +
+    // var2_push` in the counterparty's locking script (i.e. the engine
+    // body + post-OP_RETURN data).
     for i in 0..config.token_inputs.len() {
         let counterparty_idx = 1 - i;
-        let counterparty_script = config.token_inputs[counterparty_idx]
+        let counterparty_locking_bytes = config.token_inputs[counterparty_idx]
             .locking_script
-            .to_bytes();
-        let trailing = encode_atomic_swap_trailing_params(
-            counterparty_script,
-            &pieces[i].preceding_tx,
-            &[pieces[i].asset_output_index],
-        )?;
+            .to_bytes()
+            .to_vec();
+        let counterparty_asset_tail = extract_stas3_asset_tail(&counterparty_locking_bytes)
+            .ok_or_else(|| {
+                TokenError::InvalidScript(
+                    "counterparty locking script is not STAS-shaped: cannot extract asset tail"
+                        .into(),
+                )
+            })?;
+        let counterparty_vout = tx.inputs[counterparty_idx].source_tx_out_index;
+        let counterparty_preceding_tx = &pieces[counterparty_idx].preceding_tx;
+        let counterparty_pieces =
+            split_preceding_tx_by_asset_tail(counterparty_preceding_tx, &counterparty_asset_tail);
+
+        // Build the swap_trailing push bytes inline (raw script bytes,
+        // not pushdata-wrapped from the outside — each component is its
+        // own push).
+        let mut trailing_bytes: Vec<u8> = Vec::new();
+        append_minimal_numeric_push(&mut trailing_bytes, counterparty_vout as u64);
+        for piece in &counterparty_pieces {
+            append_pushdata(&mut trailing_bytes, piece);
+        }
+        append_minimal_numeric_push(&mut trailing_bytes, counterparty_pieces.len() as u64);
+        append_pushdata(&mut trailing_bytes, &counterparty_asset_tail);
+        append_minimal_numeric_push(&mut trailing_bytes, 1);
+
+        // Splice trailing_bytes into the unlocking script in place of
+        // the bare txType byte at slot 18 (5th-from-end chunk).
         let existing = tx.inputs[i]
             .unlocking_script
             .as_ref()
             .map(|s| s.to_bytes().to_vec())
             .unwrap_or_default();
-        let mut combined = trailing;
-        combined.extend_from_slice(&existing);
-        tx.inputs[i].unlocking_script = Some(Script::from_bytes(&combined));
+        let new_unlock = splice_swap_trailing_in_place_of_tx_type(&existing, &trailing_bytes)?;
+        tx.inputs[i].unlocking_script = Some(Script::from_bytes(&new_unlock));
     }
 
     Ok(tx)
+}
+
+/// Extract the counterparty asset-script tail from a STAS 3.0 locking
+/// script: everything after `[OP_DATA_20 + 20B owner_pkh][var2 push]`.
+///
+/// Returns `None` if the script isn't STAS 3.0 shaped (missing
+/// `0x14 + 20B` owner prefix or unparseable var2 push).
+fn extract_stas3_asset_tail(script: &[u8]) -> Option<Vec<u8>> {
+    if script.len() < 22 || script[0] != 0x14 {
+        return None;
+    }
+    let var2_start = 21;
+    let after_var2 = skip_one_push(script, var2_start)?;
+    Some(script[after_var2..].to_vec())
+}
+
+/// Given a script and the offset of a push opcode, return the offset
+/// past the entire push (header + body).
+fn skip_one_push(script: &[u8], offset: usize) -> Option<usize> {
+    if offset >= script.len() {
+        return None;
+    }
+    let opcode = script[offset];
+    match opcode {
+        0x00 => Some(offset + 1),
+        0x4f | 0x51..=0x60 => Some(offset + 1),
+        0x01..=0x4b => {
+            let end = offset + 1 + opcode as usize;
+            (end <= script.len()).then_some(end)
+        }
+        0x4c => {
+            if offset + 1 >= script.len() {
+                return None;
+            }
+            let end = offset + 2 + script[offset + 1] as usize;
+            (end <= script.len()).then_some(end)
+        }
+        0x4d => {
+            if offset + 2 >= script.len() {
+                return None;
+            }
+            let len = u16::from_le_bytes([script[offset + 1], script[offset + 2]]) as usize;
+            let end = offset + 3 + len;
+            (end <= script.len()).then_some(end)
+        }
+        0x4e => {
+            if offset + 4 >= script.len() {
+                return None;
+            }
+            let len = u32::from_le_bytes([
+                script[offset + 1],
+                script[offset + 2],
+                script[offset + 3],
+                script[offset + 4],
+            ]) as usize;
+            let end = offset + 5 + len;
+            (end <= script.len()).then_some(end)
+        }
+        _ => None,
+    }
+}
+
+/// Split `preceding_tx` by all occurrences of `asset_tail`, returning
+/// the gap pieces in reverse order (mirrors DXS
+/// `splitDstasPreviousTransactionByCounterpartyScript` followed by
+/// `.reverse()`).
+fn split_preceding_tx_by_asset_tail(preceding_tx: &[u8], asset_tail: &[u8]) -> Vec<Vec<u8>> {
+    if asset_tail.is_empty() {
+        return vec![preceding_tx.to_vec()];
+    }
+    let mut pieces = Vec::new();
+    let mut cursor = 0usize;
+    while cursor <= preceding_tx.len() {
+        let remaining = &preceding_tx[cursor..];
+        match find_subseq(remaining, asset_tail) {
+            Some(rel) => {
+                pieces.push(remaining[..rel].to_vec());
+                cursor += rel + asset_tail.len();
+            }
+            None => {
+                pieces.push(remaining.to_vec());
+                break;
+            }
+        }
+    }
+    pieces.reverse();
+    pieces
+}
+
+fn find_subseq(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() || needle.len() > haystack.len() {
+        return None;
+    }
+    (0..=haystack.len() - needle.len()).find(|&i| haystack[i..i + needle.len()] == *needle)
+}
+
+/// Append a minimal Bitcoin numeric push for unsigned `n` to `out`
+/// (DXS `ScriptBuilder.addNumber` semantics): `OP_0` for 0,
+/// `OP_<n>` for `n ∈ 1..=16`, direct push of script-num bytes for
+/// larger values.
+fn append_minimal_numeric_push(out: &mut Vec<u8>, n: u64) {
+    if n == 0 {
+        out.push(0x00);
+    } else if n <= 16 {
+        out.push(0x50 + n as u8);
+    } else {
+        // Direct push of script-num bytes (sign-bit-safe).
+        let mut bytes = Vec::with_capacity(8);
+        let mut v = n;
+        while v > 0 {
+            bytes.push((v & 0xff) as u8);
+            v >>= 8;
+        }
+        if *bytes.last().unwrap() & 0x80 != 0 {
+            bytes.push(0x00);
+        }
+        out.push(bytes.len() as u8);
+        out.extend_from_slice(&bytes);
+    }
+}
+
+/// Append a single Bitcoin pushdata operation for `data` to `out`.
+fn append_pushdata(out: &mut Vec<u8>, data: &[u8]) {
+    let len = data.len();
+    if len == 0 {
+        out.push(0x00);
+    } else if len <= 0x4b {
+        out.push(len as u8);
+    } else if len <= 0xff {
+        out.push(0x4c);
+        out.push(len as u8);
+    } else if len <= 0xffff {
+        out.push(0x4d);
+        out.extend_from_slice(&(len as u16).to_le_bytes());
+    } else {
+        out.push(0x4e);
+        out.extend_from_slice(&(len as u32).to_le_bytes());
+    }
+    out.extend_from_slice(data);
+}
+
+/// Splice `trailing_bytes` into `existing_unlock` in place of the
+/// `txType` byte at the 5th-from-end chunk position. The unlock script
+/// is expected to have this tail layout (push order):
+///
+///   `[...§7 slots...][txType 1B][preimage][spendType 1B][signature][pubkey]`
+///
+/// After splicing:
+///
+///   `[...§7 slots...][trailing_bytes][preimage][spendType 1B][signature][pubkey]`
+fn splice_swap_trailing_in_place_of_tx_type(
+    existing_unlock: &[u8],
+    trailing_bytes: &[u8],
+) -> Result<Vec<u8>, TokenError> {
+    let script = Script::from_bytes(existing_unlock);
+    let chunks = script
+        .chunks()
+        .map_err(|e| TokenError::InvalidScript(format!("unlock script chunk parse: {e:?}")))?;
+    if chunks.len() < 5 {
+        return Err(TokenError::InvalidScript(format!(
+            "unlock script has only {} chunks; expected at least 5 (txType, preimage, \
+             spendType, sig, pubkey)",
+            chunks.len()
+        )));
+    }
+    // tx_type chunk index = chunks.len() - 5 (counting back from pubkey).
+    let tx_type_idx = chunks.len() - 5;
+    let tx_type_chunk = &chunks[tx_type_idx];
+
+    // Byte boundaries of the tx_type chunk in the original script.
+    // We use the chunk's start_offset / end_offset if available; fall
+    // back to recomputing by walking through chunks if necessary.
+    // bsv_script::Script::chunks does not expose offsets directly, so
+    // we recompute by re-encoding each preceding chunk.
+    let mut before_bytes: Vec<u8> = Vec::new();
+    for chunk in &chunks[..tx_type_idx] {
+        append_chunk(&mut before_bytes, chunk);
+    }
+    let mut after_bytes: Vec<u8> = Vec::new();
+    for chunk in &chunks[tx_type_idx + 1..] {
+        append_chunk(&mut after_bytes, chunk);
+    }
+    // Sanity: removed-chunk bytes == 1 push of 1 byte (txType).
+    let removed_len = existing_unlock.len() - before_bytes.len() - after_bytes.len();
+    let expected_removed = match tx_type_chunk.data.as_ref().map(|d| d.len()) {
+        Some(0) => 1, // OP_0
+        Some(n) if n <= 75 => 1 + n,
+        Some(n) if n <= 255 => 2 + n,
+        Some(n) if n <= 0xffff => 3 + n,
+        Some(n) => 5 + n,
+        None => 1,
+    };
+    if removed_len != expected_removed {
+        return Err(TokenError::InvalidScript(format!(
+            "unlock script chunk reassembly mismatch (removed {} bytes, expected {})",
+            removed_len, expected_removed
+        )));
+    }
+
+    let mut out = before_bytes;
+    out.extend_from_slice(trailing_bytes);
+    out.extend_from_slice(&after_bytes);
+    Ok(out)
+}
+
+/// Re-encode a single script chunk to its on-wire byte form.
+fn append_chunk(out: &mut Vec<u8>, chunk: &bsv_script::ScriptChunk) {
+    match &chunk.data {
+        None => {
+            out.push(chunk.op);
+        }
+        Some(data) => {
+            // Re-emit with the chunk's original opcode so push framing is
+            // preserved exactly (OP_PUSHDATA1/2/4 vs bare push).
+            let opcode = chunk.op;
+            out.push(opcode);
+            match opcode {
+                0x4c => out.push(data.len() as u8),
+                0x4d => out.extend_from_slice(&(data.len() as u16).to_le_bytes()),
+                0x4e => out.extend_from_slice(&(data.len() as u32).to_le_bytes()),
+                _ => {}
+            }
+            out.extend_from_slice(data);
+        }
+    }
 }
 
 /// Build a STAS3 swap flow transaction with auto-detected mode.

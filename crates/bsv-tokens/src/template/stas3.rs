@@ -127,6 +127,41 @@ pub struct Stas3WitnessChange {
     pub addr_pkh: [u8; 20],
 }
 
+/// Swap- or merge-mode trailing block of the STAS 3.0 unlock witness
+/// (spec §7 slot 18 expanded form, replacing the bare `txType` push for
+/// `txType ∈ 1..=7`).
+///
+/// Mirrors DXS `dxs-bsv-token-sdk` (`input-builder.ts` `prepareMergeInfo` +
+/// the script-build path under `if (this.Merge)`). The on-script form is:
+///
+/// ```text
+/// push(counterparty_vout)          // numeric — counterparty input's vout
+/// push(pieces[0]) … push(pieces[N-1])  // raw byte pushes (reverse-of-tx-order)
+/// push(pieces.len())               // numeric — piece count
+/// [if swap:]
+///     push(counterparty_asset_tail)    // bytes AFTER owner+var2 of counterparty's locking script
+///     push(1)                          // numeric "swap marker"
+/// ```
+///
+/// `counterparty_asset_tail` and `pieces` are derived from the
+/// **counterparty's** locking script and preceding tx respectively (NOT
+/// the current input's own).
+#[derive(Debug, Clone)]
+pub struct Stas3SwapTrailing {
+    /// Output index of the counterparty input within the spending tx.
+    /// Pushed as a minimal numeric push (`OP_<n>` for `n ∈ 1..=16`).
+    pub counterparty_vout: u32,
+    /// Reverse-ordered pieces of the counterparty's preceding tx, formed
+    /// by excising every occurrence of `counterparty_asset_tail` from the
+    /// raw preceding-tx bytes (per `dstas-swap-script.ts`'s
+    /// `splitDstasPreviousTransactionByCounterpartyScript`).
+    pub pieces: Vec<Vec<u8>>,
+    /// Counterparty asset-script tail — the bytes AFTER `owner_push +
+    /// var2_push` in the counterparty's locking script. For an atomic
+    /// swap this is `Some`; for plain merge it is `None`.
+    pub counterparty_asset_tail: Option<Vec<u8>>,
+}
+
 /// Full STAS 3.0 unlocking-script witness (spec §7 slots 1..=20).
 ///
 /// Slot 21+ (the authorization push: P2PKH `<sig> <pubkey>`, P2MPKH
@@ -147,8 +182,14 @@ pub struct Stas3UnlockWitness {
     /// funding_vout)` of the funding input on this spending tx. `None` →
     /// both emitted as OP_FALSE.
     pub funding_input: Option<([u8; 32], u32)>,
-    /// `txType` byte (spec §7 slot 18, range 0..=7).
+    /// `txType` byte (spec §7 slot 18, range 0..=7). Ignored when
+    /// `swap_trailing` is `Some` — the DXS-style expanded swap/merge block
+    /// is emitted in place of the bare txType push.
     pub tx_type: Stas3TxType,
+    /// Optional expanded swap/merge trailing block (replaces the bare
+    /// `txType` push at slot 18 when present). Required for atomic-swap
+    /// (spec §9.5) and merge (spec §9.4) transactions.
+    pub swap_trailing: Option<Stas3SwapTrailing>,
     /// BIP-143-style preimage of the input being signed (spec §7 slot 19).
     pub sighash_preimage: Vec<u8>,
     /// `spendType` byte (spec §7 slot 20).
@@ -229,8 +270,38 @@ impl Stas3UnlockWitness {
             }
         }
 
-        // Slot 18: txType — single byte (always present).
-        script.append_push_data(&[self.tx_type.to_u8()])?;
+        // Slot 18: txType OR DXS-style expanded swap/merge block.
+        //
+        // For txType=0 (regular spend), emit the bare 1-byte push.
+        // For txType ∈ 1..=7 with `swap_trailing` set, emit the expanded
+        // block per DXS's `input-builder.ts` `prepareMergeInfo`:
+        //   push(counterparty_vout)
+        //   push(pieces[0]) … push(pieces[N-1])
+        //   push(piece_count)
+        //   [swap-only:]
+        //     push(counterparty_asset_tail)
+        //     push(1)  // "swap marker"
+        match &self.swap_trailing {
+            None => {
+                // Bare txType push — used for regular spends (txType=0).
+                script.append_push_data(&[self.tx_type.to_u8()])?;
+            }
+            Some(t) => {
+                // counterparty_vout — minimal numeric push.
+                script.append_push_data(&encode_unlock_amount(t.counterparty_vout as u64))?;
+                // pieces — each as its own raw pushdata.
+                for piece in &t.pieces {
+                    script.append_push_data(piece)?;
+                }
+                // piece_count — minimal numeric push.
+                script.append_push_data(&encode_unlock_amount(t.pieces.len() as u64))?;
+                if let Some(tail) = &t.counterparty_asset_tail {
+                    // Swap: push counterparty_asset_tail + "1" marker.
+                    script.append_push_data(tail)?;
+                    script.append_push_data(&encode_unlock_amount(1))?;
+                }
+            }
+        }
 
         // Slot 19: sighashPreimage — variable push.
         script.append_push_data(&self.sighash_preimage)?;
@@ -1287,6 +1358,7 @@ mod tests {
             note_data: None,
             funding_input: None,
             tx_type: Stas3TxType::Regular,
+            swap_trailing: None,
             sighash_preimage: fixed_preimage(),
             spend_type: Stas3SpendType::Transfer,
         }
@@ -1407,6 +1479,7 @@ mod tests {
             note_data: None,
             funding_input: Some(([0xCC; 32], 7)),
             tx_type: Stas3TxType::Merge5,
+            swap_trailing: None,
             sighash_preimage: fixed_preimage(),
             spend_type: Stas3SpendType::Confiscation,
         };
@@ -1461,6 +1534,7 @@ mod tests {
             note_data: None,
             funding_input: None,
             tx_type: Stas3TxType::Regular,
+            swap_trailing: None,
             sighash_preimage: vec![],
             spend_type: Stas3SpendType::Transfer,
         };
