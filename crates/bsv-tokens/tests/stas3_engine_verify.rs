@@ -522,23 +522,35 @@ fn build_synthetic_preceding_tx(lock: &Script, satoshis: u64) -> Vec<u8> {
 /// OP_10 OP_ROLL OP_CAT OP_ENDIF` block (5×), driven by a decrementing
 /// `piece_count` counter. There is no per-piece size limit.
 ///
-/// **Status (2026-05-21):** the encoder produces byte-identical output
-/// across the Rust + Elixir SDKs (see `real_stas3_merge_cross_sdk_pin`
-/// in `src/script/stas3_pieces.rs`), and the canonical engine accepts
-/// the non-piece transfer/split/atomic-swap flows. But under this
-/// synthetic swap-swap-with-pieces scenario the engine still rejects
-/// with `InvalidStackOperation` — the piece-consumer block sees a
-/// script-num that decoded as a large unsigned value (`index 2147483647`
-/// against a 28-deep stack), suggesting a counter underflow on a deeper
-/// stack-shape mismatch (possibly the synthetic preceding tx layout, or
-/// the factory's witness wiring before the piece block). Tracked as a
-/// follow-up; the encoder/parser correctness is already validated by
-/// the cross-SDK pin test.
+/// **Wiring fix (2026-05-21):** the trailing piece block is now
+/// **prepended** to the unlocking script (not appended), so the §7
+/// no-auth empty push remains on top of stack when the locking script's
+/// §10.2 P2MPKH redeem-buffer parser runs. With the trailing block
+/// appended, the head piece (141 bytes) was misclassified as a long
+/// redeem buffer, OP_SPLIT'd into chunks, and the downstream
+/// `OP_DUP OP_2 OP_ADD OP_ROLL` popped a piece-byte chunk as the
+/// ROLL depth → script-num overflow → `InvalidStackOperation`. With
+/// prepend, the §10.2 guard sees an empty push and skips cleanly,
+/// letting the §9.5 piece consumer fire at the right stack depth.
+///
+/// **Remaining failure (2026-05-21):** the engine now progresses
+/// through ~1070 ops successfully but eventually fails at an OP_VERIFY
+/// (canonical engine offset ~1050) following a HASH256/EQUAL/BOOLOR
+/// chain — the back-to-genesis check: HASH256 of the reconstructed
+/// preceding_tx must equal the input's `prev_txid`. The reconstruction
+/// must be diverging from `build_synthetic_preceding_tx`'s output by
+/// at least one byte. Likely causes: (a) the script_len_varint
+/// encoding differs (e.g. engine reconstructs with a different field
+/// layout than the test helper), (b) the flags push is being
+/// reconstructed in a different form, or (c) the engine doesn't hash
+/// the full tx but a derived form (the failing HASH256 hashes only 72
+/// bytes, suggesting an outpoint pair, not the whole tx). Further
+/// investigation needed — likely requires diffing reconstructed bytes
+/// against the synthetic tx or replaying a DXS conformance vector.
 #[test]
-#[ignore = "encoder is byte-correct (cross-SDK pin passes; canonical engine accepts \
-            non-piece flows); engine rejects this synthetic swap-swap-with-pieces \
-            scenario with InvalidStackOperation. Deeper investigation into preceding-tx \
-            shape / factory witness wiring needed; deferred."]
+#[ignore = "InvalidStackOperation resolved by prepending trailing piece block. \
+            Now fails at OP_VERIFY (back-to-genesis hash mismatch) deeper in the \
+            engine — needs reconstruction byte-diff investigation."]
 fn engine_accepts_swap_swap_with_trailing_pieces() {
     use bsv_primitives::hash::sha256d;
 

@@ -1077,19 +1077,30 @@ pub fn build_stas3_swap_swap_tx_with_pieces(
     // standard authz appended already).
     let mut tx = build_stas3_base_tx_with_tx_type(config, Stas3TxType::AtomicSwap)?;
 
-    // For each token input, append the spec §9.5 trailing block
-    // verbatim to the already-signed unlocking script. The counterparty
-    // for input 0 is input 1 and vice versa.
+    // For each token input, PREPEND the spec §9.5 trailing block to the
+    // already-signed §7 unlock witness. The counterparty for input 0 is
+    // input 1 and vice versa.
+    //
+    // Push ordering in the unlocking script matters: items are pushed
+    // bottom-up in execution order. The canonical engine starts the
+    // locking script with the §10.2 P2MPKH redeem-buffer parser, which
+    // reads OP_SIZE on the TOP of stack — that slot must be the §7
+    // no-auth (empty) push for non-MPKH inputs. If the piece block is
+    // appended (pushed last), the head piece ends up on top, the parser
+    // mis-classifies it as a long redeem buffer, OP_SPLITs it into
+    // bogus chunks, and downstream `OP_DUP OP_2 OP_ADD OP_ROLL` pops a
+    // 131-byte chunk as the ROLL depth → script-num overflow → InvalidStackOperation.
+    //
+    // Prepending places the piece block at the BOTTOM of the stack
+    // (consumed later by the piece consumer at canonical engine offset
+    // ~7485), with the §7 slots remaining on top in their original
+    // order, so the §10.2 guard sees an empty push and skips cleanly.
     use crate::script::stas3_pieces::encode_atomic_swap_trailing_params;
     for i in 0..config.token_inputs.len() {
         let counterparty_idx = 1 - i;
         let counterparty_script = config.token_inputs[counterparty_idx]
             .locking_script
             .to_bytes();
-        // The encoder returns a fully push-framed block: each component
-        // (counterparty_script, piece_count, and every piece) is its own
-        // independent Bitcoin pushdata operation per spec v0.2.3 §9.5/§8.
-        // It is appended verbatim — no further re-framing is needed.
         let trailing = encode_atomic_swap_trailing_params(
             counterparty_script,
             &pieces[i].preceding_tx,
@@ -1100,8 +1111,8 @@ pub fn build_stas3_swap_swap_tx_with_pieces(
             .as_ref()
             .map(|s| s.to_bytes().to_vec())
             .unwrap_or_default();
-        let mut combined = existing;
-        combined.extend_from_slice(&trailing);
+        let mut combined = trailing;
+        combined.extend_from_slice(&existing);
         tx.inputs[i].unlocking_script = Some(Script::from_bytes(&combined));
     }
 
