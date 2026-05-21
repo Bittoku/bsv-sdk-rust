@@ -2,7 +2,6 @@ use proptest::prelude::*;
 
 use bsv_primitives::chainhash::Hash;
 use bsv_primitives::ec::private_key::PrivateKey;
-use bsv_primitives::ec::public_key::PublicKey;
 use bsv_primitives::hash::sha256;
 
 proptest! {

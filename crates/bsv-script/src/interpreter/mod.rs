@@ -132,8 +132,8 @@ mod tests {
     #[test]
     fn test_simple_true() {
         // OP_TRUE should leave true on stack
-        let unlock = Script::from_bytes(&[OP_TRUE]);
-        let lock = Script::from_bytes(&[]);
+        let _unlock = Script::from_bytes(&[OP_TRUE]);
+        let _lock = Script::from_bytes(&[]);
         // Empty locking script + OP_TRUE should fail (both empty check)
         // Actually: unlock=OP_1, lock=empty → stack has [1], which is true
         // But engine rejects both-empty. lock is empty but unlock isn't.
