@@ -440,45 +440,37 @@ fn derive_witness_for_input(
         let parsed = read_locking_script(script_bytes);
 
         match parsed.script_type {
-            ScriptType::Stas3 => {
-                if stas_outputs.len() < 4 {
-                    let stas3 = parsed
-                        .stas3
-                        .expect("STAS3 classification must yield Stas3Fields");
-                    let var2 = stas3.action_data_raw.unwrap_or_default();
-                    stas_outputs.push(Stas3WitnessOutput {
-                        amount: output.satoshis,
-                        owner_pkh: stas3.owner,
-                        var2,
-                    });
-                }
+            ScriptType::Stas3 if stas_outputs.len() < 4 => {
+                let stas3 = parsed
+                    .stas3
+                    .expect("STAS3 classification must yield Stas3Fields");
+                let var2 = stas3.action_data_raw.unwrap_or_default();
+                stas_outputs.push(Stas3WitnessOutput {
+                    amount: output.satoshis,
+                    owner_pkh: stas3.owner,
+                    var2,
+                });
             }
-            ScriptType::P2pkh => {
-                if change.is_none() {
-                    // P2PKH layout: 76 a9 14 <20B PKH> 88 ac
-                    let mut pkh = [0u8; 20];
-                    pkh.copy_from_slice(&script_bytes[3..23]);
-                    change = Some(Stas3WitnessChange {
-                        amount: output.satoshis,
-                        addr_pkh: pkh,
-                    });
-                }
+            ScriptType::P2pkh if change.is_none() => {
+                // P2PKH layout: 76 a9 14 <20B PKH> 88 ac
+                let mut pkh = [0u8; 20];
+                pkh.copy_from_slice(&script_bytes[3..23]);
+                change = Some(Stas3WitnessChange {
+                    amount: output.satoshis,
+                    addr_pkh: pkh,
+                });
             }
-            ScriptType::P2Mpkh => {
-                if change.is_none() {
-                    // P2MPKH layout: 76 a9 14 <20B MPKH> ... (spec §10.2)
-                    let mut pkh = [0u8; 20];
-                    pkh.copy_from_slice(&script_bytes[3..23]);
-                    change = Some(Stas3WitnessChange {
-                        amount: output.satoshis,
-                        addr_pkh: pkh,
-                    });
-                }
+            ScriptType::P2Mpkh if change.is_none() => {
+                // P2MPKH layout: 76 a9 14 <20B MPKH> ... (spec §10.2)
+                let mut pkh = [0u8; 20];
+                pkh.copy_from_slice(&script_bytes[3..23]);
+                change = Some(Stas3WitnessChange {
+                    amount: output.satoshis,
+                    addr_pkh: pkh,
+                });
             }
-            ScriptType::OpReturn => {
-                if note_data.is_none() {
-                    note_data = extract_op_return_payload(script_bytes);
-                }
+            ScriptType::OpReturn if note_data.is_none() => {
+                note_data = extract_op_return_payload(script_bytes);
             }
             _ => {}
         }

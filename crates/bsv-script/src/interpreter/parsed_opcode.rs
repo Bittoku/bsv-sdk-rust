@@ -243,11 +243,7 @@ pub fn parse_script(
         // Track conditionals and check for OP_RETURN
         match instruction {
             OP_IF | OP_NOTIF | OP_VERIF | OP_VERNOTIF => conditional_depth += 1,
-            OP_ENDIF => {
-                if conditional_depth > 0 {
-                    conditional_depth -= 1;
-                }
-            }
+            OP_ENDIF if conditional_depth > 0 => conditional_depth -= 1,
             OP_RETURN if conditional_depth == 0 => {
                 // OP_RETURN outside conditionals: consume remaining data
                 if i + 1 < scr.len() {
