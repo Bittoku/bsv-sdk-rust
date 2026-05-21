@@ -15,12 +15,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # The toolchain version + components (rustfmt, clippy) are read from
-      # rust-toolchain.toml at the workspace root. Pinning there keeps local
-      # and CI on the same rustc/clippy so lint regressions don't slip
-      # through (see issue #2 fixed 2026-05-21).
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@master
+      # `rustup` is pre-installed on ubuntu-latest. `rustup show` reads
+      # rust-toolchain.toml at the workspace root, installs the pinned
+      # channel + components (rustfmt, clippy) if missing, and selects it.
+      # Single source of truth — local devs and CI see the exact same
+      # rustc + clippy versions, preventing lint-set drift (see issue #2
+      # fixed 2026-05-21).
+      - name: Install Rust toolchain from rust-toolchain.toml
+        run: rustup show
 
       - name: Cache cargo registry & target
         uses: actions/cache@v4
