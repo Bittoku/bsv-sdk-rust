@@ -1,0 +1,13 @@
+# Pinned Rust toolchain — single source of truth for both local development
+# and CI. Keeps `cargo clippy --workspace -- -D warnings` consistent across
+# environments so lint regressions don't slip through (see issue #2 fixed
+# 2026-05-21).
+#
+# Bump policy: update with intent — run `cargo clippy --workspace -- -D warnings`
+# locally against the new version before bumping, and fix any new lints in the
+# same commit.
+
+[toolchain]
+channel = "1.95.0"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

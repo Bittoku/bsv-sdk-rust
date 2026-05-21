@@ -12,17 +12,15 @@ jobs:
   check:
     name: Check / Test
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        rust: [stable]
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust ${{ matrix.rust }}
+      # The toolchain version + components (rustfmt, clippy) are read from
+      # rust-toolchain.toml at the workspace root. Pinning there keeps local
+      # and CI on the same rustc/clippy so lint regressions don't slip
+      # through (see issue #2 fixed 2026-05-21).
+      - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ matrix.rust }}
-          components: rustfmt, clippy
 
       - name: Cache cargo registry & target
         uses: actions/cache@v4
@@ -31,9 +29,9 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-${{ matrix.rust }}-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-${{ hashFiles('rust-toolchain.toml', '**/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-${{ matrix.rust }}-
+            ${{ runner.os }}-cargo-
 
       - name: cargo fmt --check
         run: cargo fmt --all -- --check
