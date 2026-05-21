@@ -1,5 +1,51 @@
 # Changelog
 
+## v0.4.0 — 2026-05-21
+
+### ⚠ BREAKING CHANGES
+
+- **STAS 3.0 base template swapped to the canonical v0.1 / spec v0.2.3
+  engine.** The stale 2812-byte template in `STAS3_BASE_TEMPLATE_HEX` has
+  been replaced with the 2899-byte engine from
+  `github.com/stassso/STAS-3-script-templates` (SHA-256
+  `5c659f5f3abdad612c4bfd19b6034f2df0c0bcef1af1ca928d0f5a34ac3ee371`).
+  `STAS3_BASE_TEMPLATE_LEN` is bumped 2812 → 2899. Transactions built
+  against the old template are not compatible; rebuild and re-sign with
+  the new SDK before broadcasting (620e126).
+- **§9.5 piece-array encoder rewritten to option-3 wire format.** Each
+  piece is now emitted as a separate `OP_PUSHDATA` with `piece_count`
+  encoded as a minimal numeric opcode (`OP_1`..`OP_16`) per DXS's
+  `ScriptBuilder.addNumber` convention. The prior length-prefixed
+  byte-stream encoder is gone; the 127-byte per-piece limit is removed
+  (the engine reads pieces via `OP_PUSHDATA` directly, so larger pieces
+  are now valid) (620e126).
+- **Swap-swap factory witness layout DXS-aligned.** The trailing
+  piece-array block now occupies the slot-18 (txType) position in the
+  unlocking script per DXS's `prepareMergeInfo` shape:
+  `[counterparty_vout, piece_1..piece_N, piece_count,
+  counterparty_asset_tail, 1]`. Required for the canonical engine's
+  back-to-genesis hash check to pass (e8bd923, 505cbaa).
+
+### Bug Fixes
+
+- **STAS 3.0 swap-swap engine_verify now passes.** Layered fixes:
+  prepended (not appended) trailing-piece block, full DXS-aligned
+  witness layout, corrected swap-descriptor test data
+  (`requested_pkh` = destination owner; `requested_script_hash` =
+  SHA256(counterparty asset_tail)). 273/273 tests green including
+  `engine_accepts_swap_swap_with_trailing_pieces` (505cbaa).
+- Cross-SDK pin test re-enabled against the new canonical template;
+  byte-identical Rust ↔ Elixir output verified (620e126).
+- Exact-fee no-change-leg transfer test bumped 1602 → 1646 sats to
+  account for the 87-byte-longer canonical template (+44 sat fee at
+  rate 500) (620e126).
+
+### Internal / Chores
+
+- Swap-swap engine_verify integration test uses deterministic 32-byte
+  private keys, enabling byte-diff debugging across SDK boundaries
+  (e93bc1e).
+
 ## v0.3.2 — 2026-05-17
 
 <!--
