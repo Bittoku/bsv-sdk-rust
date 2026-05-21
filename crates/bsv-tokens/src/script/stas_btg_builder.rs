@@ -560,7 +560,7 @@ fn build_btg_preamble(redemption_pkh: &[u8; 20]) -> Result<Vec<u8>, TokenError> 
 fn push_number(script: &mut Vec<u8>, value: i64) {
     if value == 0 {
         script.push(0x00); // OP_0
-    } else if value >= 1 && value <= 16 {
+    } else if (1..=16).contains(&value) {
         script.push(0x50 + value as u8); // OP_1..OP_16
     } else if value == -1 {
         script.push(0x4f); // OP_1NEGATE
@@ -809,7 +809,7 @@ mod tests {
         let btg_script = build_stas_btg_locking_script(&owner, &redemption_pkh, true).unwrap();
         let bytes = btg_script.to_bytes();
 
-        let offset = find_preamble_redemption_offset(&bytes);
+        let offset = find_preamble_redemption_offset(bytes);
         assert!(
             offset.is_some(),
             "should find redemption PKH offset in preamble"

@@ -1515,12 +1515,12 @@ mod tests {
         // Unlocking scripts should be non-empty
         let token_unlock = tx.inputs[0].unlocking_script.as_ref().unwrap();
         assert!(
-            token_unlock.len() > 0,
+            !token_unlock.is_empty(),
             "token unlocking script should be non-empty"
         );
         let funding_unlock = tx.inputs[1].unlocking_script.as_ref().unwrap();
         assert!(
-            funding_unlock.len() > 0,
+            !funding_unlock.is_empty(),
             "funding unlocking script should be non-empty"
         );
 

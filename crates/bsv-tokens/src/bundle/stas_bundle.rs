@@ -10,7 +10,7 @@ use crate::error::TokenError;
 use crate::factory::stas::{
     build_merge_tx, build_split_tx, build_transfer_tx, MergeConfig, SplitConfig, TransferConfig,
 };
-use crate::types::{Destination, Payment};
+use crate::types::{Destination, Payment, SigningKey};
 
 /// A UTXO holding STAS tokens for bundle operations.
 pub struct TokenUtxo {
@@ -70,7 +70,7 @@ fn funding_to_payment(f: FundingUtxo) -> Payment {
         vout: f.vout,
         satoshis: f.satoshis,
         locking_script: f.locking_script,
-        private_key: f.private_key,
+        signing_key: SigningKey::single(f.private_key),
     }
 }
 
@@ -80,7 +80,7 @@ fn token_to_payment(t: &TokenUtxo) -> Payment {
         vout: t.vout,
         satoshis: t.satoshis,
         locking_script: t.locking_script.clone(),
-        private_key: t.private_key.clone(),
+        signing_key: SigningKey::single(t.private_key.clone()),
     }
 }
 

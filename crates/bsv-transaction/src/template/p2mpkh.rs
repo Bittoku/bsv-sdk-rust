@@ -679,12 +679,12 @@ mod tests {
         assert_eq!(*bytes.last().unwrap(), 0x05);
 
         // Each key slot is 0x21 followed by 33 bytes; verify offsets.
-        for i in 0..5 {
+        for (i, pub_key) in pubs.iter().enumerate().take(5) {
             let off = 1 + i * 34;
             assert_eq!(bytes[off], 0x21, "key {} push prefix should be 0x21", i);
             assert_eq!(
                 &bytes[off + 1..off + 34],
-                &pubs[i].to_compressed()[..],
+                &pub_key.to_compressed()[..],
                 "key {} body must match seed-derived public key",
                 i
             );
@@ -849,12 +849,12 @@ mod tests {
         );
 
         // Chunks 1..=2: signatures.
-        for i in 1..=2 {
-            let sig = chunks[i].data.as_ref().expect("signature push expected");
+        for (idx, chunk) in chunks.iter().enumerate().skip(1).take(2) {
+            let sig = chunk.data.as_ref().expect("signature push expected");
             assert!(
                 sig.len() >= 71 && sig.len() <= 73,
                 "signature {} length {} out of range",
-                i - 1,
+                idx - 1,
                 sig.len()
             );
             assert_eq!(*sig.last().unwrap(), 0x41);

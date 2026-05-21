@@ -28,7 +28,7 @@ pub fn create_nonce(
                 security_level: SECURITY_LEVEL_EVERY_APP,
                 protocol: "server hmac".to_string(),
             },
-            key_id: hex::encode(&random_bytes),
+            key_id: hex::encode(random_bytes),
             counterparty: counterparty.clone(),
             privileged: false,
             privileged_reason: String::new(),

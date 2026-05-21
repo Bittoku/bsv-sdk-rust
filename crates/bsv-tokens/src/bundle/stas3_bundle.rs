@@ -22,7 +22,7 @@ use crate::factory::stas3::{
     build_stas3_base_tx, build_stas3_merge_tx, Stas3BaseConfig, Stas3MergeConfig,
     Stas3OutputParams, TokenInput,
 };
-use crate::types::Stas3SpendType;
+use crate::types::{SigningKey, Stas3SpendType};
 
 // -----------------------------------------------------------------------
 // Public types
@@ -927,7 +927,7 @@ fn select_stas_utxos(utxos: &[StasOutPoint], satoshis: u64) -> Vec<StasOutPoint>
 /// Each intermediate tx handles 3 outputs + change. The final tx handles up to 4.
 fn estimate_final_transfer_tx_count(outputs_count: usize) -> usize {
     // ceil((outputs_count - 1) / 3), minimum 1
-    1.max((outputs_count.saturating_sub(1) + 2) / 3)
+    1.max(outputs_count.saturating_sub(1).div_ceil(3))
 }
 
 // -----------------------------------------------------------------------
@@ -950,7 +950,7 @@ fn outpoint_to_token_input(outpoint: &StasOutPoint, private_key: &PrivateKey) ->
         vout: outpoint.vout,
         satoshis: outpoint.satoshis,
         locking_script: outpoint.locking_script.clone(),
-        private_key: private_key.clone(),
+        signing_key: SigningKey::single(private_key.clone()),
     }
 }
 

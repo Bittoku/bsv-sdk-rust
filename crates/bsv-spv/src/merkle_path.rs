@@ -687,7 +687,7 @@ mod tests {
         ];
         for hex_str in valid {
             MerklePath::from_hex(hex_str)
-                .expect(&format!("should parse valid bump: {}", &hex_str[..20]));
+                .unwrap_or_else(|_| panic!("should parse valid bump: {}", &hex_str[..20]));
         }
     }
 

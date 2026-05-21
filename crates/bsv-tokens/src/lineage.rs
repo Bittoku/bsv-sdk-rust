@@ -156,7 +156,7 @@ impl LineageValidator {
             })?;
 
             let script_bytes = output.locking_script.to_bytes();
-            let parsed = read_locking_script(&script_bytes);
+            let parsed = read_locking_script(script_bytes);
 
             match parsed.script_type {
                 ScriptType::Stas => {

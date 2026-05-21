@@ -589,7 +589,7 @@ mod tests {
     #[test]
     fn test_find_transaction() {
         let beef = Beef::from_hex(BEEF_SET).unwrap();
-        let tx = beef
+        let _tx = beef
             .find_transaction("b1fc0f44ba629dbdffab9e34fcc4faf9dbde3560a7365c55c26fe4daab052aac");
         // The txid is stored in internal byte order in the map key, so we search by iterating
         // This specific txid may or may not be found depending on byte order handling

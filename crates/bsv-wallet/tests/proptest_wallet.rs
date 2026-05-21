@@ -8,7 +8,7 @@ fn make_encryption_args(protocol: String, key_id: String) -> EncryptionArgs {
     EncryptionArgs {
         protocol_id: Protocol {
             security_level: SECURITY_LEVEL_SILENT,
-            protocol: protocol,
+            protocol,
         },
         key_id,
         counterparty: Counterparty {

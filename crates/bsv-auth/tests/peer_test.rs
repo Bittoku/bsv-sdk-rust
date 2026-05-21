@@ -51,7 +51,7 @@ impl Transport for MockTransport {
     }
 }
 
-fn make_peer(name: &str, pk: &PrivateKey, transport: Arc<MockTransport>) -> Arc<Peer> {
+fn make_peer(_name: &str, pk: &PrivateKey, transport: Arc<MockTransport>) -> Arc<Peer> {
     let wallet = ProtoWallet::new(ProtoWalletArgs::PrivateKey(pk.clone())).unwrap();
     let session_manager = Arc::new(DefaultSessionManager::new());
 

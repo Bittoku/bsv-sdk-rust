@@ -10,6 +10,11 @@ use bsv_primitives::hash::sha256d;
 
 use crate::error::TokenError;
 
+/// The three byte segments produced by [`split_tx_around_output`]:
+/// `(prefix, output_bytes, suffix)` such that
+/// `hash256(prefix || output_bytes || suffix) == txid`.
+pub type TxSplit = (Vec<u8>, Vec<u8>, Vec<u8>);
+
 /// Split a raw serialized transaction into three byte segments around the output
 /// at index `vout`.
 ///
@@ -26,10 +31,7 @@ use crate::error::TokenError;
 /// # Errors
 /// Returns [`TokenError::InvalidScript`] if the raw bytes are malformed or
 /// `vout` is out of range.
-pub fn split_tx_around_output(
-    raw_tx: &[u8],
-    vout: u32,
-) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>), TokenError> {
+pub fn split_tx_around_output(raw_tx: &[u8], vout: u32) -> Result<TxSplit, TokenError> {
     let vout_idx = vout as usize;
     let tx_len = raw_tx.len();
 

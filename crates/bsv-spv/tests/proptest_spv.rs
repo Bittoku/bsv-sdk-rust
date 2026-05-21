@@ -5,7 +5,7 @@ use bsv_spv::{MerklePath, PathElement};
 
 /// Strategy to generate a valid MerklePath that can round-trip through serialization.
 fn arb_merkle_path() -> impl Strategy<Value = MerklePath> {
-    let arb_hash = prop::array::uniform32(any::<u8>()).prop_map(|b| Hash::new(b));
+    let arb_hash = prop::array::uniform32(any::<u8>()).prop_map(Hash::new);
 
     // Generate 1..=8 levels, each with 1..=3 leaves
     let arb_level = prop::collection::vec(

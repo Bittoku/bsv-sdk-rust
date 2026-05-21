@@ -1,8 +1,8 @@
 //! Tests for certificates: Certificate, MasterCertificate, VerifiableCertificate.
 
 use bsv_auth::certificates::{
-    create_certificate_fields, create_keyring_for_verifier, decrypt_field, decrypt_fields,
-    issue_certificate_for_subject, Certificate, MasterCertificate, VerifiableCertificate,
+    create_keyring_for_verifier, decrypt_fields, issue_certificate_for_subject, Certificate,
+    MasterCertificate, VerifiableCertificate,
 };
 use bsv_auth::utils::random_base64;
 use bsv_primitives::ec::private_key::PrivateKey;

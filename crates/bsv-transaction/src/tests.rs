@@ -552,7 +552,7 @@ fn test_p2pkh_with_set_source_output() {
     // Set source output directly (equivalent to Go's SetSourceTxOutput).
     tx.inputs[0].set_source_output(Some(TransactionOutput {
         satoshis: 15564838601,
-        locking_script: locking_script,
+        locking_script,
         change: false,
     }));
 

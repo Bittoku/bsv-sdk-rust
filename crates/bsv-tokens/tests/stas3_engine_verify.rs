@@ -647,8 +647,8 @@ fn engine_accepts_swap_swap_with_trailing_pieces() {
     // outpoint match. asset_output_index=0 in both.
     let preceding_a = build_synthetic_preceding_tx(&locking_a, 5000);
     let preceding_b = build_synthetic_preceding_tx(&locking_b, 5000);
-    let txid_a_bytes: [u8; 32] = sha256d(&preceding_a).into();
-    let txid_b_bytes: [u8; 32] = sha256d(&preceding_b).into();
+    let txid_a_bytes: [u8; 32] = sha256d(&preceding_a);
+    let txid_b_bytes: [u8; 32] = sha256d(&preceding_b);
     let txid_a = Hash::from_bytes(&txid_a_bytes).unwrap();
     let txid_b = Hash::from_bytes(&txid_b_bytes).unwrap();
 

@@ -1,6 +1,6 @@
 //! Tests for the JungleBus client.
 
-use wiremock::matchers::{header, header_exists, method, path, query_param};
+use wiremock::matchers::{header, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use crate::client::JungleBusClient;

@@ -4494,10 +4494,10 @@ mod tests {
     /// pushes follow the slot order described on `Stas3UnlockWitness`.
     ///
     /// Returns the witness slot chunks (everything but the last 2).
-    fn assert_witness_shape_p2pkh<'a>(
-        chunks: &'a [bsv_script::ScriptChunk],
+    fn assert_witness_shape_p2pkh(
+        chunks: &[bsv_script::ScriptChunk],
         expected_first_amount: u64,
-    ) -> &'a [bsv_script::ScriptChunk] {
+    ) -> &[bsv_script::ScriptChunk] {
         // Authz: last two chunks must be sig (~71..=73B) + pubkey (33B compressed).
         assert!(chunks.len() >= 2, "witness + authz must produce ≥2 chunks");
         let last = chunks.last().unwrap();

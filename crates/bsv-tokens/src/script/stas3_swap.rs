@@ -149,7 +149,7 @@ pub fn is_stas3_frozen(script: &[u8]) -> bool {
     if parsed.script_type != ScriptType::Stas3 {
         return false;
     }
-    parsed.stas3.map_or(false, |d| d.frozen)
+    parsed.stas3.is_some_and(|d| d.frozen)
 }
 
 /// Check whether a STAS 3.0 locking script's `owner` field equals the
