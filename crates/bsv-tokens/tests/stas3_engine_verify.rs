@@ -551,9 +551,12 @@ fn build_synthetic_preceding_tx(lock: &Script, satoshis: u64) -> Vec<u8> {
 fn engine_accepts_swap_swap_with_trailing_pieces() {
     use bsv_primitives::hash::sha256d;
 
-    let token_key_a = test_key();
-    let token_key_b = test_key();
-    let fee_key = test_key();
+    // Deterministic keys for cross-SDK byte-diff debugging. With RFC6979
+    // signing + identical fixtures, Rust and Elixir factories must produce
+    // byte-identical unlocking scripts. Any divergence localizes the bug.
+    let token_key_a = PrivateKey::from_bytes(&[0x11; 32]).unwrap();
+    let token_key_b = PrivateKey::from_bytes(&[0x22; 32]).unwrap();
+    let fee_key = PrivateKey::from_bytes(&[0x33; 32]).unwrap();
     let owner_a_pkh = hash160(&token_key_a.pub_key().to_compressed());
     let owner_b_pkh = hash160(&token_key_b.pub_key().to_compressed());
     let redemption_pkh = [0x22; 20];
