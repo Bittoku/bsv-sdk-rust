@@ -1,7 +1,7 @@
 [package]
 name = "bittoku-bsv"
 description = "BSV Blockchain SDK - Complete SDK re-exporting all components (bsv-primitives, bsv-script, bsv-transaction, bsv-wallet, bsv-tokens, and more)"
-version = "0.4.0"
+version = "0.4.1"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
